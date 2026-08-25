@@ -1,10 +1,23 @@
 import { requireAuth } from "@/lib/rbac";
 import { db } from "@/db";
-import { profiles, users } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { profiles, users, notifications } from "@/db/schema";
+import { eq, desc } from "drizzle-orm";
 import { signOut } from "@/auth";
 import Link from "next/link";
-import { Palette, Key, LogOut, Sparkles, Image, Trophy, UserCircle, Briefcase } from "lucide-react";
+import {
+  Palette,
+  Key,
+  LogOut,
+  Sparkles,
+  Image,
+  Trophy,
+  UserCircle,
+  Briefcase,
+  User,
+  ArrowRight,
+  ShieldCheck,
+} from "lucide-react";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 
 export default async function DashboardPage() {
   const user = await requireAuth("/login");
@@ -14,6 +27,13 @@ export default async function DashboardPage() {
     .from(profiles)
     .where(eq(profiles.userId, user.id))
     .limit(1);
+
+  const userNotifications = await db
+    .select()
+    .from(notifications)
+    .where(eq(notifications.userId, user.id))
+    .orderBy(desc(notifications.createdAt))
+    .limit(10);
 
   const isModOrAdmin = user.role === "moderator" || user.role === "admin";
 
@@ -29,9 +49,23 @@ export default async function DashboardPage() {
               </div>
               <span className="font-display font-bold text-xl text-[#f6f2e9]">Mengart</span>
             </Link>
+
+            <nav className="hidden md:flex items-center gap-6 ml-6 text-sm">
+              <Link href="/gallery" className="text-zinc-400 hover:text-white transition-colors">
+                Galeri
+              </Link>
+              <Link href="/artists" className="text-zinc-400 hover:text-white transition-colors">
+                Artist
+              </Link>
+              <Link href="/commissions" className="text-zinc-400 hover:text-white transition-colors">
+                Komisi
+              </Link>
+            </nav>
           </div>
 
           <div className="flex items-center gap-3">
+            <NotificationBell notifications={userNotifications} />
+
             {isModOrAdmin ? (
               <Link
                 href="/admin/invites"
@@ -41,6 +75,14 @@ export default async function DashboardPage() {
                 <span>Kelola Undangan</span>
               </Link>
             ) : null}
+
+            <Link
+              href="/me/profile"
+              className="px-3.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-xs font-mono transition-colors flex items-center gap-1.5"
+            >
+              <User className="h-3.5 w-3.5 text-amber-400" />
+              <span>Profil Saya</span>
+            </Link>
 
             <form
               action={async () => {
@@ -78,6 +120,18 @@ export default async function DashboardPage() {
                 Email: {user.email} • Status: {user.membershipStatus} • Profil: {profile?.profileStatus || "incomplete"}
               </p>
             </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {profile?.slug ? (
+              <Link
+                href={`/artists/${profile.slug}`}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold transition-all shadow-md shadow-amber-500/20 flex items-center gap-1.5"
+              >
+                <span>Lihat Profil Publik</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            ) : null}
           </div>
         </section>
 

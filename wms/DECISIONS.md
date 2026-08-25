@@ -60,11 +60,15 @@
 **Business Rule:** Artwork fidelity must never be altered (no color tints or decorative overlays on images).
 **Reason:** Documented in style guide baseline.
 
-### UI Language & Localization Standards
-**Decision:** Default user interface language is natural Bahasa Indonesia, preserving standard international art & technical terms (`challenge`, `commission`, `software`, `GIF`, `video`, `focus mode`, `lightbox`, `WITA`).
+### UI Language & Terminology Standards
+**Decision:** Default user interface language is natural Bahasa Indonesia, actively incorporating standard English terms widely used in the digital art community:
+- Commission Hub: `Commission`, `Open for Commission`, `Waitlist`, `Slots`, `Do / Don't`
+- Challenge & Voting: `Challenge`, `Submission`, `Voting`, `Stars`, `Jury`, `Hall of Fame`
+- Artwork & Gallery: `Artwork`, `Portfolio`, `Gallery`, `Master Quality`, `Watermarked Preview`, `Lightbox`, `Focus Mode`
+- Technical & System: `Software`, `GIF`, `Video`, `WITA`, `Dashboard`, `Login`
 - **Date & Time Display:** Absolute WITA timestamps (`Asia/Makassar` / UTC+8), e.g., `18 Agu 2026, 23.59 WITA`.
-**Business Rule:** Interface copy must avoid awkward literal translations and technical jargon.
-**Reason:** Clarified in style guide section 11.
+**Business Rule:** Blend natural Indonesian phrasing with familiar art ecosystem terminology to avoid awkward literal translations.
+**Reason:** Clarified by user and aligned with community expectations.
 
 
 

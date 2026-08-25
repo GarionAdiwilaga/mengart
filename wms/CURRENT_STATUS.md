@@ -1,41 +1,48 @@
 # Current Status
 
 ## Phase
-Phase 1 — Foundation: Authentication, RBAC, Database Schema & Media Storage (COMPLETED)
-Phase 2 — Artist and Gallery Platform (NEXT)
+Phase 2 — Artist and Gallery Platform (COMPLETED)
+Phase 3 — Challenge Submission Engine (NEXT)
 
 ## Last Completed
 - **Phase 0 Setup**: Next.js 15, React 19, TypeScript, Tailwind CSS v4 `@theme` (Studio Atelier), Docker Compose (PostgreSQL 16 on port 5433, Redis 7 on port 6379), Drizzle ORM.
 - **Phase 1 Foundation**:
-  - Full PostgreSQL Drizzle schema implemented and migrated (Users, Profiles, Hashed Invites, Invite Redemptions, External Links, Badges, Artworks, Immutable Artwork Versions, Portfolio Entries, Tags, Notifications, Audit Logs, Activity Logs).
-  - Discord-style SHA-256 hashed single/multi-use invitation engine (`src/lib/invites.ts`). Verified via automated integration tests (`src/lib/__tests__/testInvites.ts`).
-  - NextAuth.js v5 with Google OAuth 2.0 (`src/auth.ts`, `src/app/api/auth/[...nextauth]/route.ts`, `src/app/api/auth/redeem-callback/route.ts`).
-  - Server-side RBAC guards (`src/lib/rbac.ts`).
-  - Dual-variant storage filesystem architecture and protected master media streaming endpoint (`src/lib/storage.ts`, `src/app/api/media/master/[key]/route.ts`).
-  - User-facing UI pages:
-    - `/login`: Member sign-in page with Studio Atelier theme & error states.
-    - `/invite/[token]`: Real-time invitation validation & registration page.
-    - `/admin/invites`: Admin & Moderator invitation management hub with modal creation and revocation reasons.
-    - `/dashboard`: Member dashboard with artist alias, role pill, and quick navigation.
-  - Verified Turbopack production build (`npm run build`) passing with 0 warnings/errors.
-  - Committed and pushed to GitHub `origin/main`.
+  - Full PostgreSQL Drizzle schema implemented and migrated.
+  - Discord-style SHA-256 hashed single/multi-use invitation engine (`src/lib/invites.ts`).
+  - NextAuth.js v5 with Google OAuth 2.0 and RBAC guards (`src/lib/rbac.ts`).
+  - Protected clean master storage streaming endpoint (`/api/media/master/[key]`).
+- **Phase 2 Artist & Gallery Platform**:
+  - Commission schema added and migrated (`commission_services`, `commission_service_examples`, `commission_scope_rules`).
+  - Asynchronous media upload pipeline with Sharp: EXIF/ICC metadata stripping, master clean storage, public watermarked derivative generation (custom SVG watermark), responsive thumbnailing, and video/GIF poster extraction.
+  - BullMQ queue worker configured (`src/workers/mediaWorker.ts`) with concurrency 4.
+  - In-app notification engine (`src/lib/notifications.ts`, `/actions/notifications.ts`, `NotificationBell.tsx`).
+  - Member management views:
+    - `/me/profile`: Artist profile settings, specialties, software, commission status (`open`, `waitlist`, `closed`), and WhatsApp consent.
+    - `/me/portfolio`: Portfolio upload manager modal, thumbnail gallery, and deletion actions.
+    - `/me/commissions`: Commission service cards creator and Do/Don't scope rules editor.
+  - Public discovery views:
+    - `/gallery`: Public masonry gallery with specialty categories and search.
+    - `/artworks/[slug]`: Artwork detail page with zoomable lightbox and dual-quality variant toggle (`Watermarked Preview` vs `Master Quality`).
+    - `/artists`: Community artist directory with commission status filtering.
+    - `/artists/[slug]`: Public artist showcase profile with WhatsApp direct order button, commission service cards, Do/Don't list, and portfolio grid.
+    - `/commissions`: Dedicated public commission directory with category filters.
+  - Automated integration tests verified (`src/lib/__tests__/testPhase2Pipeline.ts`).
+  - Production build verified with Turbopack (`npm run build`) passing with 18 routes and 0 errors/warnings.
 
 ## Current Branch
 `main`
 
 ## Current Focus
-- Starting **Phase 2 — Artist and Gallery Platform**:
-  - Artist profile editing (`/me/profile`) & public profile view (`/artists/[slug]`, `/artists`).
-  - Commission services management (`/me/commissions`) & commission directory (`/commissions`).
-  - Media upload pipeline with BullMQ worker: metadata stripping (EXIF/ICC), watermarking with `sharp`, thumbnail generation, video poster extraction.
-  - Public watermarked masonry gallery (`/gallery`, `/artworks/[slug]`) and member full-quality viewer.
+- Starting **Phase 3 — Challenge Submission Engine**:
+  - Challenge schema: `challenges`, `challenge_stages`, `challenge_rules`, `challenge_winner_slots`, `challenge_submissions`, `challenge_jury_assignments`.
+  - Challenge lifecycle: Draft -> Scheduled -> Submission Open -> Submission Closed -> Voting -> Finished.
+  - Member artwork submission action linking locked `ArtworkVersion`.
+  - Submission revisions before deadline & strict read-only lock after deadline.
+  - Admin challenge management CRUD & deadline scheduler.
 
 ## Next Task
-- Build Phase 2 media upload server action & BullMQ queue worker (`src/workers/mediaWorker.ts`).
-- Build Artist Profile editor and public showcase pages.
+- Define Phase 3 Challenge schema in `src/db/schema/challenges.ts` and apply migration.
+- Build Challenge detail view (`/challenges/[slug]`), submission upload modal, and admin challenge editor.
 
 ## Blockers
-- None. Database active, Redis active, Phase 1 code tested and pushed.
-
-## Blockers
-- None. Awaiting user review of project evaluation and proposed phase refinements.
+- None.

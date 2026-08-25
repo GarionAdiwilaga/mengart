@@ -2,6 +2,7 @@ export * from "./users";
 export * from "./invites";
 export * from "./profiles";
 export * from "./artworks";
+export * from "./commissions";
 export * from "./badges";
 export * from "./notifications";
 export * from "./auditLogs";
