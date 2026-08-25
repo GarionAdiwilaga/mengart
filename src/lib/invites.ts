@@ -1,7 +1,15 @@
 import crypto from "crypto";
 import { eq, sql, and, isNull, or, gt } from "drizzle-orm";
 import { db } from "@/db";
-import { membershipInvites, inviteRedemptions, users, profiles, auditLogs } from "@/db/schema";
+import {
+  membershipInvites,
+  inviteRedemptions,
+  users,
+  profiles,
+  auditLogs,
+  emailVerificationTokens,
+} from "@/db/schema";
+import { sendVerificationEmail } from "./email";
 
 export type InviteExpiryPreset =
   | "30m"
@@ -37,10 +45,28 @@ export interface GeneratedInviteResult {
 export type InviteStatus = "active" | "expired" | "exhausted" | "revoked";
 
 /**
+ * Intelligently extract raw token whether user entered a raw token or full invitation URL
+ */
+export function extractInviteToken(input: string): string {
+  if (!input) return "";
+  const trimmed = input.trim();
+
+  // If input contains /invite/, extract the segment after it
+  const match = trimmed.match(/\/invite\/([a-zA-Z0-9_-]+)/);
+  if (match && match[1]) {
+    return match[1].trim();
+  }
+
+  // Remove any leading/trailing query params or hashes
+  return trimmed.split("?")[0].split("#")[0].replace(/^https?:\/\/[^\/]+\//, "").replace(/^invite\//, "").trim();
+}
+
+/**
  * Hash raw invitation token with SHA-256
  */
 export function hashInviteToken(rawToken: string): string {
-  return crypto.createHash("sha256").update(rawToken.trim()).digest("hex");
+  const clean = extractInviteToken(rawToken);
+  return crypto.createHash("sha256").update(clean).digest("hex");
 }
 
 /**
@@ -131,11 +157,12 @@ export async function createMembershipInvite(
  * Validate an invitation token without redeeming it
  */
 export async function validateInviteToken(rawToken: string) {
-  if (!rawToken || rawToken.trim().length === 0) {
+  const cleanToken = extractInviteToken(rawToken);
+  if (!cleanToken || cleanToken.length === 0) {
     return { isValid: false, reason: "Missing token" as const, invite: null };
   }
 
-  const tokenHash = hashInviteToken(rawToken);
+  const tokenHash = hashInviteToken(cleanToken);
   const [invite] = await db
     .select()
     .from(membershipInvites)
@@ -162,7 +189,7 @@ export async function validateInviteToken(rawToken: string) {
 }
 
 /**
- * Atomically redeem an invitation and create the member account and profile in a single transaction
+ * Atomically redeem an invitation and create member account via Google OAuth
  */
 export async function redeemInviteAndCreateMember(params: {
   rawToken: string;
@@ -194,11 +221,11 @@ export async function redeemInviteAndCreateMember(params: {
       .for("update");
 
     if (!invite) {
-      throw new Error("Invitation is invalid, expired, or revoked.");
+      throw new Error("Undangan tidak valid, telah kedaluwarsa, atau telah dicabut.");
     }
 
     if (invite.maxUses !== null && invite.usesCount >= invite.maxUses) {
-      throw new Error("Invitation has reached its maximum usage limit.");
+      throw new Error("Undangan telah mencapai batas maksimum penggunaan.");
     }
 
     // 2. Increment usage counter
@@ -210,12 +237,13 @@ export async function redeemInviteAndCreateMember(params: {
       })
       .where(eq(membershipInvites.id, invite.id));
 
-    // 3. Create User record
+    // 3. Create User record (Google accounts have emailVerified set immediately)
     const [newUser] = await tx
       .insert(users)
       .values({
         email: params.email.toLowerCase().trim(),
         googleId: params.googleId || null,
+        emailVerified: now,
         role: "member",
         membershipStatus: "active",
       })
@@ -227,7 +255,6 @@ export async function redeemInviteAndCreateMember(params: {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/(^-|-$)/g, "") || `artist-${newUser.id.slice(0, 8)}`;
     
-    // Check if slug already exists
     const [existingSlug] = await tx
       .select({ id: profiles.id })
       .from(profiles)
@@ -265,7 +292,7 @@ export async function redeemInviteAndCreateMember(params: {
       action: "invite_redeemed",
       targetType: "user",
       targetId: newUser.id,
-      reason: `Account created via invitation ${invite.tokenPrefix}`,
+      reason: `Account created via invitation ${invite.tokenPrefix} (Google OAuth)`,
       metadata: {
         inviteId: invite.id,
         email: params.email,
@@ -274,4 +301,151 @@ export async function redeemInviteAndCreateMember(params: {
 
     return { user: newUser, profile: newProfile };
   });
+}
+
+/**
+ * Atomically redeem an invitation and create member account via Email & Password
+ */
+export async function redeemInviteAndCreateMemberWithCredentials(params: {
+  rawToken: string;
+  email: string;
+  passwordHash: string;
+  displayName: string;
+  username?: string;
+  ipAddress?: string;
+  userAgent?: string;
+}) {
+  const tokenHash = hashInviteToken(params.rawToken);
+  const now = new Date();
+  const normalizedEmail = params.email.toLowerCase().trim();
+
+  // Check if email already registered
+  const [existingUser] = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, normalizedEmail))
+    .limit(1);
+
+  if (existingUser) {
+    throw new Error("Email ini telah terdaftar. Silakan langsung masuk di halaman Login.");
+  }
+
+  const result = await db.transaction(async (tx) => {
+    // 1. Lock and validate invite row
+    const [invite] = await tx
+      .select()
+      .from(membershipInvites)
+      .where(
+        and(
+          eq(membershipInvites.tokenHash, tokenHash),
+          isNull(membershipInvites.revokedAt),
+          or(
+            isNull(membershipInvites.expiresAt),
+            gt(membershipInvites.expiresAt, now)
+          )
+        )
+      )
+      .for("update");
+
+    if (!invite) {
+      throw new Error("Undangan tidak valid, telah kedaluwarsa, atau telah dicabut.");
+    }
+
+    if (invite.maxUses !== null && invite.usesCount >= invite.maxUses) {
+      throw new Error("Undangan telah mencapai batas maksimum penggunaan.");
+    }
+
+    // 2. Increment usage counter
+    await tx
+      .update(membershipInvites)
+      .set({
+        usesCount: sql`${membershipInvites.usesCount} + 1`,
+        updatedAt: now,
+      })
+      .where(eq(membershipInvites.id, invite.id));
+
+    // 3. Create User record (Password account with emailVerified: null initially)
+    const [newUser] = await tx
+      .insert(users)
+      .values({
+        email: normalizedEmail,
+        username: params.username?.toLowerCase().trim() || null,
+        passwordHash: params.passwordHash,
+        emailVerified: null, // Requires verification
+        role: "member",
+        membershipStatus: "active",
+      })
+      .returning();
+
+    // 4. Generate unique slug for artist profile
+    const baseSlug = params.displayName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "") || `artist-${newUser.id.slice(0, 8)}`;
+    
+    const [existingSlug] = await tx
+      .select({ id: profiles.id })
+      .from(profiles)
+      .where(eq(profiles.slug, baseSlug))
+      .limit(1);
+
+    const finalSlug = existingSlug
+      ? `${baseSlug}-${newUser.id.slice(0, 6)}`
+      : baseSlug;
+
+    // 5. Create Profile record
+    const [newProfile] = await tx
+      .insert(profiles)
+      .values({
+        userId: newUser.id,
+        slug: finalSlug,
+        displayName: params.displayName.trim(),
+        profileStatus: "incomplete",
+      })
+      .returning();
+
+    // 6. Record Invite Redemption
+    await tx.insert(inviteRedemptions).values({
+      inviteId: invite.id,
+      userId: newUser.id,
+      ipAddress: params.ipAddress || null,
+      userAgent: params.userAgent || null,
+    });
+
+    // 7. Generate Email Verification Token (valid for 24 hours)
+    const rawVerificationToken = crypto.randomBytes(32).toString("hex");
+    const verifTokenHash = crypto.createHash("sha256").update(rawVerificationToken).digest("hex");
+    const verifExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+    await tx.insert(emailVerificationTokens).values({
+      userId: newUser.id,
+      tokenHash: verifTokenHash,
+      expiresAt: verifExpiresAt,
+    });
+
+    // 8. Audit Log
+    await tx.insert(auditLogs).values({
+      actorId: newUser.id,
+      actorIp: params.ipAddress || "127.0.0.1",
+      action: "invite_redeemed",
+      targetType: "user",
+      targetId: newUser.id,
+      reason: `Account created via invitation ${invite.tokenPrefix} (Credentials)`,
+      metadata: {
+        inviteId: invite.id,
+        email: normalizedEmail,
+      },
+    });
+
+    return { user: newUser, profile: newProfile, verificationToken: rawVerificationToken };
+  });
+
+  // 9. Send verification email
+  await sendVerificationEmail({
+    email: normalizedEmail,
+    token: result.verificationToken,
+    displayName: params.displayName,
+  });
+
+  return result;
 }

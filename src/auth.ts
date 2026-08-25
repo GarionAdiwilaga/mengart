@@ -1,5 +1,7 @@
 import NextAuth, { type DefaultSession } from "next-auth";
 import Google from "next-auth/providers/google";
+import Credentials from "next-auth/providers/credentials";
+import bcrypt from "bcryptjs";
 import { db } from "@/db";
 import { users, profiles } from "@/db/schema";
 import { eq, or } from "drizzle-orm";
@@ -31,6 +33,63 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID || "",
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+      allowDangerousEmailAccountLinking: true,
+    }),
+    Credentials({
+      name: "Email & Password",
+      credentials: {
+        identifier: { label: "Email atau Username", type: "text" },
+        password: { label: "Password", type: "password" },
+      },
+      async authorize(credentials) {
+        if (!credentials?.identifier || !credentials?.password) {
+          return null;
+        }
+
+        const identifier = String(credentials.identifier).trim().toLowerCase();
+        const password = String(credentials.password);
+
+        // Find user by email or username
+        const [dbUser] = await db
+          .select({
+            id: users.id,
+            email: users.email,
+            passwordHash: users.passwordHash,
+            emailVerified: users.emailVerified,
+            role: users.role,
+            membershipStatus: users.membershipStatus,
+          })
+          .from(users)
+          .where(or(eq(users.email, identifier), eq(users.username, identifier)))
+          .limit(1);
+
+        if (!dbUser || !dbUser.passwordHash) {
+          return null;
+        }
+
+        // Verify password hash
+        const isMatch = await bcrypt.compare(password, dbUser.passwordHash);
+        if (!isMatch) {
+          return null;
+        }
+
+        // Verify email status
+        if (!dbUser.emailVerified) {
+          throw new Error("EmailNotVerified");
+        }
+
+        // Verify active membership status
+        if (dbUser.membershipStatus !== "active") {
+          throw new Error(`Account${dbUser.membershipStatus}`);
+        }
+
+        return {
+          id: dbUser.id,
+          email: dbUser.email,
+          role: dbUser.role,
+          membershipStatus: dbUser.membershipStatus,
+        };
+      },
     }),
   ],
   session: {
@@ -68,12 +127,19 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         return `/login?error=Account${existingUser.membershipStatus}`;
       }
 
-      // Link googleId if missing
-      if (account?.providerAccountId && !existingUser.googleId) {
-        await db
-          .update(users)
-          .set({ googleId: account.providerAccountId })
-          .where(eq(users.id, existingUser.id));
+      // Account Merging: Link Google ID and mark verified if logging in with Google
+      if (account?.provider === "google") {
+        const updates: { googleId?: string; emailVerified?: Date } = {};
+        if (account.providerAccountId && !existingUser.googleId) {
+          updates.googleId = account.providerAccountId;
+        }
+        if (!existingUser.emailVerified) {
+          updates.emailVerified = new Date();
+        }
+
+        if (Object.keys(updates).length > 0) {
+          await db.update(users).set(updates).where(eq(users.id, existingUser.id));
+        }
       }
 
       return true;

@@ -70,5 +70,15 @@
 **Business Rule:** Blend natural Indonesian phrasing with familiar art ecosystem terminology to avoid awkward literal translations.
 **Reason:** Clarified by user and aligned with community expectations.
 
+### Email/Password Auth, Automatic Google Merging & Invitation Code Parsing
+**Decision:** 
+1. Support dual authentication: Google OAuth 2.0 and manual Email/Password (`CredentialsProvider`).
+2. Automatic Account Merging: When a user registers with email/password and later signs in via Google using the same email, NextAuth will automatically link their `googleId` to their existing account without duplicating records or losing their portfolio.
+3. Email Verification: Password-based registrations require email verification before active login. Google OAuth registrations automatically satisfy email verification.
+4. Flexible Invitation Entry: On `/invite` and `/login`, allow manual entry of invitation tokens or full invitation URLs (intelligently regex-extracting token from URLs).
+**Business Rule:** Preserve invite-only access across all registration methods while preventing fragmented multiple accounts for the same creator.
+**Reason:** Requested by user for flexibility and account consolidation.
+
+
 
 

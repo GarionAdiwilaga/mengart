@@ -15,6 +15,7 @@
     "worker:media": "tsx src/workers/mediaWorker.ts"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "bullmq": "^5.41.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -33,6 +34,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.7",
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.13.4",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",

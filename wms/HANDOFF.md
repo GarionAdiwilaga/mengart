@@ -3,16 +3,17 @@
 ## Completed
 - Completed **Phase 0** (Scaffolding, TypeScript, Next.js 15, Tailwind v4 theme, Docker Compose Postgres & Redis, Drizzle ORM).
 - Completed **Phase 1** (Foundation: Auth, RBAC, Database Schema, Hashed Invites, Protected Master Media).
-- Completed **Phase 2** (Artist and Gallery Platform):
-  - Async media processing pipeline with BullMQ worker + Sharp (metadata stripping, watermarking with custom SVG, WebP thumbnails, video/GIF posters).
-  - Commission Hub schema, service cards, and Do/Don't scope rules editor (`/me/commissions`).
-  - Artist profile manager with WhatsApp referral CTA & consent toggle (`/me/profile`, `/artists/[slug]`).
-  - Member portfolio upload manager (`/me/portfolio`).
-  - Public discovery views: `/gallery` (masonry), `/artworks/[slug]` (zoomable Lightbox), `/artists`, `/commissions`.
-  - In-app notification engine (`src/lib/notifications.ts`, `NotificationBell.tsx`).
-  - Passed automated test suite `src/lib/__tests__/testPhase2Pipeline.ts`.
-  - Verified Turbopack build (`npm run build`) passing with 18 routes and 0 errors/warnings.
-  - Updated `walkthrough.md` with complete Phase 2 verification instructions.
+- Completed **Phase 2** (Artist and Gallery Platform: Async Media Pipeline, Watermarking, Commissions Hub, Lightbox, Notifications).
+- Completed **Phase 2.5** (Dual Auth & Account Merging):
+  - NextAuth Credentials provider + `bcryptjs` password hashing.
+  - Automatic Google account merging on matching email without creating duplicate accounts.
+  - Email verification token engine & verification page (`/verify-email`).
+  - Forgot & reset password workflows (`/forgot-password`, `/reset-password/[token]`).
+  - Flexible invitation entry view (`/invite`) with URL extraction.
+  - Dual registration tabs on `/invite/[token]`.
+  - Passed automated test suite `src/lib/__tests__/testAuthAndMerging.ts`.
+  - Verified Turbopack build (`npm run build`) passing with 21 routes and 0 errors/warnings.
+  - Updated `walkthrough.md` with verification guide.
 
 ## Current Focus
 - **Phase 3 — Challenge Submission Engine**:

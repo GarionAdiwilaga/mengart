@@ -70,16 +70,21 @@ All authorization must be enforced by the backend. Hiding a UI element is not au
 
 ---
 
-## 4. Authentication and Discord-Style Invitations
+### 4.1 Registration and Authentication Flow
 
-### 4.1 Registration flow
-
-1. Visitor opens an invitation URL.
-2. Server validates the invitation.
-3. Visitor authenticates using Google OAuth 2.0.
-4. Server validates the invitation again.
-5. Server creates the member account and records the redemption in one transaction.
-6. If the invitation expired, was revoked, or reached its usage limit during OAuth, account creation must fail safely.
+1. **Invitation Acquisition & Entry**:
+   - Visitor opens an invitation URL (`/invite/[token]`) OR enters an invitation code/URL manually on the invitation entry view (`/invite`).
+   - The server validates the invitation token.
+2. **Authentication Method Selection**:
+   - **Option A (Google OAuth)**: Visitor authenticates using Google OAuth 2.0.
+   - **Option B (Email & Password)**: Visitor provides display name, email, and password. An email verification token is issued.
+3. **Atomic Member Creation**:
+   - Server re-validates the invitation token and creates the member account, profile, and redemption record in a single atomic database transaction.
+4. **Automatic Account Merging (No Duplicate Accounts)**:
+   - If a user previously registered with email/password and later signs in using Google with the same email, the system automatically links their `google_id` and marks `email_verified` without creating duplicate records or losing existing data.
+5. **Email Verification**:
+   - Password registrations require email verification before full login. Google OAuth automatically fulfills email verification.
+6. If the invitation expired, was revoked, or reached its usage limit during registration, account creation must fail safely.
 
 ### 4.2 Invitation properties
 
@@ -870,7 +875,7 @@ The most important rule in this part is that an artwork, artwork version, portfo
 | `/admin/tags` | Controlled specialties, media, software, and gallery taxonomy. |
 | `/admin/settings` | Upload limits, watermark, derivative, comment, and site settings. |
 
-A returning member logs in with Google without reusing an invitation. A first-time Google account must complete invitation redemption before account creation.
+A returning member logs in with Google or Email/Password without reusing an invitation. A first-time user must complete invitation redemption before account creation. If an existing email/password user logs in with Google, their account is automatically merged.
 
 ---
 

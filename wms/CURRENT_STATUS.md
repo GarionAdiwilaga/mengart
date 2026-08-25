@@ -1,7 +1,7 @@
 # Current Status
 
 ## Phase
-Phase 2 — Artist and Gallery Platform (COMPLETED)
+Phase 2.5 — Dual Auth & Account Merging (COMPLETED)
 Phase 3 — Challenge Submission Engine (NEXT)
 
 ## Last Completed
@@ -9,25 +9,20 @@ Phase 3 — Challenge Submission Engine (NEXT)
 - **Phase 1 Foundation**:
   - Full PostgreSQL Drizzle schema implemented and migrated.
   - Discord-style SHA-256 hashed single/multi-use invitation engine (`src/lib/invites.ts`).
-  - NextAuth.js v5 with Google OAuth 2.0 and RBAC guards (`src/lib/rbac.ts`).
   - Protected clean master storage streaming endpoint (`/api/media/master/[key]`).
 - **Phase 2 Artist & Gallery Platform**:
-  - Commission schema added and migrated (`commission_services`, `commission_service_examples`, `commission_scope_rules`).
-  - Asynchronous media upload pipeline with Sharp: EXIF/ICC metadata stripping, master clean storage, public watermarked derivative generation (custom SVG watermark), responsive thumbnailing, and video/GIF poster extraction.
-  - BullMQ queue worker configured (`src/workers/mediaWorker.ts`) with concurrency 4.
-  - In-app notification engine (`src/lib/notifications.ts`, `/actions/notifications.ts`, `NotificationBell.tsx`).
-  - Member management views:
-    - `/me/profile`: Artist profile settings, specialties, software, commission status (`open`, `waitlist`, `closed`), and WhatsApp consent.
-    - `/me/portfolio`: Portfolio upload manager modal, thumbnail gallery, and deletion actions.
-    - `/me/commissions`: Commission service cards creator and Do/Don't scope rules editor.
-  - Public discovery views:
-    - `/gallery`: Public masonry gallery with specialty categories and search.
-    - `/artworks/[slug]`: Artwork detail page with zoomable lightbox and dual-quality variant toggle (`Watermarked Preview` vs `Master Quality`).
-    - `/artists`: Community artist directory with commission status filtering.
-    - `/artists/[slug]`: Public artist showcase profile with WhatsApp direct order button, commission service cards, Do/Don't list, and portfolio grid.
-    - `/commissions`: Dedicated public commission directory with category filters.
-  - Automated integration tests verified (`src/lib/__tests__/testPhase2Pipeline.ts`).
-  - Production build verified with Turbopack (`npm run build`) passing with 18 routes and 0 errors/warnings.
+  - Commission schema, service cards, and Do/Don't scope rules editor.
+  - Async media processing pipeline with Sharp & BullMQ: EXIF/ICC metadata stripping, master clean storage, public watermarked derivative generation (custom SVG watermark), WebP thumbnailing, and video/GIF poster extraction.
+  - Public gallery (`/gallery`), Lightbox (`/artworks/[slug]`), Artist directory (`/artists`), Artist showcase (`/artists/[slug]`), and Commission directory (`/commissions`).
+- **Phase 2.5 Email/Password Auth, Account Merging & Email Verification**:
+  - `bcryptjs` password hashing & Credentials authentication in NextAuth.
+  - Automatic Google account merging on matching email (zero duplicate accounts).
+  - Email verification token engine (`email_verification_tokens`) and verification view (`/verify-email`).
+  - Password reset flow (`/forgot-password`, `/reset-password/[token]`).
+  - Flexible invitation entry (`/invite`) with intelligent token/URL regex parsing.
+  - Dual registration tabs on `/invite/[token]` (Google OAuth & Email/Password).
+  - Full automated integration test suite verified (`src/lib/__tests__/testAuthAndMerging.ts`).
+  - Production build verified with Turbopack (`npm run build`) passing across 21 routes with 0 errors/warnings.
 
 ## Current Branch
 `main`
@@ -42,7 +37,7 @@ Phase 3 — Challenge Submission Engine (NEXT)
 
 ## Next Task
 - Define Phase 3 Challenge schema in `src/db/schema/challenges.ts` and apply migration.
-- Build Challenge detail view (`/challenges/[slug]`), submission upload modal, and admin challenge editor.
+- Build Challenge views (`/challenges`, `/challenges/[slug]`), submission modal, and admin challenge editor.
 
 ## Blockers
 - None.
