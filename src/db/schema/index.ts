@@ -4,6 +4,7 @@ export * from "./invites";
 export * from "./profiles";
 export * from "./artworks";
 export * from "./challenges";
+export * from "./ballots";
 export * from "./commissions";
 export * from "./badges";
 export * from "./notifications";

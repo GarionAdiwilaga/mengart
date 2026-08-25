@@ -1,8 +1,8 @@
 # Current Status
 
 ## Phase
-Phase 3 — Challenge Submission Engine (COMPLETED)
-Phase 4 — Stars & Jury Workflow (NEXT)
+Phase 4 — Stars & Jury Workflow (COMPLETED)
+Phase 5 — Community & Administration (NEXT)
 
 ## Last Completed
 - **Phase 0 Setup**: Next.js 15, React 19, TypeScript, Tailwind CSS v4 `@theme` (Studio Atelier), Docker Compose (PostgreSQL 16 on port 5433, Redis 7 on port 6379), Drizzle ORM.
@@ -20,31 +20,36 @@ Phase 4 — Stars & Jury Workflow (NEXT)
   - Email verification token engine (`email_verification_tokens`) and verification view (`/verify-email`).
   - Flexible invitation entry (`/invite`) with URL extraction.
 - **Phase 3 Challenge Submission Engine**:
-  - Challenge schema: `challenges`, `challenge_kit_files`, `challenge_winner_slots`, `challenge_jury_assignments`, `challenge_submissions`, `challenge_submission_versions`.
-  - Authoritative lifecycle calculator & deadline locks in WITA (`src/lib/challenges.ts`).
+  - Challenge schema, authoritative lifecycle calculator & deadline locks in WITA (`src/lib/challenges.ts`).
   - Member artwork submission action with versioning & revisions (`src/app/actions/challenges.ts`).
   - Challenge kit streaming endpoint (`/api/challenges/kit/[fileKey]`).
-  - Public challenge directory (`/challenges`) with active countdowns and category tabs.
-  - Challenge detail view (`/challenges/[slug]`) with stage timeline, rules card, challenge kit download, artist's submission card, and fair anti-bias candidate grid.
-  - Admin challenge manager (`/admin/challenges`, `/admin/challenges/new`) with lifecycle transition buttons.
-  - Automated integration tests verified (`src/lib/__tests__/testPhase3Challenges.ts`).
-  - Production build verified with Turbopack (`npm run build`) passing across 24 routes with 0 errors/warnings.
+  - Public challenge directory (`/challenges`) and detail view (`/challenges/[slug]`).
+  - Admin challenge manager (`/admin/challenges`, `/admin/challenges/new`).
+- **Phase 4 Stars & Jury Workflow**:
+  - Ballot schema: `challenge_ballots`, `challenge_ballot_stars`, `challenge_jury_scores`, `challenge_results`.
+  - Deterministic seeded pseudo-random candidate shuffle per voter to eliminate top-of-page discovery bias (`src/lib/voting.ts`).
+  - Self-voting prevention and atomic Star ballot allocations (`src/app/actions/voting.ts`).
+  - Dual-mode voting workspace (`VotingWorkspace.tsx`): **Balanced Atelier Grid** (4:3 uniform cards) & **Focus / Comparison Slide Deck** (keyboard arrows, thumbnail jump ribbon, side-by-side mode).
+  - Sticky **Ballot Review Dock** with live remaining Stars countdown and quick submission.
+  - Jury evaluation portal (`/challenges/[slug]/jury`) with slot nominations and critique notes.
+  - Challenge results finalization action and Hall of Fame presentation (`/challenges/[slug]/results`).
+  - All automated integration tests verified (`src/lib/__tests__/testPhase4Voting.ts`).
+  - Production build verified with Turbopack (`npm run build`) passing across 27 routes with 0 errors/warnings.
 
 ## Current Branch
 `main`
 
 ## Current Focus
-- Starting **Phase 4 — Stars & Jury Workflow**:
-  - Ballot schema: `challenge_ballots`, `challenge_ballot_stars`, `challenge_jury_votes`, `challenge_results`.
-  - Anonymous ballot allocation with atomic Stars deduction & validation (no self-voting, editable until voting closes).
-  - Anti-bias candidate discovery views (Balanced Atelier Grid & Focus/Comparison Deck).
-  - Real-time remaining Stars drawer / Ballot Review Dock.
-  - Quorum verification & tiebreak round triggers.
-  - Jury scoring & winner assignment.
+- Starting **Phase 5 — Community & Administration**:
+  - Constructive critique comments on artworks with markdown / process feedback.
+  - Moderation queue for reporting / moderating artworks and comments.
+  - Activity feed & community spotlight.
+  - Audit log viewer for administrative actions.
 
 ## Next Task
-- Define Phase 4 voting schema in `src/db/schema/ballots.ts`.
-- Implement Ballot voting server actions and voting interface with candidate slide deck.
+- Define Phase 5 critique & moderation schema in `src/db/schema/critiques.ts`.
+- Implement critique comments component on Artwork Lightbox (`/artworks/[slug]`).
+- Implement Admin Moderation Queue (`/admin/moderation`).
 
 ## Blockers
 - None.

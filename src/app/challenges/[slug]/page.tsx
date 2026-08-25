@@ -19,6 +19,7 @@ import {
   FileCode,
   Image as ImageIcon,
   ExternalLink,
+  Star,
 } from "lucide-react";
 import { ChallengeSubmissionModal } from "@/components/challenges/ChallengeSubmissionModal";
 
@@ -183,6 +184,47 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
             ))}
           </div>
         </div>
+
+        {/* Phase Action CTA Bar */}
+        {(challenge.effectiveStatus === "voting_open" ||
+          challenge.effectiveStatus === "tiebreak_open" ||
+          challenge.effectiveStatus === "finished" ||
+          challenge.effectiveStatus === "jury_selection_open") ? (
+          <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-white/10">
+            {challenge.effectiveStatus === "voting_open" ||
+            challenge.effectiveStatus === "tiebreak_open" ? (
+              <Link
+                href={`/challenges/${challenge.slug}/voting`}
+                className="px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-lg shadow-amber-500/20 flex items-center gap-2"
+              >
+                <Star className="h-4 w-4 fill-black text-black" />
+                <span>Masuk ke Bilik Suara (Buka Voting) →</span>
+              </Link>
+            ) : null}
+
+            {challenge.juryAssignments.some((j) => j.userId === userId) ||
+            session?.user?.role === "admin" ||
+            session?.user?.role === "moderator" ? (
+              <Link
+                href={`/challenges/${challenge.slug}/jury`}
+                className="px-5 py-3 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-amber-400 font-bold text-xs font-mono transition-all flex items-center gap-2"
+              >
+                <Award className="h-4 w-4 text-amber-400" />
+                <span>Portal Kurasi Dewan Juri</span>
+              </Link>
+            ) : null}
+
+            {challenge.effectiveStatus === "finished" ? (
+              <Link
+                href={`/challenges/${challenge.slug}/results`}
+                className="px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-lg shadow-amber-500/20 flex items-center gap-2"
+              >
+                <Trophy className="h-4 w-4 text-black" />
+                <span>Lihat Hasil Resmi & Hall of Fame →</span>
+              </Link>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       {/* Main Grid: Rules & Submissions (Left) + Challenge Kit & Winner Slots (Right) */}
