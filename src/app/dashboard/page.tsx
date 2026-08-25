@@ -67,13 +67,22 @@ export default async function DashboardPage() {
             <NotificationBell notifications={userNotifications} />
 
             {isModOrAdmin ? (
-              <Link
-                href="/admin/invites"
-                className="px-3.5 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-xs font-mono transition-colors flex items-center gap-1.5"
-              >
-                <Key className="h-3.5 w-3.5" />
-                <span>Kelola Undangan</span>
-              </Link>
+              <>
+                <Link
+                  href="/admin/challenges"
+                  className="px-3.5 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-xs font-mono transition-colors flex items-center gap-1.5"
+                >
+                  <Trophy className="h-3.5 w-3.5" />
+                  <span>Kelola Challenge</span>
+                </Link>
+                <Link
+                  href="/admin/invites"
+                  className="px-3.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-xs font-mono transition-colors flex items-center gap-1.5"
+                >
+                  <Key className="h-3.5 w-3.5" />
+                  <span>Kelola Undangan</span>
+                </Link>
+              </>
             ) : null}
 
             <Link
