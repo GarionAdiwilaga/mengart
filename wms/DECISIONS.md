@@ -70,6 +70,15 @@
 **Business Rule:** Blend natural Indonesian phrasing with familiar art ecosystem terminology to avoid awkward literal translations.
 **Reason:** Clarified by user and aligned with community expectations.
 
+### Discord-style Short & Custom Vanity Invitation Codes
+**Decision:** Transition default invitation tokens from 64-character random hex strings to human-friendly 8-character base58/alphanumeric short codes (e.g. `a7K9xQ2v`, `SVcqWf3G`), and allow administrators/moderators to optionally specify custom vanity invite codes (e.g. `komorebi`, `atelier-vip-2026`, `batch-2`).
+**Business Rule:** 
+- Default generated tokens are 8 characters long, avoiding ambiguous characters (0, O, 1, l, I).
+- Custom vanity codes must be between 3 and 32 characters, matching `/^[a-zA-Z0-9_-]+$/`, and must be unique among active/unexpired invitations.
+- Tokens continue to be hashed with SHA-256 (`tokenHash`) for database storage so raw custom/short tokens remain secure.
+- Invitation URLs and manual code inputs support both short codes and custom vanity codes seamlessly (e.g., `/invite/komorebi` or `/invite/a7K9xQ2v`).
+**Reason:** User requested short and customizable invitation codes like Discord for clean sharing and memorable vanity links.
+
 ### Email/Password Auth, Automatic Google Merging & Invitation Code Parsing
 **Decision:** 
 1. Support dual authentication: Google OAuth 2.0 and manual Email/Password (`CredentialsProvider`).
@@ -78,7 +87,3 @@
 4. Flexible Invitation Entry: On `/invite` and `/login`, allow manual entry of invitation tokens or full invitation URLs (intelligently regex-extracting token from URLs).
 **Business Rule:** Preserve invite-only access across all registration methods while preventing fragmented multiple accounts for the same creator.
 **Reason:** Requested by user for flexibility and account consolidation.
-
-
-
-

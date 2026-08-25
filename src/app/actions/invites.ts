@@ -17,6 +17,13 @@ import { revalidatePath } from "next/cache";
 
 const createInviteSchema = z.object({
   label: z.string().max(100).optional(),
+  customCode: z
+    .string()
+    .min(3, "Kode kustom minimal 3 karakter")
+    .max(32, "Kode kustom maksimal 32 karakter")
+    .regex(/^[a-zA-Z0-9_-]+$/, "Kode kustom hanya boleh berisi huruf, angka, tanda hubung (-), dan garis bawah (_)")
+    .optional()
+    .or(z.literal("")),
   expiryPreset: z
     .enum(["30m", "1h", "6h", "12h", "1d", "7d", "never", "custom"])
     .default("7d"),
@@ -34,6 +41,7 @@ const revokeInviteSchema = z.object({
  */
 export async function createInviteAction(formData: {
   label?: string;
+  customCode?: string;
   expiryPreset?: InviteExpiryPreset;
   customExpiresAt?: string;
   maxUses?: number | null;
@@ -48,6 +56,7 @@ export async function createInviteAction(formData: {
 
   const result = await createMembershipInvite({
     label: validated.label,
+    customCode: validated.customCode && validated.customCode.trim().length > 0 ? validated.customCode.trim() : undefined,
     expiryPreset: validated.expiryPreset as InviteExpiryPreset,
     customExpiresAt: validated.customExpiresAt
       ? new Date(validated.customExpiresAt)

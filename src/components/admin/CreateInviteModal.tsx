@@ -8,6 +8,7 @@ import type { InviteExpiryPreset } from "@/lib/invites";
 export function CreateInviteModal() {
   const [isOpen, setIsOpen] = useState(false);
   const [label, setLabel] = useState("");
+  const [customCode, setCustomCode] = useState("");
   const [expiryPreset, setExpiryPreset] = useState<InviteExpiryPreset>("7d");
   const [maxUses, setMaxUses] = useState<number | "unlimited">(1);
   const [isLoading, setIsLoading] = useState(false);
@@ -26,6 +27,7 @@ export function CreateInviteModal() {
     try {
       const res = await createInviteAction({
         label: label.trim() || undefined,
+        customCode: customCode.trim() || undefined,
         expiryPreset,
         maxUses: maxUses === "unlimited" ? null : Number(maxUses),
       });
@@ -54,6 +56,7 @@ export function CreateInviteModal() {
     setIsOpen(false);
     setGeneratedInvite(null);
     setLabel("");
+    setCustomCode("");
     setExpiryPreset("7d");
     setMaxUses(1);
     setError(null);
@@ -157,6 +160,21 @@ export function CreateInviteModal() {
                     placeholder="contoh: Komunitas Discord Batch #2, VIP Artist"
                     maxLength={100}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/50 text-sm font-sans"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-mono text-zinc-300">KODE KUSTOM / VANITY (OPSIONAL)</label>
+                    <span className="text-[10px] font-mono text-zinc-500">contoh: komorebi, vip-atelier</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={customCode}
+                    onChange={(e) => setCustomCode(e.target.value)}
+                    placeholder="Kosongkan untuk kode acak 8 karakter (contoh: a7K9xQ2v)"
+                    maxLength={32}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/50 text-sm font-mono"
                   />
                 </div>
 

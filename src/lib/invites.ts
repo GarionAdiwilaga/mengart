@@ -23,6 +23,7 @@ export type InviteExpiryPreset =
 
 export interface CreateInviteParams {
   label?: string;
+  customCode?: string; // Optional custom Discord-style vanity code (e.g. "komorebi", "atelier-vip")
   expiryPreset?: InviteExpiryPreset;
   customExpiresAt?: Date;
   maxUses?: number | null; // null = unlimited
@@ -44,6 +45,20 @@ export interface GeneratedInviteResult {
 
 export type InviteStatus = "active" | "expired" | "exhausted" | "revoked";
 
+const BASE62_CHARS = "23456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ"; // Clean base58-style alphabet without ambiguous 0/O/1/l/I
+
+/**
+ * Generate a clean, human-friendly short random invite code (e.g. "a7K9xQ2v")
+ */
+export function generateShortInviteCode(length = 8): string {
+  const bytes = crypto.randomBytes(length);
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += BASE62_CHARS[bytes[i] % BASE62_CHARS.length];
+  }
+  return result;
+}
+
 /**
  * Intelligently extract raw token whether user entered a raw token or full invitation URL
  */
@@ -58,7 +73,12 @@ export function extractInviteToken(input: string): string {
   }
 
   // Remove any leading/trailing query params or hashes
-  return trimmed.split("?")[0].split("#")[0].replace(/^https?:\/\/[^\/]+\//, "").replace(/^invite\//, "").trim();
+  return trimmed
+    .split("?")[0]
+    .split("#")[0]
+    .replace(/^https?:\/\/[^\/]+\//, "")
+    .replace(/^invite\//, "")
+    .trim();
 }
 
 /**
@@ -99,15 +119,51 @@ export function calculateExpiryDate(
 }
 
 /**
- * Generate a new cryptographically random membership invitation
+ * Generate a new short-code or custom-code membership invitation
  */
 export async function createMembershipInvite(
   params: CreateInviteParams,
   appBaseUrl: string = process.env.APP_URL || "http://localhost:3000"
 ): Promise<GeneratedInviteResult> {
-  const rawToken = crypto.randomBytes(32).toString("hex");
+  let rawToken: string;
+
+  if (params.customCode && params.customCode.trim().length > 0) {
+    const cleanCode = params.customCode.trim();
+    if (cleanCode.length < 3 || cleanCode.length > 32) {
+      throw new Error("Kode undangan kustom harus antara 3 hingga 32 karakter.");
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(cleanCode)) {
+      throw new Error("Kode kustom hanya boleh berisi huruf, angka, tanda hubung (-), dan garis bawah (_).");
+    }
+
+    const testHash = hashInviteToken(cleanCode);
+    const [existing] = await db
+      .select()
+      .from(membershipInvites)
+      .where(
+        and(
+          eq(membershipInvites.tokenHash, testHash),
+          isNull(membershipInvites.revokedAt),
+          or(
+            isNull(membershipInvites.expiresAt),
+            gt(membershipInvites.expiresAt, new Date())
+          )
+        )
+      )
+      .limit(1);
+
+    if (existing && (existing.maxUses === null || existing.usesCount < existing.maxUses)) {
+      throw new Error(`Kode undangan kustom "${cleanCode}" sudah aktif digunakan.`);
+    }
+
+    rawToken = cleanCode;
+  } else {
+    // Generate clean 8-char short code
+    rawToken = generateShortInviteCode(8);
+  }
+
   const tokenHash = hashInviteToken(rawToken);
-  const tokenPrefix = `inv_${rawToken.slice(0, 8)}`;
+  const tokenPrefix = rawToken.length <= 8 ? rawToken : `inv_${rawToken.slice(0, 8)}`;
   const expiresAt = params.customExpiresAt
     ? params.customExpiresAt
     : calculateExpiryDate(params.expiryPreset || "7d");
@@ -132,9 +188,10 @@ export async function createMembershipInvite(
     action: "invite_created",
     targetType: "invite",
     targetId: createdInvite.id,
-    reason: params.label || "Generated membership invitation",
+    reason: params.label || `Generated membership invite (${tokenPrefix})`,
     metadata: {
       tokenPrefix,
+      isCustomCode: !!params.customCode,
       expiresAt,
       maxUses: params.maxUses,
     },
