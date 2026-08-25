@@ -1,0 +1,151 @@
+import { requireAuth } from "@/lib/rbac";
+import { db } from "@/db";
+import { profiles, users } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { signOut } from "@/auth";
+import Link from "next/link";
+import { Palette, Key, LogOut, Sparkles, Image, Trophy, UserCircle, Briefcase } from "lucide-react";
+
+export default async function DashboardPage() {
+  const user = await requireAuth("/login");
+
+  const [profile] = await db
+    .select()
+    .from(profiles)
+    .where(eq(profiles.userId, user.id))
+    .limit(1);
+
+  const isModOrAdmin = user.role === "moderator" || user.role === "admin";
+
+  return (
+    <main className="min-h-screen p-6 sm:p-12 max-w-7xl mx-auto flex flex-col justify-between gap-12">
+      <div className="flex flex-col gap-8">
+        {/* Navigation Bar */}
+        <header className="flex items-center justify-between border-b border-white/10 pb-4">
+          <div className="flex items-center gap-3">
+            <Link href="/" className="flex items-center gap-2.5">
+              <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-amber-500 to-amber-700 flex items-center justify-center shadow-lg shadow-amber-500/20">
+                <Palette className="h-4 w-4 text-black" />
+              </div>
+              <span className="font-display font-bold text-xl text-white">Mengart</span>
+            </Link>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {isModOrAdmin ? (
+              <Link
+                href="/admin/invites"
+                className="px-3.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-xs font-mono transition-colors flex items-center gap-1.5"
+              >
+                <Key className="h-3.5 w-3.5" />
+                <span>Admin Invites</span>
+              </Link>
+            ) : null}
+
+            <form
+              action={async () => {
+                "use server";
+                await signOut({ redirectTo: "/" });
+              }}
+            >
+              <button
+                type="submit"
+                className="px-3.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white text-xs font-mono transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                <span>Sign Out</span>
+              </button>
+            </form>
+          </div>
+        </header>
+
+        {/* Member Greeting Banner */}
+        <section className="glass-panel p-8 rounded-3xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
+          <div className="flex items-center gap-5">
+            <div className="h-16 w-16 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 font-display font-bold text-2xl">
+              {profile?.displayName?.charAt(0) || "A"}
+            </div>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2.5">
+                <h1 className="font-display font-extrabold text-2xl sm:text-3xl text-white tracking-tight">
+                  Welcome back, {profile?.displayName || "Artist"}
+                </h1>
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono uppercase bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                  {user.role}
+                </span>
+              </div>
+              <p className="text-xs font-mono text-zinc-400">
+                Email: {user.email} • Status: {user.membershipStatus} • Profile: {profile?.profileStatus || "incomplete"}
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* Quick Navigation Cards */}
+        <section className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+          <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between gap-4">
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-xs text-zinc-500">ARTWORK VAULT</span>
+              <Image className="h-4 w-4 text-amber-400" />
+            </div>
+            <div>
+              <h3 className="font-display font-bold text-lg text-white">My Portfolio</h3>
+              <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                Upload artworks, generate clean and watermarked versions, and organize pinned showcase pieces.
+              </p>
+            </div>
+            <Link
+              href="/me/portfolio"
+              className="mt-2 text-xs font-mono text-amber-400 hover:text-amber-300 transition-colors inline-flex items-center gap-1"
+            >
+              Open Portfolio →
+            </Link>
+          </div>
+
+          <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between gap-4">
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-xs text-zinc-500">COMMISSIONS</span>
+              <Briefcase className="h-4 w-4 text-amber-400" />
+            </div>
+            <div>
+              <h3 className="font-display font-bold text-lg text-white">Commission Hub</h3>
+              <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                Manage service cards, price ranges, slot availability, and WhatsApp contact preferences.
+              </p>
+            </div>
+            <Link
+              href="/me/commissions"
+              className="mt-2 text-xs font-mono text-amber-400 hover:text-amber-300 transition-colors inline-flex items-center gap-1"
+            >
+              Manage Services →
+            </Link>
+          </div>
+
+          <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between gap-4">
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-xs text-zinc-500">COMMUNITY EVENTS</span>
+              <Trophy className="h-4 w-4 text-amber-400" />
+            </div>
+            <div>
+              <h3 className="font-display font-bold text-lg text-white">Art Challenges</h3>
+              <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                Submit challenge artwork revisions, cast Stars during voting, and review past Hall of Fame winners.
+              </p>
+            </div>
+            <Link
+              href="/challenges"
+              className="mt-2 text-xs font-mono text-amber-400 hover:text-amber-300 transition-colors inline-flex items-center gap-1"
+            >
+              View Challenges →
+            </Link>
+          </div>
+        </section>
+      </div>
+
+      <footer className="py-4 border-t border-white/10 text-xs font-mono text-zinc-500 flex justify-between items-center">
+        <span>Mengart Atelier Platform</span>
+        <span>Timezone: Asia/Makassar (WITA)</span>
+      </footer>
+    </main>
+  );
+}

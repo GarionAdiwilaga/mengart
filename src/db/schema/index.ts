@@ -1,6 +1,14 @@
+export * from "./users";
+export * from "./invites";
+export * from "./profiles";
+export * from "./artworks";
+export * from "./badges";
+export * from "./notifications";
+export * from "./auditLogs";
+
 import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
-// Base system settings table as Phase 0 verification schema
+// Base system configuration / meta table
 export const systemMeta = pgTable("system_meta", {
   id: uuid("id").primaryKey().defaultRandom(),
   key: text("key").notNull().unique(),
