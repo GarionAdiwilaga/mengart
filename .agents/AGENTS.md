@@ -30,7 +30,13 @@ Format your decisions strictly:
 **Reason:** [Why it was decided to prevent future contradiction]
 ```
 
-### 3. Conclusion (End of Chat / Switching Tasks)
-Before concluding your session or when the user indicates a handoff to a new chat, you MUST update:
-- `wms/CURRENT_STATUS.md`: Keep it structured with headings for `## Phase`, `## Last Completed`, `## Current Branch`, `## Current Focus`, `## Next Task`, and `## Blockers`.
-- `wms/HANDOFF.md`: Update it with the current `Date`, `Completed` items, `Current` focus, `Next` steps, and specific `Notes` that the next agent needs to know.
+### 3. Conclusion (End of Chat / Switching Tasks / Phase Completion)
+Before concluding your session, when the user indicates a handoff, or whenever a phase is completed, you MUST:
+- Create or update the `walkthrough.md` artifact summarizing completed work, automated test results, and provide clear step-by-step instructions for the user to manually verify and check current progress.
+- Update `wms/CURRENT_STATUS.md`: Keep it structured with headings for `## Phase`, `## Last Completed`, `## Current Branch`, `## Current Focus`, `## Next Task`, and `## Blockers`.
+- Update `wms/HANDOFF.md`: Update it with the current `Date`, `Completed` items, `Current` focus, `Next` steps, and specific `Notes` that the next agent needs to know.
+
+### 4. Skill Utilization & Frontend Craft Standards
+- On every run, actively review and utilize relevant available skills in `.agents/skills/` (e.g., `frontend-design`, `frontend-developer`, `shadcn`, `tailwind-patterns`, `react-best-practices`, `api-design-principles`, `test-driven-development`).
+- Strictly adhere to `studio-atelier-frontend-style-guide.md` for all frontend design tokens, typography, component craft, and UX patterns.
+

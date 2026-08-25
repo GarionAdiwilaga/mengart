@@ -1,6 +1,6 @@
 import { validateInviteToken } from "@/lib/invites";
 import Link from "next/link";
-import { Palette, Sparkles, AlertCircle, ArrowRight, ShieldCheck, Clock } from "lucide-react";
+import { Palette, Sparkles, AlertCircle, Clock } from "lucide-react";
 import { InviteRedeemForm } from "@/components/auth/InviteRedeemForm";
 
 interface InvitePageProps {
@@ -12,18 +12,18 @@ export default async function InvitePage({ params }: InvitePageProps) {
   const validation = await validateInviteToken(token);
 
   if (!validation.isValid || !validation.invite) {
-    let errorTitle = "Invalid Invitation";
-    let errorDescription = "This invitation link is not recognized or may have been typed incorrectly.";
+    let errorTitle = "Undangan Tidak Valid";
+    let errorDescription = "Tautan undangan ini tidak dikenali atau salah ketik.";
 
     if (validation.reason === "expired") {
-      errorTitle = "Invitation Expired";
-      errorDescription = "This invitation has passed its validity period. Please request a new invitation from a community moderator.";
+      errorTitle = "Undangan Kedaluwarsa";
+      errorDescription = "Tautan undangan ini telah melewati masa berlaku. Silakan minta undangan baru kepada moderator komunitas.";
     } else if (validation.reason === "exhausted") {
-      errorTitle = "Invitation Exhausted";
-      errorDescription = "This invitation has already reached its maximum redemption limit.";
+      errorTitle = "Batas Penggunaan Habis";
+      errorDescription = "Tautan undangan ini telah mencapai kuota maksimal pendaftaran.";
     } else if (validation.reason === "revoked") {
-      errorTitle = "Invitation Revoked";
-      errorDescription = "This invitation link was revoked by a community administrator.";
+      errorTitle = "Undangan Dibatalkan";
+      errorDescription = "Tautan undangan ini telah dicabut oleh administrator komunitas.";
     }
 
     return (
@@ -33,14 +33,14 @@ export default async function InvitePage({ params }: InvitePageProps) {
             <AlertCircle className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="font-display font-bold text-2xl text-white tracking-tight">{errorTitle}</h1>
+            <h1 className="font-display font-bold text-2xl text-[#f6f2e9] tracking-tight">{errorTitle}</h1>
             <p className="text-sm text-zinc-400 mt-2 leading-relaxed">{errorDescription}</p>
           </div>
           <Link
             href="/"
-            className="w-full py-3 px-4 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2"
+            className="w-full py-3 px-4 rounded-xl bg-white/10 hover:bg-white/15 text-[#f6f2e9] text-sm font-semibold transition-colors flex items-center justify-center gap-2"
           >
-            Back to Showcase
+            Kembali ke Beranda
           </Link>
         </div>
       </main>
@@ -49,15 +49,15 @@ export default async function InvitePage({ params }: InvitePageProps) {
 
   const { invite } = validation;
   const formattedExpiry = invite.expiresAt
-    ? new Intl.DateTimeFormat("en-US", {
+    ? new Intl.DateTimeFormat("id-ID", {
         timeZone: "Asia/Makassar",
-        month: "short",
         day: "numeric",
+        month: "short",
+        year: "numeric",
         hour: "2-digit",
         minute: "2-digit",
-        timeZoneName: "short",
-      }).format(new Date(invite.expiresAt))
-    : "No Expiry";
+      }).format(new Date(invite.expiresAt)) + " WITA"
+    : "Tidak Kedaluwarsa";
 
   return (
     <main className="min-h-screen flex flex-col justify-center items-center p-6 relative overflow-hidden">
@@ -74,13 +74,13 @@ export default async function InvitePage({ params }: InvitePageProps) {
           <div>
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-mono mb-2">
               <Sparkles className="h-3.5 w-3.5" />
-              <span>OFFICIAL INVITATION</span>
+              <span>UNDANGAN RESMI</span>
             </div>
-            <h1 className="font-display font-extrabold text-2xl sm:text-3xl text-white tracking-tight">
-              Join Mengart Atelier
+            <h1 className="font-display font-extrabold text-2xl sm:text-3xl text-[#f6f2e9] tracking-tight">
+              Bergabung ke Mengart
             </h1>
             <p className="text-sm text-zinc-400 mt-1">
-              You have been invited to join the private digital art collective.
+              Anda diundang untuk bergabung ke komunitas atelier digital art privat.
             </p>
           </div>
         </div>
@@ -88,11 +88,11 @@ export default async function InvitePage({ params }: InvitePageProps) {
         {/* Invite Details Capsule */}
         <div className="grid grid-cols-2 gap-3 p-4 rounded-2xl bg-white/[0.03] border border-white/10 text-xs">
           <div className="flex flex-col gap-1">
-            <span className="text-zinc-500 font-mono">INVITATION CODE</span>
+            <span className="text-zinc-500 font-mono">KODE UNDANGAN</span>
             <span className="text-zinc-200 font-mono font-medium">{invite.tokenPrefix}...</span>
           </div>
           <div className="flex flex-col gap-1">
-            <span className="text-zinc-500 font-mono">VALID UNTIL</span>
+            <span className="text-zinc-500 font-mono">BERLAKU HINGGA</span>
             <span className="text-zinc-200 font-mono font-medium flex items-center gap-1">
               <Clock className="h-3 w-3 text-amber-400" />
               {formattedExpiry}
@@ -100,7 +100,7 @@ export default async function InvitePage({ params }: InvitePageProps) {
           </div>
           {invite.label ? (
             <div className="col-span-2 flex flex-col gap-1 pt-2 border-t border-white/5">
-              <span className="text-zinc-500 font-mono">INVITATION LABEL</span>
+              <span className="text-zinc-500 font-mono">LABEL UNDANGAN</span>
               <span className="text-zinc-300 font-sans">{invite.label}</span>
             </div>
           ) : null}

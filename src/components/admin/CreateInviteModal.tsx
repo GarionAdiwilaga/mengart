@@ -37,7 +37,7 @@ export function CreateInviteModal() {
         });
       }
     } catch (err: any) {
-      setError(err?.message || "Failed to create invitation");
+      setError(err?.message || "Gagal membuat tautan undangan");
     } finally {
       setIsLoading(false);
     }
@@ -67,7 +67,7 @@ export function CreateInviteModal() {
         className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-sm font-bold transition-all shadow-md shadow-amber-500/20 flex items-center gap-2 cursor-pointer"
       >
         <Plus className="h-4 w-4" />
-        <span>Generate Invite</span>
+        <span>Buat Undangan</span>
       </button>
 
       {isOpen ? (
@@ -81,13 +81,13 @@ export function CreateInviteModal() {
                 </div>
                 <div>
                   <h3 className="font-display font-bold text-lg text-white">
-                    {generatedInvite ? "Invitation Generated!" : "Create Membership Invitation"}
+                    {generatedInvite ? "Undangan Berhasil Dibuat!" : "Buat Undangan Keanggotaan"}
                   </h3>
                 </div>
               </div>
               <button
                 onClick={handleClose}
-                className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
+                className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -99,12 +99,12 @@ export function CreateInviteModal() {
                 <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3 text-xs text-amber-200">
                   <Sparkles className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
                   <p className="leading-relaxed">
-                    <strong>Save this URL now.</strong> For maximum security, the raw token is hashed with SHA-256 and never stored in the database. This link cannot be viewed again once closed.
+                    <strong>Salin tautan ini sekarang.</strong> Demi keamanan, token mentah di-hash dengan SHA-256 dan tidak disimpan di database. Tautan lengkap ini tidak dapat dilihat lagi setelah jendela ditutup.
                   </p>
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-mono text-zinc-400">FULL INVITATION URL</label>
+                  <label className="text-xs font-mono text-zinc-400">TAUTAN UNDANGAN LENGKAP</label>
                   <div className="flex items-center gap-2">
                     <input
                       type="text"
@@ -119,12 +119,12 @@ export function CreateInviteModal() {
                       {copied ? (
                         <>
                           <Check className="h-4 w-4" />
-                          <span>Copied</span>
+                          <span>Tersalin</span>
                         </>
                       ) : (
                         <>
                           <Copy className="h-4 w-4" />
-                          <span>Copy</span>
+                          <span>Salin</span>
                         </>
                       )}
                     </button>
@@ -133,9 +133,9 @@ export function CreateInviteModal() {
 
                 <button
                   onClick={handleClose}
-                  className="w-full py-3 px-4 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm font-semibold transition-colors mt-2"
+                  className="w-full py-3 px-4 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm font-semibold transition-colors mt-2 cursor-pointer"
                 >
-                  Done
+                  Selesai
                 </button>
               </div>
             ) : (
@@ -149,12 +149,12 @@ export function CreateInviteModal() {
                 ) : null}
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-mono text-zinc-300">OPTIONAL LABEL</label>
+                  <label className="text-xs font-mono text-zinc-300">LABEL UNDANGAN (OPSIONAL)</label>
                   <input
                     type="text"
                     value={label}
                     onChange={(e) => setLabel(e.target.value)}
-                    placeholder="e.g. Artist Cohort #2, Discord VIP"
+                    placeholder="contoh: Komunitas Discord Batch #2, VIP Artist"
                     maxLength={100}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/50 text-sm font-sans"
                   />
@@ -162,24 +162,24 @@ export function CreateInviteModal() {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-mono text-zinc-300">EXPIRATION PRESET</label>
+                    <label className="text-xs font-mono text-zinc-300">MASA BERLAKU</label>
                     <select
                       value={expiryPreset}
                       onChange={(e) => setExpiryPreset(e.target.value as InviteExpiryPreset)}
                       className="w-full px-3.5 py-2.5 rounded-xl bg-[#181c26] border border-white/10 text-white focus:outline-none focus:border-amber-500/50 text-sm font-sans"
                     >
-                      <option value="30m">30 Minutes</option>
-                      <option value="1h">1 Hour</option>
-                      <option value="6h">6 Hours</option>
-                      <option value="12h">12 Hours</option>
-                      <option value="1d">1 Day</option>
-                      <option value="7d">7 Days (Default)</option>
-                      <option value="never">No Expiry</option>
+                      <option value="30m">30 Menit</option>
+                      <option value="1h">1 Jam</option>
+                      <option value="6h">6 Jam</option>
+                      <option value="12h">12 Jam</option>
+                      <option value="1d">1 Hari</option>
+                      <option value="7d">7 Hari (Default)</option>
+                      <option value="never">Tanpa Kedaluwarsa</option>
                     </select>
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-mono text-zinc-300">MAX REDEMPTIONS</label>
+                    <label className="text-xs font-mono text-zinc-300">BATAS PENGGUNAAN</label>
                     <select
                       value={maxUses}
                       onChange={(e) =>
@@ -189,12 +189,12 @@ export function CreateInviteModal() {
                       }
                       className="w-full px-3.5 py-2.5 rounded-xl bg-[#181c26] border border-white/10 text-white focus:outline-none focus:border-amber-500/50 text-sm font-sans"
                     >
-                      <option value={1}>1 Use (Single-use)</option>
-                      <option value={5}>5 Uses</option>
-                      <option value={10}>10 Uses</option>
-                      <option value={25}>25 Uses</option>
-                      <option value={50}>50 Uses</option>
-                      <option value="unlimited">Unlimited Uses</option>
+                      <option value={1}>1 Kali Pakai (Single-use)</option>
+                      <option value={5}>5 Kali</option>
+                      <option value={10}>10 Kali</option>
+                      <option value={25}>25 Kali</option>
+                      <option value={50}>50 Kali</option>
+                      <option value="unlimited">Tanpa Batas (Unlimited)</option>
                     </select>
                   </div>
                 </div>
@@ -205,7 +205,7 @@ export function CreateInviteModal() {
                     onClick={handleClose}
                     className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-sm font-medium transition-colors cursor-pointer"
                   >
-                    Cancel
+                    Batal
                   </button>
                   <button
                     type="submit"
@@ -215,12 +215,12 @@ export function CreateInviteModal() {
                     {isLoading ? (
                       <>
                         <Loader2 className="h-4 w-4 animate-spin text-black" />
-                        <span>Generating...</span>
+                        <span>Membuat...</span>
                       </>
                     ) : (
                       <>
                         <Sparkles className="h-4 w-4" />
-                        <span>Create Link</span>
+                        <span>Buat Tautan</span>
                       </>
                     )}
                   </button>

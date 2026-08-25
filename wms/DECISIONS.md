@@ -52,6 +52,19 @@
    - *Focus/Comparison Deck:* Fullscreen swipeable/keyboard-navigable slide deck allowing members to evaluate candidates one-by-one with full detail and side-by-side comparison.
 3. **Ballot Review Dock:** A sticky drawer/bar summarizing spent and remaining Stars, highlighting unviewed/unvoted candidates before submission.
 **Business Rule:** Every candidate must have equal visual prominence and discovery fairness during voting rounds.
-**Reason:** Addresses user's requirement that high submission volume (20+ candidates) must not disadvantage submissions placed late in the default scroll order.
+### Studio Atelier Style Guide & Design Token Standards
+**Decision:** Adopt `studio-atelier-frontend-style-guide.md` as the authoritative frontend design specification.
+- **Palette & Tokens:** CSS-first tokens in `src/app/globals.css` with exact values: `canvas` (`#0E1015`), `canvas-elevated` (`#13161D`), `surface-1` (`#191C23`), `surface-2` (`#20232C`), `surface-3` (`#292D37`), `text-primary` (`#F6F2E9`), `amber-500` (`#F59E0B`), `border-subtle` (`rgba(255,255,255,0.10)`).
+- **One-Amber Rule:** Amber is restricted to primary actions, Stars, active stages, and awards. No decorative amber clutter.
+- **Component Baseline:** shadcn/ui with New York style as structural base, customized to Studio Atelier design tokens.
+**Business Rule:** Artwork fidelity must never be altered (no color tints or decorative overlays on images).
+**Reason:** Documented in style guide baseline.
+
+### UI Language & Localization Standards
+**Decision:** Default user interface language is natural Bahasa Indonesia, preserving standard international art & technical terms (`challenge`, `commission`, `software`, `GIF`, `video`, `focus mode`, `lightbox`, `WITA`).
+- **Date & Time Display:** Absolute WITA timestamps (`Asia/Makassar` / UTC+8), e.g., `18 Agu 2026, 23.59 WITA`.
+**Business Rule:** Interface copy must avoid awkward literal translations and technical jargon.
+**Reason:** Clarified in style guide section 11.
+
 
 

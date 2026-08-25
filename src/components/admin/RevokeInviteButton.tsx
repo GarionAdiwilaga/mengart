@@ -18,7 +18,7 @@ export function RevokeInviteButton({ inviteId, tokenPrefix }: RevokeInviteButton
   const handleRevoke = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!reason.trim()) {
-      setError("Please provide a reason for revocation (required for audit logging).");
+      setError("Silakan berikan alasan pencabutan (wajib untuk pencatatan audit log).");
       return;
     }
 
@@ -32,7 +32,7 @@ export function RevokeInviteButton({ inviteId, tokenPrefix }: RevokeInviteButton
       });
       setIsOpen(false);
     } catch (err: any) {
-      setError(err?.message || "Failed to revoke invitation");
+      setError(err?.message || "Gagal mencabut undangan");
     } finally {
       setIsLoading(false);
     }
@@ -42,11 +42,11 @@ export function RevokeInviteButton({ inviteId, tokenPrefix }: RevokeInviteButton
     <>
       <button
         onClick={() => setIsOpen(true)}
-        title="Revoke Invitation"
+        title="Cabut Undangan"
         className="px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs font-mono transition-colors inline-flex items-center gap-1 border border-red-500/20 cursor-pointer"
       >
         <Ban className="h-3 w-3" />
-        <span>Revoke</span>
+        <span>Cabut</span>
       </button>
 
       {isOpen ? (
@@ -56,19 +56,19 @@ export function RevokeInviteButton({ inviteId, tokenPrefix }: RevokeInviteButton
               <div className="flex items-center gap-2 text-red-400">
                 <AlertTriangle className="h-5 w-5" />
                 <h3 className="font-display font-bold text-base text-white">
-                  Revoke Invitation ({tokenPrefix}...)
+                  Cabut Undangan ({tokenPrefix}...)
                 </h3>
               </div>
               <button
                 onClick={() => setIsOpen(false)}
-                className="p-1.5 rounded-lg text-zinc-400 hover:text-white transition-colors"
+                className="p-1.5 rounded-lg text-zinc-400 hover:text-white transition-colors cursor-pointer"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
             <p className="text-xs text-zinc-400 leading-relaxed">
-              Revoking this invitation immediately invalidates it. Existing redeemed members will retain their accounts, but no further redemptions will be accepted.
+              Mencabut undangan ini akan langsung menonaktifkannya. Anggota yang telah terdaftar sebelumnya tetap memiliki akun aktif, tetapi tidak ada pendaftaran baru yang dapat menggunakan tautan ini.
             </p>
 
             <form onSubmit={handleRevoke} className="flex flex-col gap-4">
@@ -80,13 +80,13 @@ export function RevokeInviteButton({ inviteId, tokenPrefix }: RevokeInviteButton
 
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-mono text-zinc-300">
-                  REVOCATION REASON (AUDIT LOGGED)
+                  ALASAN PENCABUTAN (TERCATAT DI AUDIT LOG)
                 </label>
                 <input
                   type="text"
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
-                  placeholder="e.g. Expired event, Shared publicly by mistake"
+                  placeholder="contoh: Event berakhir, Tautan tersebar publik secara tidak sengaja"
                   required
                   maxLength={500}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-red-500/50 text-sm font-sans"
@@ -99,7 +99,7 @@ export function RevokeInviteButton({ inviteId, tokenPrefix }: RevokeInviteButton
                   onClick={() => setIsOpen(false)}
                   className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-medium transition-colors cursor-pointer"
                 >
-                  Cancel
+                  Batal
                 </button>
                 <button
                   type="submit"
@@ -109,12 +109,12 @@ export function RevokeInviteButton({ inviteId, tokenPrefix }: RevokeInviteButton
                   {isLoading ? (
                     <>
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      <span>Revoking...</span>
+                      <span>Mencabut...</span>
                     </>
                   ) : (
                     <>
                       <Ban className="h-3.5 w-3.5" />
-                      <span>Confirm Revocation</span>
+                      <span>Konfirmasi Pencabutan</span>
                     </>
                   )}
                 </button>

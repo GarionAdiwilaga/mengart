@@ -12,15 +12,15 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   let errorMessage: string | null = null;
   if (error === "InviteRequired") {
     errorMessage =
-      "Invitation required. Mengart is an invite-only art community. Please open a valid invitation link to join.";
+      "Undangan dibutuhkan. Mengart adalah komunitas art berbasis undangan (invite-only). Silakan buka tautan undangan resmi untuk mendaftar.";
   } else if (error === "AccountSuspended") {
     errorMessage =
-      "Your account has been temporarily suspended. Please reach out to a community moderator.";
+      "Akun Anda sedang ditangguhkan. Silakan hubungi moderator komunitas untuk bantuan.";
   } else if (error === "AccountRevoked") {
     errorMessage =
-      "Your membership has been revoked. Access to protected features is restricted.";
+      "Status keanggotaan Anda telah dicabut. Akses fitur khusus anggota telah dinonaktifkan.";
   } else if (error === "OAuthSignin" || error === "OAuthCallback") {
-    errorMessage = "Could not authenticate with Google. Please try again.";
+    errorMessage = "Gagal melakukan autentikasi dengan Google. Silakan coba kembali.";
   }
 
   return (
@@ -34,7 +34,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           href="/"
           className="inline-flex items-center gap-2 text-xs font-mono text-zinc-400 hover:text-white transition-colors"
         >
-          <ArrowLeft className="h-3.5 w-3.5" /> Back to Showcase
+          <ArrowLeft className="h-3.5 w-3.5" /> Kembali ke Beranda
         </Link>
       </div>
 
@@ -46,11 +46,11 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             <Palette className="h-6 w-6 text-black" />
           </div>
           <div>
-            <h1 className="font-display font-extrabold text-2xl sm:text-3xl text-white tracking-tight">
-              Member Sign In
+            <h1 className="font-display font-extrabold text-2xl sm:text-3xl text-[#f6f2e9] tracking-tight">
+              Masuk Anggota
             </h1>
             <p className="text-sm text-zinc-400 mt-1">
-              Access the atelier, vault, and community challenges.
+              Akses atelier, vault karya master, dan voting challenge.
             </p>
           </div>
         </div>
@@ -59,7 +59,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         {error ? (
           <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-start gap-3">
             <ShieldAlert className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
-            <div className="leading-relaxed">{errorMessage || "Authentication error occurred."}</div>
+            <div className="leading-relaxed">{errorMessage || "Terjadi kesalahan saat masuk."}</div>
           </div>
         ) : null}
 
@@ -94,7 +94,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
                 d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
               />
             </svg>
-            <span>Continue with Google</span>
+            <span>Masuk dengan Google</span>
           </button>
         </form>
 
@@ -102,10 +102,10 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 flex flex-col gap-2">
           <div className="flex items-center gap-2 text-xs font-mono text-amber-400">
             <Sparkles className="h-3.5 w-3.5" />
-            <span>INVITATION ONLY</span>
+            <span>KHUSUS UNDANGAN</span>
           </div>
           <p className="text-xs text-zinc-400 leading-relaxed">
-            First-time membership requires an official community invite URL. If you have an invite link, open it directly in your browser to register.
+            Pendaftaran pertama kali memerlukan tautan undangan resmi. Jika Anda memiliki link undangan, buka langsung tautan tersebut di peramban Anda.
           </p>
         </div>
       </div>

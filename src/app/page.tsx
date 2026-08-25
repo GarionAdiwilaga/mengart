@@ -10,7 +10,7 @@ export default function HomePage() {
           <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-amber-500 to-amber-700 flex items-center justify-center shadow-lg shadow-amber-500/20">
             <Palette className="h-5 w-5 text-black" />
           </div>
-          <span className="font-display font-bold text-2xl tracking-tight text-white">
+          <span className="font-display font-bold text-2xl tracking-tight text-[#f6f2e9]">
             Mengart
           </span>
         </div>
@@ -19,13 +19,13 @@ export default function HomePage() {
             href="/login"
             className="px-4 py-2 text-sm font-medium text-zinc-300 hover:text-white transition-colors"
           >
-            Member Login
+            Masuk Anggota
           </Link>
           <Link
             href="/gallery"
-            className="px-4 py-2 text-sm font-semibold rounded-lg bg-amber-500 text-black hover:bg-amber-400 transition-all duration-200 shadow-md shadow-amber-500/20 flex items-center gap-1.5"
+            className="px-4 py-2 text-sm font-semibold rounded-xl bg-amber-500 text-black hover:bg-amber-400 transition-all duration-200 shadow-md shadow-amber-500/20 flex items-center gap-1.5 cursor-pointer"
           >
-            Explore Gallery <ArrowRight className="h-4 w-4" />
+            Jelajahi Galeri <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
       </header>
@@ -34,29 +34,29 @@ export default function HomePage() {
       <section className="py-20 sm:py-28 flex flex-col items-start gap-8">
         <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-mono tracking-wide">
           <Sparkles className="h-3.5 w-3.5" />
-          <span>DIGITAL ART COMMUNITY PLATFORM</span>
+          <span>KOMUNITAS DIGITAL ART & ATELIER</span>
         </div>
 
-        <h1 className="font-display text-4xl sm:text-6xl lg:text-7xl font-extrabold text-white tracking-tight leading-[1.1]">
-          Where Craft Meets <br />
+        <h1 className="font-display text-4xl sm:text-6xl lg:text-7xl font-extrabold text-[#f6f2e9] tracking-tight leading-[1.1]">
+          Ruang Karya & <br />
           <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-amber-200 to-amber-500">
-            Community Mastery.
+            Kolektif Kreator Digital.
           </span>
         </h1>
 
         <p className="text-lg sm:text-xl text-zinc-400 max-w-2xl font-sans leading-relaxed">
-          A dedicated atelier for digital artists. Discover curated portfolios, commission trusted creators, and participate in anonymous-ballot community challenges.
+          Atelier digital khusus kreator seni visual. Temukan portofolio terkurasi, buka layanan komisi langsung via WhatsApp, dan ikuti community challenge dengan sistem voting Stars yang adil.
         </p>
 
-        {/* Feature Highlights Bento Grid */}
+        {/* Feature Highlights Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 w-full mt-6">
           <div className="glass-panel p-6 rounded-2xl flex flex-col gap-3">
             <div className="h-10 w-10 rounded-lg bg-white/5 flex items-center justify-center text-amber-400">
               <Palette className="h-5 w-5" />
             </div>
-            <h3 className="font-display font-semibold text-lg text-white">Curated Portfolios</h3>
+            <h3 className="font-display font-semibold text-lg text-[#f6f2e9]">Portofolio Terkurasi</h3>
             <p className="text-sm text-zinc-400 leading-relaxed">
-              Full-quality member vaults alongside protected, watermarked public showcases.
+              Showcase publik ber-watermark terlindungi berdampingan dengan arsip master penuh bagi sesama anggota.
             </p>
           </div>
 
@@ -64,9 +64,9 @@ export default function HomePage() {
             <div className="h-10 w-10 rounded-lg bg-white/5 flex items-center justify-center text-amber-400">
               <Trophy className="h-5 w-5" />
             </div>
-            <h3 className="font-display font-semibold text-lg text-white">Community Challenges</h3>
+            <h3 className="font-display font-semibold text-lg text-[#f6f2e9]">Art Challenge</h3>
             <p className="text-sm text-zinc-400 leading-relaxed">
-              Anonymous Stars voting & jury selection with zero-scroll positional bias.
+              Voting suara anonim dengan alokasi Stars serta penilaian juri tanpa bias urutan scroll.
             </p>
           </div>
 
@@ -74,9 +74,9 @@ export default function HomePage() {
             <div className="h-10 w-10 rounded-lg bg-white/5 flex items-center justify-center text-amber-400">
               <ShieldCheck className="h-5 w-5" />
             </div>
-            <h3 className="font-display font-semibold text-lg text-white">Commission Hub</h3>
+            <h3 className="font-display font-semibold text-lg text-[#f6f2e9]">Pusat Komisi</h3>
             <p className="text-sm text-zinc-400 leading-relaxed">
-              Transparent slot tracking, turnaround rules, and direct WhatsApp referral links.
+              Informasi ketersediaan slot, transparansi ketentuan do/don't, dan pemesanan langsung via WhatsApp.
             </p>
           </div>
         </div>
@@ -84,10 +84,10 @@ export default function HomePage() {
 
       {/* Footer */}
       <footer className="py-6 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-zinc-500 font-mono">
-        <div>© {new Date().getFullYear()} Mengart Community. All rights reserved.</div>
+        <div>© {new Date().getFullYear()} Mengart Community. Hak cipta dilindungi.</div>
         <div className="flex items-center gap-6">
-          <span>Timezone: Asia/Makassar (WITA)</span>
-          <span>Status: Phase 0 Setup</span>
+          <span>Zona Waktu: Asia/Makassar (WITA)</span>
+          <span>Status: Fase 1 Selesai</span>
         </div>
       </footer>
     </main>

@@ -27,7 +27,7 @@ export default async function DashboardPage() {
               <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-amber-500 to-amber-700 flex items-center justify-center shadow-lg shadow-amber-500/20">
                 <Palette className="h-4 w-4 text-black" />
               </div>
-              <span className="font-display font-bold text-xl text-white">Mengart</span>
+              <span className="font-display font-bold text-xl text-[#f6f2e9]">Mengart</span>
             </Link>
           </div>
 
@@ -35,10 +35,10 @@ export default async function DashboardPage() {
             {isModOrAdmin ? (
               <Link
                 href="/admin/invites"
-                className="px-3.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-xs font-mono transition-colors flex items-center gap-1.5"
+                className="px-3.5 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-xs font-mono transition-colors flex items-center gap-1.5"
               >
                 <Key className="h-3.5 w-3.5" />
-                <span>Admin Invites</span>
+                <span>Kelola Undangan</span>
               </Link>
             ) : null}
 
@@ -50,10 +50,10 @@ export default async function DashboardPage() {
             >
               <button
                 type="submit"
-                className="px-3.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white text-xs font-mono transition-colors flex items-center gap-1.5 cursor-pointer"
+                className="px-3.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white text-xs font-mono transition-colors flex items-center gap-1.5 cursor-pointer"
               >
                 <LogOut className="h-3.5 w-3.5" />
-                <span>Sign Out</span>
+                <span>Keluar</span>
               </button>
             </form>
           </div>
@@ -67,15 +67,15 @@ export default async function DashboardPage() {
             </div>
             <div className="flex flex-col gap-1">
               <div className="flex items-center gap-2.5">
-                <h1 className="font-display font-extrabold text-2xl sm:text-3xl text-white tracking-tight">
-                  Welcome back, {profile?.displayName || "Artist"}
+                <h1 className="font-display font-extrabold text-2xl sm:text-3xl text-[#f6f2e9] tracking-tight">
+                  Selamat datang kembali, {profile?.displayName || "Artist"}
                 </h1>
                 <span className="px-2.5 py-0.5 rounded-full text-xs font-mono uppercase bg-amber-500/10 text-amber-400 border border-amber-500/30">
                   {user.role}
                 </span>
               </div>
               <p className="text-xs font-mono text-zinc-400">
-                Email: {user.email} • Status: {user.membershipStatus} • Profile: {profile?.profileStatus || "incomplete"}
+                Email: {user.email} • Status: {user.membershipStatus} • Profil: {profile?.profileStatus || "incomplete"}
               </p>
             </div>
           </div>
@@ -85,66 +85,66 @@ export default async function DashboardPage() {
         <section className="grid grid-cols-1 sm:grid-cols-3 gap-6">
           <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between gap-4">
             <div className="flex items-center justify-between">
-              <span className="font-mono text-xs text-zinc-500">ARTWORK VAULT</span>
+              <span className="font-mono text-xs text-zinc-500">VAULT KARYA</span>
               <Image className="h-4 w-4 text-amber-400" />
             </div>
             <div>
-              <h3 className="font-display font-bold text-lg text-white">My Portfolio</h3>
+              <h3 className="font-display font-bold text-lg text-[#f6f2e9]">Portofolio Saya</h3>
               <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
-                Upload artworks, generate clean and watermarked versions, and organize pinned showcase pieces.
+                Unggah karya digital, hasilkan versi clean master & watermark, dan atur susunan showcase profil.
               </p>
             </div>
             <Link
               href="/me/portfolio"
               className="mt-2 text-xs font-mono text-amber-400 hover:text-amber-300 transition-colors inline-flex items-center gap-1"
             >
-              Open Portfolio →
+              Buka Portofolio →
             </Link>
           </div>
 
           <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between gap-4">
             <div className="flex items-center justify-between">
-              <span className="font-mono text-xs text-zinc-500">COMMISSIONS</span>
+              <span className="font-mono text-xs text-zinc-500">LAYANAN KOMISI</span>
               <Briefcase className="h-4 w-4 text-amber-400" />
             </div>
             <div>
-              <h3 className="font-display font-bold text-lg text-white">Commission Hub</h3>
+              <h3 className="font-display font-bold text-lg text-[#f6f2e9]">Pusat Komisi</h3>
               <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
-                Manage service cards, price ranges, slot availability, and WhatsApp contact preferences.
+                Kelola kartu layanan, rentang harga, ketersediaan slot antrean, dan preferensi kontak WhatsApp.
               </p>
             </div>
             <Link
               href="/me/commissions"
               className="mt-2 text-xs font-mono text-amber-400 hover:text-amber-300 transition-colors inline-flex items-center gap-1"
             >
-              Manage Services →
+              Kelola Layanan →
             </Link>
           </div>
 
           <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between gap-4">
             <div className="flex items-center justify-between">
-              <span className="font-mono text-xs text-zinc-500">COMMUNITY EVENTS</span>
+              <span className="font-mono text-xs text-zinc-500">EVENT KOMUNITAS</span>
               <Trophy className="h-4 w-4 text-amber-400" />
             </div>
             <div>
-              <h3 className="font-display font-bold text-lg text-white">Art Challenges</h3>
+              <h3 className="font-display font-bold text-lg text-[#f6f2e9]">Art Challenge</h3>
               <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
-                Submit challenge artwork revisions, cast Stars during voting, and review past Hall of Fame winners.
+                Kirim karya submisi, gunakan alokasi Stars saat voting dibuka, dan lihat daftar pemenang Hall of Fame.
               </p>
             </div>
             <Link
               href="/challenges"
               className="mt-2 text-xs font-mono text-amber-400 hover:text-amber-300 transition-colors inline-flex items-center gap-1"
             >
-              View Challenges →
+              Lihat Challenge →
             </Link>
           </div>
         </section>
       </div>
 
       <footer className="py-4 border-t border-white/10 text-xs font-mono text-zinc-500 flex justify-between items-center">
-        <span>Mengart Atelier Platform</span>
-        <span>Timezone: Asia/Makassar (WITA)</span>
+        <span>Platform Mengart Atelier</span>
+        <span>Zona Waktu: Asia/Makassar (WITA)</span>
       </footer>
     </main>
   );
