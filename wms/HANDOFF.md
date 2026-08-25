@@ -1,29 +1,29 @@
 **Date:** 2026-08-26
 
 ## Completed
-- Completed blueprint analysis and baseline evaluation.
-- Confirmed fullstack architecture: **Option A (Next.js 15 App Router, TypeScript, PostgreSQL + Drizzle, BullMQ, Tailwind CSS v4, shadcn/ui)**.
-- Established UI/UX direction: **Concept 1: Studio Atelier (Warm Obsidian & Gallery Amber)** with *Syne* + *Plus Jakarta Sans* + *JetBrains Mono*.
-- Architected voting fairness and candidate gallery UX (deterministic per-voter shuffling, Focus/Comparison Deck mode, sticky Ballot Review dock).
-- Completed **Phase 0 Setup**:
-  - Initialized Next.js 15, React 19, TypeScript, ESLint.
-  - Setup Tailwind CSS v4 `@theme` Studio Atelier tokens.
-  - Configured Docker Compose (PostgreSQL 16 on port 5433, Redis 7 on port 6379).
-  - Setup Drizzle ORM config and executed live schema migration.
-  - Verified `npm run build` production compilation passes with 0 errors.
+- Completed **Phase 0** (Scaffolding, TypeScript, Next.js 15, Tailwind v4 theme, Docker Compose Postgres & Redis, Drizzle ORM).
+- Completed **Phase 1** (Foundation):
+  - Drizzle database schema for 18 core tables (Users, Profiles, Invites, Artworks, Artwork Versions, Portfolio Entries, Badges, Notifications, Audit Logs).
+  - Discord-style SHA-256 hashed single/multi-use invitation engine (`src/lib/invites.ts`) with automated tests (`src/lib/__tests__/testInvites.ts`).
+  - NextAuth.js v5 Google OAuth integration (`src/auth.ts`, `src/app/api/auth/[...nextauth]/route.ts`, `src/app/api/auth/redeem-callback/route.ts`).
+  - Server-side RBAC guards (`src/lib/rbac.ts`).
+  - Dual-variant storage architecture and protected master media streaming endpoint (`src/lib/storage.ts`, `src/app/api/media/master/[key]/route.ts`).
+  - Studio Atelier UI pages: `/login`, `/invite/[token]`, `/admin/invites`, `/dashboard`.
+  - Passed Next.js Turbopack build (`npm run build`) with 0 errors/warnings.
+  - Pushed to GitHub repository (`git@github.com:GarionAdiwilaga/mengart.git` on `main`).
 
 ## Current Focus
-- Starting **Phase 1 — Foundation**:
-  1. Define complete PostgreSQL database schema in `src/db/schema/` (Identity, Membership, Invites, Artworks & Versions, Audit Logs).
-  2. Implement Discord-style SHA-256 hashed single/multi-use invitation redemption engine.
-  3. Implement NextAuth with Google OAuth 2.0 and RBAC authorization guards.
-  4. Implement private (`master_clean`) and public media storage directory structure.
+- **Phase 2 — Artist and Gallery Platform**:
+  - Image/Video/GIF media upload pipeline with async metadata stripping, watermarking (`sharp`), and thumbnailing via BullMQ queue worker.
+  - Artist profile management (`/me/profile`, `/artists/[slug]`, `/artists`).
+  - Commission services management & WhatsApp contact referral button (`/me/commissions`, `/commissions`).
+  - Public watermarked gallery masonry layout and authenticated clean viewer (`/gallery`, `/artworks/[slug]`).
 
 ## Notes for Next Agent / Session
-- PostgreSQL container is running on host port `5433` (to avoid collision with host `5432`).
-- Redis is running on host port `6379`.
-- Server resources: 15 GiB RAM, ~14 GiB free.
-- Keep canonical artwork versioning and notification schema in mind for Phase 1 & 2.
+- Remote repository is set to `git@github.com:GarionAdiwilaga/mengart.git`.
+- PostgreSQL 16 is running on host port `5433`.
+- Redis 7 is running on host port `6379`.
+- Skills used: `frontend-design`, `react-best-practices`, `api-design-principles`, `tailwind-patterns`, `postgresql`.
 
 ## Notes for Next Agent / Session
 - Do not write implementation code until user confirms phase and stack alignment.
