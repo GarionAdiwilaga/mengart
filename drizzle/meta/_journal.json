@@ -43,6 +43,13 @@
       "when": 1787686491304,
       "tag": "0005_complete_iron_lad",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787686925336,
+      "tag": "0006_magical_carmella_unuscione",
+      "breakpoints": true
     }
   ]
 }

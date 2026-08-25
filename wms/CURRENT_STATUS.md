@@ -1,8 +1,8 @@
 # Current Status
 
 ## Phase
-Phase 4 — Stars & Jury Workflow (COMPLETED)
-Phase 5 — Community & Administration (NEXT)
+Phase 5 — Community & Administration (COMPLETED)
+Phase 6 — Historical Backfill & Media Automation (NEXT)
 
 ## Last Completed
 - **Phase 0 Setup**: Next.js 15, React 19, TypeScript, Tailwind CSS v4 `@theme` (Studio Atelier), Docker Compose (PostgreSQL 16 on port 5433, Redis 7 on port 6379), Drizzle ORM.
@@ -22,34 +22,34 @@ Phase 5 — Community & Administration (NEXT)
 - **Phase 3 Challenge Submission Engine**:
   - Challenge schema, authoritative lifecycle calculator & deadline locks in WITA (`src/lib/challenges.ts`).
   - Member artwork submission action with versioning & revisions (`src/app/actions/challenges.ts`).
-  - Challenge kit streaming endpoint (`/api/challenges/kit/[fileKey]`).
   - Public challenge directory (`/challenges`) and detail view (`/challenges/[slug]`).
   - Admin challenge manager (`/admin/challenges`, `/admin/challenges/new`).
 - **Phase 4 Stars & Jury Workflow**:
-  - Ballot schema: `challenge_ballots`, `challenge_ballot_stars`, `challenge_jury_scores`, `challenge_results`.
-  - Deterministic seeded pseudo-random candidate shuffle per voter to eliminate top-of-page discovery bias (`src/lib/voting.ts`).
-  - Self-voting prevention and atomic Star ballot allocations (`src/app/actions/voting.ts`).
-  - Dual-mode voting workspace (`VotingWorkspace.tsx`): **Balanced Atelier Grid** (4:3 uniform cards) & **Focus / Comparison Slide Deck** (keyboard arrows, thumbnail jump ribbon, side-by-side mode).
-  - Sticky **Ballot Review Dock** with live remaining Stars countdown and quick submission.
-  - Jury evaluation portal (`/challenges/[slug]/jury`) with slot nominations and critique notes.
-  - Challenge results finalization action and Hall of Fame presentation (`/challenges/[slug]/results`).
-  - All automated integration tests verified (`src/lib/__tests__/testPhase4Voting.ts`).
-  - Production build verified with Turbopack (`npm run build`) passing across 27 routes with 0 errors/warnings.
+  - Anonymous Star ballot schema & allocations (`src/db/schema/ballots.ts`, `src/app/actions/voting.ts`).
+  - Deterministic anti-bias candidate shuffle (`src/lib/voting.ts`).
+  - Dual-mode voting UI (**Balanced Atelier Grid** & **Focus / Comparison Slide Deck** with keyboard arrows).
+  - Sticky **Ballot Review Dock** with live remaining Stars countdown.
+  - Jury evaluation portal (`/challenges/[slug]/jury`) and Hall of Fame presentation (`/challenges/[slug]/results`).
+- **Phase 5 Community & Administration**:
+  - Critique comments schema (`src/db/schema/critiques.ts`) with aspect tagging, threaded replies, pinning, and notifications (`CritiqueSection.tsx`).
+  - Centralized moderation queue (`/admin/moderation`) and reporting modal (`ReportModal.tsx`) with takedown and suspension triggers (`src/app/actions/moderation.ts`).
+  - Audit log explorer (`/admin/audit-logs`) with chronological system event inspection.
+  - Monthly Artist Spotlight hero & Live Community Activity Feed on homepage (`/`).
+  - All automated integration tests verified (`src/lib/__tests__/testPhase5Community.ts`).
+  - Production build verified with Turbopack (`npm run build`) passing across 29 routes with 0 errors/warnings.
 
 ## Current Branch
 `main`
 
 ## Current Focus
-- Starting **Phase 5 — Community & Administration**:
-  - Constructive critique comments on artworks with markdown / process feedback.
-  - Moderation queue for reporting / moderating artworks and comments.
-  - Activity feed & community spotlight.
-  - Audit log viewer for administrative actions.
+- Starting **Phase 6 — Historical Backfill & Media Automation**:
+  - Historical challenge import / backfill manager (`/admin/challenges/import` or direct backfill importer).
+  - 9:16 Story Card Generator (1080 × 1920) for Challenge Announcements & Results with downloadable SVG/Canvas/Server rendering.
+  - Community Hall of Fame archive refinement.
 
 ## Next Task
-- Define Phase 5 critique & moderation schema in `src/db/schema/critiques.ts`.
-- Implement critique comments component on Artwork Lightbox (`/artworks/[slug]`).
-- Implement Admin Moderation Queue (`/admin/moderation`).
+- Build Historical Challenge Backfill Importer (`src/lib/historicalBackfill.ts` & `/admin/challenges/import`).
+- Build 9:16 Story Card Generator component and downloadable media endpoints (`src/components/challenges/StoryCardGenerator.tsx`).
 
 ## Blockers
 - None.

@@ -16,6 +16,8 @@ import {
   User,
   ArrowRight,
   ShieldCheck,
+  ShieldAlert,
+  History as HistoryIcon,
 } from "lucide-react";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 
@@ -70,17 +72,31 @@ export default async function DashboardPage() {
               <>
                 <Link
                   href="/admin/challenges"
-                  className="px-3.5 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-xs font-mono transition-colors flex items-center gap-1.5"
+                  className="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-xs font-mono transition-colors flex items-center gap-1.5"
                 >
                   <Trophy className="h-3.5 w-3.5" />
-                  <span>Kelola Challenge</span>
+                  <span className="hidden sm:inline">Challenge</span>
+                </Link>
+                <Link
+                  href="/admin/moderation"
+                  className="px-3 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-xs font-mono transition-colors flex items-center gap-1.5"
+                >
+                  <ShieldAlert className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Moderasi</span>
+                </Link>
+                <Link
+                  href="/admin/audit-logs"
+                  className="px-3.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-xs font-mono transition-colors flex items-center gap-1.5"
+                >
+                  <HistoryIcon className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Audit</span>
                 </Link>
                 <Link
                   href="/admin/invites"
-                  className="px-3.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-xs font-mono transition-colors flex items-center gap-1.5"
+                  className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-xs font-mono transition-colors flex items-center gap-1.5"
                 >
                   <Key className="h-3.5 w-3.5" />
-                  <span>Kelola Undangan</span>
+                  <span className="hidden sm:inline">Undangan</span>
                 </Link>
               </>
             ) : null}

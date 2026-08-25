@@ -6,23 +6,21 @@
 - Completed **Phase 2** (Artist and Gallery Platform: Async Media Pipeline, Watermarking, Commissions Hub, Lightbox, Notifications).
 - Completed **Phase 2.5** (Dual Auth & Account Merging: Credentials login, Google account merging, email verification, flexible invitation URL parsing).
 - Completed **Phase 3** (Challenge Submission Engine: Lifecycle controller, versioned submissions, challenge kits, admin challenge creator).
-- Completed **Phase 4** (Stars & Jury Workflow):
-  - Ballot schema (`challenge_ballots`, `challenge_ballot_stars`, `challenge_jury_scores`, `challenge_results`).
-  - Deterministic voter seed shuffle for anti-bias discovery (`src/lib/voting.ts`).
-  - Anonymous Star ballot voting with self-voting prevention (`src/app/actions/voting.ts`).
-  - Dual-mode voting UI with Balanced Atelier Grid & Focus / Comparison Slide Deck (`VotingWorkspace.tsx`).
-  - Sticky Ballot Review Dock (`BallotReviewDock.tsx`).
-  - Assigned jury evaluation portal (`/challenges/[slug]/jury`).
-  - Official results & Hall of Fame podium (`/challenges/[slug]/results`).
-  - Passed automated test suite `src/lib/__tests__/testPhase4Voting.ts`.
-  - Verified Turbopack build (`npm run build`) passing across 27 routes with 0 errors/warnings.
-  - Updated `walkthrough.md` with complete Phase 4 testing instructions.
+- Completed **Phase 4** (Stars & Jury Workflow: Anonymous ballots, anti-bias discovery grid, focus slide deck, review dock, jury scoring, Hall of Fame results).
+- Completed **Phase 5** (Community & Administration):
+  - Critique comments engine with aspect tagging, replies, pinning, and notifications (`CritiqueSection.tsx`).
+  - Moderation queue (`/admin/moderation`) and report modal (`ReportModal.tsx`).
+  - Audit log explorer (`/admin/audit-logs`).
+  - Monthly Artist Spotlight & Live Activity Feed on homepage (`/`).
+  - Passed automated test suite `src/lib/__tests__/testPhase5Community.ts`.
+  - Verified Turbopack build (`npm run build`) passing across 29 routes with 0 errors/warnings.
+  - Updated `walkthrough.md` with complete Phase 5 testing instructions.
 
 ## Current Focus
-- **Phase 5 — Community & Administration**:
-  - Critique comments engine for artworks (`/artworks/[slug]`).
-  - Moderation queue for flagged content (`/admin/moderation`).
-  - Activity feed & community spotlight.
+- **Phase 6 — Historical Backfill & Media Automation**:
+  - Historical Challenge Backfill Importer.
+  - 9:16 Story Card Generator (1080 × 1920) for Challenge Announcements & Results.
+  - Hall of Fame archive refinement.
 
 ## Notes for Next Agent / Session
 - Remote repository is set to `git@github.com:GarionAdiwilaga/mengart.git`.

@@ -1,6 +1,13 @@
 import { db } from "@/db";
-import { artworks, artworkVersions, profiles, tags, artworkTags } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import {
+  artworks,
+  artworkVersions,
+  profiles,
+  tags,
+  artworkTags,
+  critiqueComments,
+} from "@/db/schema";
+import { eq, and, desc, isNull } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { auth } from "@/auth";
 import Link from "next/link";
@@ -17,6 +24,8 @@ import {
   Calendar,
 } from "lucide-react";
 import { ArtworkLightbox } from "@/components/gallery/ArtworkLightbox";
+import { CritiqueSection } from "@/components/artworks/CritiqueSection";
+import { ReportModal } from "@/components/artworks/ReportModal";
 
 interface ArtworkDetailPageProps {
   params: Promise<{ slug: string }>;
@@ -26,6 +35,8 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
   const { slug } = await params;
   const session = await auth();
   const isMember = !!session?.user?.id;
+  const currentUserId = session?.user?.id;
+  const currentUserRole = session?.user?.role;
 
   const [artwork] = await db
     .select({
@@ -71,6 +82,25 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
     .innerJoin(tags, eq(tags.id, artworkTags.tagId))
     .where(eq(artworkTags.artworkId, artwork.id));
 
+  // Fetch Critique Comments (excluding soft deleted)
+  const commentRows = await db
+    .select({
+      id: critiqueComments.id,
+      userId: critiqueComments.userId,
+      parentCommentId: critiqueComments.parentCommentId,
+      critiqueAspect: critiqueComments.critiqueAspect,
+      content: critiqueComments.content,
+      isPinned: critiqueComments.isPinned,
+      createdAt: critiqueComments.createdAt,
+      artistName: profiles.displayName,
+      artistSlug: profiles.slug,
+      artistAvatar: profiles.avatarUrl,
+    })
+    .from(critiqueComments)
+    .innerJoin(profiles, eq(profiles.id, critiqueComments.profileId))
+    .where(and(eq(critiqueComments.artworkId, artwork.id), isNull(critiqueComments.deletedAt)))
+    .orderBy(desc(critiqueComments.isPinned), desc(critiqueComments.createdAt));
+
   const publicMediaUrl = artwork.publicStorageKey
     ? `/api/media/public/${artwork.publicStorageKey}`
     : "/placeholder.png";
@@ -107,20 +137,26 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
         </div>
 
         <div className="flex items-center gap-3">
+          <ReportModal
+            targetType="artwork"
+            targetId={artwork.id}
+            targetTitle={artwork.title}
+          />
+
           <Link
             href={`/artists/${artwork.artistSlug}`}
             className="px-3.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-xs font-mono transition-colors flex items-center gap-1.5"
           >
             <User className="h-3.5 w-3.5 text-amber-400" />
-            <span>Lihat Profil Artist</span>
+            <span>Profil Artist</span>
           </Link>
         </div>
       </header>
 
       {/* Main Content Layout: Viewer (Left) + Details Sidebar (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left Column: Lightbox / Media Viewer */}
-        <div className="lg:col-span-2 flex flex-col gap-6">
+        {/* Left Column: Lightbox & Critique Section */}
+        <div className="lg:col-span-2 flex flex-col gap-8">
           <ArtworkLightbox
             publicMediaUrl={publicMediaUrl}
             masterMediaUrl={masterMediaUrl}
@@ -159,38 +195,16 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
             ) : null}
           </section>
 
-          {/* Critique Section */}
-          <section className="glass-panel p-6 sm:p-8 rounded-3xl flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <MessageSquare className="h-4 w-4 text-amber-400" />
-                <h3 className="font-display font-bold text-base text-[#f6f2e9]">
-                  {artwork.critiqueMode === "open_for_critique"
-                    ? "Diskusi & Kritik Konstruktif"
-                    : "Apresiasi Karya"}
-                </h3>
-              </div>
-              <span
-                className={`text-[10px] font-mono uppercase px-2.5 py-0.5 rounded-full border ${
-                  artwork.critiqueMode === "open_for_critique"
-                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
-                    : "bg-zinc-500/10 text-zinc-400 border-zinc-500/30"
-                }`}
-              >
-                {artwork.critiqueMode === "open_for_critique" ? "Open for Critique" : "Showcase Only"}
-              </span>
-            </div>
-
-            <p className="text-xs text-zinc-400 leading-relaxed">
-              {artwork.critiqueMode === "open_for_critique"
-                ? "Artist membuka karya ini untuk masukan konstruktif terkait pencahayaan, proporsi anatomi, nilai kontras, dan komposisi visual."
-                : "Ruang komentar apresiasi untuk sesama anggota komunitas atelier."}
-            </p>
-
-            <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 text-xs text-zinc-500 font-mono text-center">
-              Komentar komunitas akan aktif pada pembaruan Phase 5.
-            </div>
-          </section>
+          {/* Constructive Critique Section */}
+          <CritiqueSection
+            artworkId={artwork.id}
+            artworkSlug={artwork.slug}
+            critiqueMode={artwork.critiqueMode as any}
+            artworkOwnerUserId={artwork.userId}
+            currentUserId={currentUserId}
+            currentUserRole={currentUserRole}
+            comments={commentRows}
+          />
         </div>
 
         {/* Right Column: Artist Bio Card & Technical Metadata */}
