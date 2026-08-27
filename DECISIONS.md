@@ -98,3 +98,20 @@
 - Contextual admin overlays (`ArtworkAdminMenu`) accessible on every artwork card for instant spotlight curation or moderation takedowns without leaving gallery views.
 - Full invite codes with 1-click copy buttons, redemption logs drawer, and status filters.
 **Reason:** User requested architectural stack modernization and a complete UX overhaul from MVP into a mature, production-ready atelier platform.
+
+### Mobile-First & Touch-First Design System
+**Decision:** Adopt `/mobile-design` guidelines across the entire application:
+- Implement a thumb-first `MobileBottomNav` with safe-area inset handling (`pb-[max(0.375rem,env(safe-area-inset-bottom))]`) and floating center upload FAB.
+- Enforce minimum touch target sizes (`≥ 44px`) across all filter pills, interactive chips, copy buttons, and zoom controls.
+- Prevent iOS Safari auto-zoom by configuring form inputs with `text-base sm:text-xs` / `text-base sm:text-sm`.
+- Convert wide admin tables (`UserManagementTable`, `InviteManagerTable`) into stacked touch-friendly card views on mobile viewports (`< md`).
+**Business Rule:** Complete accessibility and one-handed thumb ergonomics on mobile screens without requiring horizontal scrolling for primary workflows.
+**Reason:** Explicit user requirement to ensure the atelier platform is fully mobile-friendly.
+
+### Phase 6: Historical Backfill & 9:16 Story Card Media Automation
+**Decision:** Build a dedicated administrative historical backfill action (`importHistoricalChallengeAction`) and high-density 9:16 Canvas Story Card Generator (`StoryCardGenerator.tsx`):
+- **Historical Backfill Importer:** Allows admins/moderators to register past offline/Discord challenges into the official Hall of Fame with authoritatively finished lifecycle status, custom past dates, participant artwork versions, Star vote tallies, and Jury Choice Awards with transactional database consistency and audit logging.
+- **9:16 Story Card Generator (1080 × 1920 px):** Dual-mode high-DPI canvas exporter (Announcement Mode vs Results & Podium Mode) allowing 1-click PNG downloads formatted specifically for Instagram Stories and WhatsApp Status sharing.
+**Business Rule:** Historical challenges must integrate seamlessly with live challenge queries, winner slots, and Hall of Fame views while maintaining immutable provenance in audit logs.
+**Reason:** Preserves community art heritage and automates social media distribution.
+

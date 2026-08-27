@@ -2,33 +2,34 @@
 
 ## Phase
 - Frontend Architectural Modernization: **COMPLETED**
-- Phase 6 — Historical Backfill & Media Automation: **NEXT**
+- Mobile Design System Optimization: **COMPLETED**
+- Phase 6 — Historical Backfill & Media Automation: **COMPLETED**
+- Phase 7 — Production Hardening & Operational Polish: **NEXT**
 
 ## Last Completed
-- **Frontend Architecture Modernization (React 19, TypeScript, Zustand, React Query, Radix UI/shadcn, Tailwind CSS v4, Framer Motion)**:
-  - Installed and configured `@tanstack/react-query`, `zustand`, `framer-motion`, `@radix-ui/react-*`, and `sonner`.
-  - Built global `Providers` (`src/app/providers.tsx`) with `QueryClientProvider`, `SessionProvider`, `TooltipProvider`, and dark `Toaster`.
-  - Built modular Zustand state stores in `src/stores/`: `useModalStore.ts`, `useLightboxStore.ts`, `useVotingStore.ts`, `useGalleryFilterStore.ts`.
-  - Built custom React Query hooks in `src/hooks/`: `useArtworks.ts`, `useCritiques.ts`.
-  - Universal Persistent Header (`AppHeader.tsx`) across all routes with global search shortcut (`Cmd+K`), notification drawer (`NotificationDrawer.tsx`), quick upload CTA (`QuickUploadModal.tsx`), and avatar dropdown (`UserDropdown.tsx`) with dedicated Studio vs Admin Switcher.
-  - Dedicated System Admin Command Center (`/admin/*`) with collapsible sidebar layout (`AdminSidebar.tsx`), Overview & Metrics hub (`/admin/page.tsx`), User Management directory with role switcher & suspension actions (`/admin/users/page.tsx`), Gallery curation & master file inspector (`/admin/artworks/page.tsx`), and upgraded Discord-style Invite Manager (`/admin/invites/page.tsx`).
-  - Contextual Admin Overlays (`ArtworkAdminMenu.tsx`) allowing instant spotlight curation or moderation takedowns directly from gallery views.
-  - Upgraded Gallery (`GalleryGrid.tsx`, `ArtworkCard.tsx`, `ArtworkLightbox.tsx`) with Framer Motion pan/zoom physics, master vs public watermarked toggle, and reactive filter bar.
-  - Verified with Turbopack production build (`npm run build`) passing across all 25 routes with 0 errors/warnings and passing all 8 integration test suites.
-  - Eliminated duplicate inner headers, footers, and redundant navigation across all pages (`/`, `/dashboard`, `/artists`, `/artworks/[slug]`, `/challenges/*`, `/commissions`, `/admin/*`, `/me/*`), replacing them with clean breadcrumbs and sub-header action bars.
+- **Mobile-First & Touch-First Design System (`/mobile-design`)**:
+  - Implemented `MobileBottomNav` with safe-area inset ergonomics, floating center upload FAB, and viewport spacer.
+  - Sized touch targets to `≥ 44px` across all filter pills, interactive chips, and zoom controls.
+  - Set input font sizes to `text-base sm:text-xs` / `text-base sm:text-sm` to prevent iOS Safari auto-zoom.
+  - Added responsive stacked card fallback views to admin data tables (`UserManagementTable`, `InviteManagerTable`).
+  - Upgraded `QuickUploadModal` to a smooth bottom-sheet modal on mobile screens.
+- **Phase 6 — Historical Backfill & Media Automation**:
+  - Built `importHistoricalChallengeAction` (`src/app/actions/historicalBackfill.ts`) supporting backfilling past offline/Discord challenges with finished status, custom WITA dates, versioned artwork submissions, Star vote counts, and Jury Choice Awards with transactional database consistency and audit logging.
+  - Built `HistoricalImportForm.tsx` and admin portal page (`src/app/admin/challenges/import/page.tsx`).
+  - Built `StoryCardGenerator.tsx` with high-density 9:16 aspect ratio canvas renderer (1080 × 1920 px) supporting Announcement Mode and Results & Podium Mode with 1-click PNG downloads for Instagram Stories and WhatsApp Status.
+  - Integrated Story Card Export buttons on Challenge Detail (`/challenges/[slug]`) and Challenge Results (`/challenges/[slug]/results`).
+  - Implemented comprehensive integration test suite `src/lib/__tests__/testPhase6HistoricalAndMedia.ts`.
+  - Verified with Turbopack production build (`npm run build`) passing across all 26 routes with 0 errors.
 
 ## Current Branch
 `main`
 
 ## Current Focus
-- Starting **Phase 6 — Historical Backfill & Media Automation**:
-  - Historical challenge import / backfill manager (`/admin/challenges/import` or direct backfill importer).
-  - 9:16 Story Card Generator (1080 × 1920) for Challenge Announcements & Results with downloadable SVG/Canvas/Server rendering.
-  - Community Hall of Fame archive refinement.
+- **Phase 7 — Production Hardening & Operational Polish**:
+  - Rate limiting, security headers, production backup scripts, and final end-to-end smoke checks.
 
 ## Next Task
-- Build Historical Challenge Backfill Importer (`src/lib/historicalBackfill.ts` & `/admin/challenges/import`).
-- Build 9:16 Story Card Generator component and downloadable media endpoints (`src/components/challenges/StoryCardGenerator.tsx`).
+- Review Phase 7 deliverables with user and implement rate limiting / security headers.
 
 ## Blockers
 - None.

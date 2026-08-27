@@ -3,7 +3,7 @@ import { db } from "@/db";
 import { challenges, challengeSubmissions } from "@/db/schema";
 import { desc, count, eq } from "drizzle-orm";
 import Link from "next/link";
-import { Trophy, Plus, ArrowLeft, Clock, Award, Users, ExternalLink } from "lucide-react";
+import { Trophy, Plus, ArrowLeft, Clock, Award, Users, ExternalLink, History } from "lucide-react";
 import { getEffectiveChallengeStatus } from "@/lib/challenges";
 import { ChallengeTransitionButtons } from "@/components/admin/ChallengeTransitionButtons";
 
@@ -47,13 +47,23 @@ export default async function AdminChallengesOverviewPage() {
           </p>
         </div>
 
-        <Link
-          href="/admin/challenges/new"
-          className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-md shadow-amber-500/20 flex items-center gap-1.5 w-fit"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Buat Challenge Baru</span>
-        </Link>
+        <div className="flex items-center gap-3 w-fit">
+          <Link
+            href="/admin/challenges/import"
+            className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-amber-400 text-xs font-mono transition-all flex items-center gap-1.5"
+          >
+            <History className="h-4 w-4" />
+            <span>Impor Historis</span>
+          </Link>
+
+          <Link
+            href="/admin/challenges/new"
+            className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-md shadow-amber-500/20 flex items-center gap-1.5"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Buat Challenge Baru</span>
+          </Link>
+        </div>
       </div>
 
       {/* Challenges Table */}

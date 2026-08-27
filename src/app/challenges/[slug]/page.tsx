@@ -22,6 +22,7 @@ import {
   Star,
 } from "lucide-react";
 import { ChallengeSubmissionModal } from "@/components/challenges/ChallengeSubmissionModal";
+import { StoryCardGenerator } from "@/components/challenges/StoryCardGenerator";
 
 interface ChallengeDetailPageProps {
   params: Promise<{ slug: string }>;
@@ -93,7 +94,7 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
   return (
     <main className="p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-10 flex-1">
       {/* Breadcrumb & Status Bar */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <Link
             href="/challenges"
@@ -108,7 +109,20 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
         </div>
 
         <div className="flex items-center gap-3">
-          <span className="px-3 py-1 rounded-full text-xs font-mono font-bold uppercase border bg-amber-500/10 text-amber-400 border-amber-500/30">
+          <StoryCardGenerator
+            challenge={{
+              title: challenge.title,
+              slug: challenge.slug,
+              theme: challenge.theme,
+              description: challenge.description,
+              promptRules: challenge.promptRules,
+              submissionDeadline: challenge.submissionDeadline,
+              status: challenge.effectiveStatus,
+            }}
+            defaultMode="announcement"
+          />
+
+          <span className="px-3 py-2 min-h-[44px] rounded-2xl text-xs font-mono font-bold uppercase border bg-amber-500/10 text-amber-400 border-amber-500/30 flex items-center">
             STATUS: {challenge.effectiveStatus.replace(/_/g, " ")}
           </span>
         </div>
