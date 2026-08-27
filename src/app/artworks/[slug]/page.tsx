@@ -120,13 +120,13 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
   }).format(new Date(artwork.createdAt)) + " WITA";
 
   return (
-    <main className="min-h-screen p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-8">
-      {/* Top Header & Breadcrumb */}
-      <header className="flex items-center justify-between border-b border-white/10 pb-4">
-        <div className="flex items-center gap-4">
+    <main className="p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-8 flex-1">
+      {/* Sub-Header & Breadcrumb Bar */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
           <Link
             href="/gallery"
-            className="inline-flex items-center gap-1.5 text-xs font-mono text-zinc-400 hover:text-white transition-colors"
+            className="inline-flex items-center gap-1.5 text-xs font-mono text-zinc-400 hover:text-amber-400 transition-colors"
           >
             <ArrowLeft className="h-3.5 w-3.5" /> Kembali ke Galeri
           </Link>
@@ -151,7 +151,7 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
             <span>Profil Artist</span>
           </Link>
         </div>
-      </header>
+      </div>
 
       {/* Main Content Layout: Viewer (Left) + Details Sidebar (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

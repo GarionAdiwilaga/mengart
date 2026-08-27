@@ -31,41 +31,29 @@ export default async function AdminChallengesOverviewPage() {
   );
 
   return (
-    <main className="min-h-screen p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-8">
-      {/* Navigation */}
-      <header className="flex items-center justify-between border-b border-white/10 pb-4">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center gap-1.5 text-xs font-mono text-zinc-400 hover:text-white transition-colors"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Dashboard
-          </Link>
-          <span className="text-zinc-600 font-mono text-xs">/</span>
-          <span className="text-zinc-300 font-mono text-xs">Kelola Event Art Challenge</span>
+    <div className="flex flex-col gap-6">
+      {/* Header Title Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-mono w-fit">
+            <Trophy className="h-3.5 w-3.5" />
+            <span>PANEL OPERASIONAL CHALLENGE</span>
+          </div>
+          <h1 className="font-display font-extrabold text-2xl sm:text-3xl text-[#f6f2e9] tracking-tight">
+            Manajemen Event & Tahapan Submisi
+          </h1>
+          <p className="text-xs text-zinc-400">
+            Kelola lifecycle challenge, kunci submisi saat deadline tercapai, dan atur transisi voting komunitas.
+          </p>
         </div>
 
         <Link
           href="/admin/challenges/new"
-          className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-md shadow-amber-500/20 flex items-center gap-1.5"
+          className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-md shadow-amber-500/20 flex items-center gap-1.5 w-fit"
         >
           <Plus className="h-4 w-4" />
           <span>Buat Challenge Baru</span>
         </Link>
-      </header>
-
-      {/* Header Title */}
-      <div className="flex flex-col gap-2">
-        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-mono w-fit">
-          <Trophy className="h-3.5 w-3.5" />
-          <span>PANEL OPERASIONAL CHALLENGE</span>
-        </div>
-        <h1 className="font-display font-extrabold text-3xl text-[#f6f2e9] tracking-tight">
-          Manajemen Event & Tahapan Submisi
-        </h1>
-        <p className="text-xs text-zinc-400">
-          Kelola lifecycle challenge, kunci submisi saat deadline tercapai, dan atur transisi voting komunitas.
-        </p>
       </div>
 
       {/* Challenges Table */}
@@ -155,6 +143,6 @@ export default async function AdminChallengesOverviewPage() {
           </div>
         </div>
       )}
-    </main>
+    </div>
   );
 }

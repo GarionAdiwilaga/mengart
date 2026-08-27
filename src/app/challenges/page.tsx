@@ -54,43 +54,7 @@ export default async function ChallengesDirectoryPage({ searchParams }: Challeng
   });
 
   return (
-    <main className="min-h-screen p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-8">
-      {/* Global Navigation Header */}
-      <header className="flex items-center justify-between border-b border-white/10 pb-4">
-        <div className="flex items-center gap-3">
-          <Link href="/" className="flex items-center gap-2.5">
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-amber-500 to-amber-700 flex items-center justify-center shadow-lg shadow-amber-500/20">
-              <Palette className="h-4 w-4 text-black" />
-            </div>
-            <span className="font-display font-bold text-xl text-[#f6f2e9]">Mengart</span>
-          </Link>
-
-          <nav className="hidden md:flex items-center gap-6 ml-6 text-sm">
-            <Link href="/gallery" className="text-zinc-400 hover:text-white transition-colors">
-              Galeri
-            </Link>
-            <Link href="/artists" className="text-zinc-400 hover:text-white transition-colors">
-              Artist
-            </Link>
-            <Link href="/commissions" className="text-zinc-400 hover:text-white transition-colors">
-              Komisi
-            </Link>
-            <Link href="/challenges" className="text-amber-400 font-semibold">
-              Challenge
-            </Link>
-          </nav>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <Link
-            href="/dashboard"
-            className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-xs font-mono transition-colors"
-          >
-            Dashboard
-          </Link>
-        </div>
-      </header>
-
+    <main className="p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-8 flex-1">
       {/* Hero Title */}
       <section className="flex flex-col sm:flex-row sm:items-end justify-between gap-6">
         <div>

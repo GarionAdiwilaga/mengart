@@ -100,27 +100,16 @@ export default async function ArtistProfilePage({ params }: ArtistProfilePagePro
   const waUrl = waNumber ? `https://wa.me/${waNumber}?text=${waMessage}` : null;
 
   return (
-    <main className="min-h-screen p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-12">
-      {/* Top Header */}
-      <header className="flex items-center justify-between border-b border-white/10 pb-4">
-        <div className="flex items-center gap-4">
-          <Link
-            href="/artists"
-            className="inline-flex items-center gap-1.5 text-xs font-mono text-zinc-400 hover:text-white transition-colors"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Direktori Artist
-          </Link>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <Link
-            href="/gallery"
-            className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-xs font-mono transition-colors"
-          >
-            Galeri
-          </Link>
-        </div>
-      </header>
+    <main className="p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-8 flex-1">
+      {/* Breadcrumb Navigation */}
+      <div>
+        <Link
+          href="/artists"
+          className="inline-flex items-center gap-1.5 text-xs font-mono text-zinc-400 hover:text-amber-400 transition-colors"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" /> Kembali ke Direktori Artist
+        </Link>
+      </div>
 
       {/* Artist Profile Hero Banner */}
       <section className="glass-panel p-8 sm:p-10 rounded-3xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-8">

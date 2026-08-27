@@ -38,13 +38,13 @@ export default async function CommissionsManagerPage() {
     .orderBy(commissionScopeRules.displayOrder);
 
   return (
-    <main className="min-h-screen p-6 sm:p-12 max-w-6xl mx-auto flex flex-col gap-10">
-      {/* Top Header */}
-      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-6">
+    <main className="p-6 sm:p-12 max-w-6xl mx-auto flex flex-col gap-10 flex-1">
+      {/* Studio Header Action Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-6">
         <div className="flex flex-col gap-2">
           <Link
             href="/dashboard"
-            className="inline-flex items-center gap-1.5 text-xs font-mono text-zinc-400 hover:text-white transition-colors"
+            className="inline-flex items-center gap-1.5 text-xs font-mono text-zinc-400 hover:text-amber-400 transition-colors"
           >
             <ArrowLeft className="h-3.5 w-3.5" /> Dashboard
           </Link>
@@ -59,7 +59,7 @@ export default async function CommissionsManagerPage() {
         <div className="flex items-center gap-3">
           <CommissionServiceModal />
         </div>
-      </header>
+      </div>
 
       {/* Services List Section */}
       <section className="flex flex-col gap-4">

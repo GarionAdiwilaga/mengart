@@ -8,52 +8,10 @@ export default async function HomePage() {
   const activities = await getRecentCommunityActivity(8);
 
   return (
-    <main className="min-h-screen flex flex-col justify-between p-6 sm:p-12 max-w-7xl mx-auto gap-16">
+    <main className="p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-16 flex-1">
       <div className="flex flex-col gap-16">
-        {/* Navigation Header */}
-        <header className="flex items-center justify-between py-4 border-b border-white/10">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-amber-500 to-amber-700 flex items-center justify-center shadow-lg shadow-amber-500/20">
-              <Palette className="h-5 w-5 text-black" />
-            </div>
-            <span className="font-display font-bold text-2xl tracking-tight text-[#f6f2e9]">
-              Mengart
-            </span>
-          </div>
-
-          <nav className="hidden md:flex items-center gap-6 text-sm">
-            <Link href="/gallery" className="text-zinc-400 hover:text-white transition-colors">
-              Galeri
-            </Link>
-            <Link href="/artists" className="text-zinc-400 hover:text-white transition-colors">
-              Artist
-            </Link>
-            <Link href="/commissions" className="text-zinc-400 hover:text-white transition-colors">
-              Komisi
-            </Link>
-            <Link href="/challenges" className="text-zinc-400 hover:text-white transition-colors">
-              Challenge
-            </Link>
-          </nav>
-
-          <div className="flex items-center gap-4">
-            <Link
-              href="/login"
-              className="px-4 py-2 text-sm font-medium text-zinc-300 hover:text-white transition-colors"
-            >
-              Masuk Anggota
-            </Link>
-            <Link
-              href="/gallery"
-              className="px-4 py-2 text-sm font-semibold rounded-xl bg-amber-500 text-black hover:bg-amber-400 transition-all duration-200 shadow-md shadow-amber-500/20 flex items-center gap-1.5 cursor-pointer"
-            >
-              Jelajahi Galeri <ArrowRight className="h-4 w-4" />
-            </Link>
-          </div>
-        </header>
-
         {/* Hero Section */}
-        <section className="py-12 sm:py-20 flex flex-col items-start gap-8">
+        <section className="py-6 sm:py-12 flex flex-col items-start gap-8">
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-mono tracking-wide">
             <Sparkles className="h-3.5 w-3.5" />
             <span>KOMUNITAS DIGITAL ART & ATELIER PRIVAT</span>
@@ -155,25 +113,6 @@ export default async function HomePage() {
         {/* Live Community Activity Feed */}
         <HomeActivityFeed activities={activities} />
       </div>
-
-      {/* Footer */}
-      <footer className="py-6 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs font-mono text-zinc-500">
-        <span>© 2026 Mengart Atelier — Komunitas Kreator Digital Privat</span>
-        <div className="flex items-center gap-4">
-          <Link href="/gallery" className="hover:text-zinc-300">
-            Galeri
-          </Link>
-          <Link href="/commissions" className="hover:text-zinc-300">
-            Komisi
-          </Link>
-          <Link href="/challenges" className="hover:text-zinc-300">
-            Challenge
-          </Link>
-          <Link href="/login" className="hover:text-amber-400">
-            Masuk
-          </Link>
-        </div>
-      </footer>
     </main>
   );
 }

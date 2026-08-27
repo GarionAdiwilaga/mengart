@@ -25,32 +25,18 @@ export default async function AdminAuditLogsPage() {
     .limit(50);
 
   return (
-    <main className="min-h-screen p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-8">
-      {/* Header */}
-      <header className="flex items-center justify-between border-b border-white/10 pb-4">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center gap-1.5 text-xs font-mono text-zinc-400 hover:text-white transition-colors"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Dashboard
-          </Link>
-          <span className="text-zinc-600 font-mono text-xs">/</span>
-          <span className="text-zinc-300 font-mono text-xs">Audit Log Explorer</span>
-        </div>
-      </header>
-
+    <div className="flex flex-col gap-6">
       {/* Hero Banner */}
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1">
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-mono w-fit">
           <History className="h-3.5 w-3.5" />
-          <span>REKAM JEJAK SISTEM</span>
+          <span>REKAM JEJAK SISTEM ATELIER</span>
         </div>
-        <h1 className="font-display font-extrabold text-3xl text-[#f6f2e9] tracking-tight">
+        <h1 className="font-display font-extrabold text-2xl sm:text-3xl text-[#f6f2e9] tracking-tight">
           Audit Logs Transparansi Atelier
         </h1>
-        <p className="text-xs text-zinc-400">
-          Catatan kronologis seluruh tindakan administratif, perubahan challenge, kurasi juri, dan penegakan moderasi.
+        <p className="text-xs text-zinc-400 font-sans">
+          Catatan kronologis immutable untuk seluruh tindakan administratif, moderasi, dan lifecycle challenge dalam WITA.
         </p>
       </div>
 
@@ -119,6 +105,6 @@ export default async function AdminAuditLogsPage() {
           </div>
         </div>
       )}
-    </main>
+    </div>
   );
 }

@@ -35,13 +35,13 @@ export default async function ChallengeResultsPage({ params }: ResultsPageProps)
   const otherRanks = results.slice(3);
 
   return (
-    <main className="min-h-screen p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-10">
-      {/* Header & Navigation */}
-      <header className="flex items-center justify-between border-b border-white/10 pb-4">
+    <main className="p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-10 flex-1">
+      {/* Breadcrumb & Sub-Header */}
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Link
             href={`/challenges/${challenge.slug}`}
-            className="inline-flex items-center gap-1.5 text-xs font-mono text-zinc-400 hover:text-white transition-colors"
+            className="inline-flex items-center gap-1.5 text-xs font-mono text-zinc-400 hover:text-amber-400 transition-colors"
           >
             <ArrowLeft className="h-3.5 w-3.5" /> Kembali ke Challenge
           </Link>
@@ -55,7 +55,7 @@ export default async function ChallengeResultsPage({ params }: ResultsPageProps)
             <span>HALL OF FAME SELESAI</span>
           </span>
         </div>
-      </header>
+      </div>
 
       {/* Hero Banner */}
       <section className="glass-panel p-8 sm:p-12 rounded-3xl flex flex-col items-center text-center gap-4 relative overflow-hidden">

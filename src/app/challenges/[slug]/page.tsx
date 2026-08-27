@@ -91,13 +91,13 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
   const isSubmissionOpen = challenge.effectiveStatus === "submission_open";
 
   return (
-    <main className="min-h-screen p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-10">
-      {/* Breadcrumb & Navigation */}
-      <header className="flex items-center justify-between border-b border-white/10 pb-4">
+    <main className="p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-10 flex-1">
+      {/* Breadcrumb & Status Bar */}
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Link
             href="/challenges"
-            className="inline-flex items-center gap-1.5 text-xs font-mono text-zinc-400 hover:text-white transition-colors"
+            className="inline-flex items-center gap-1.5 text-xs font-mono text-zinc-400 hover:text-amber-400 transition-colors"
           >
             <ArrowLeft className="h-3.5 w-3.5" /> Direktori Challenge
           </Link>
@@ -112,7 +112,7 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
             STATUS: {challenge.effectiveStatus.replace(/_/g, " ")}
           </span>
         </div>
-      </header>
+      </div>
 
       {/* Hero Banner Card */}
       <section className="glass-panel p-8 sm:p-10 rounded-3xl flex flex-col gap-6 relative overflow-hidden">
