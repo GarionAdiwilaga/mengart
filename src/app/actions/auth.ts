@@ -11,7 +11,20 @@ import { sendVerificationEmail, sendPasswordResetEmail } from "@/lib/email";
 import { signIn } from "@/auth";
 import { AuthError } from "next-auth";
 
-export async function loginWithCredentialsAction(formData: FormData) {
+export async function loginWithCredentialsAction(
+  prevStateOrFormData: any,
+  maybeFormData?: FormData
+) {
+  const formData = (maybeFormData instanceof FormData
+    ? maybeFormData
+    : prevStateOrFormData instanceof FormData
+    ? prevStateOrFormData
+    : null) as FormData;
+
+  if (!formData) {
+    return { success: false, error: "Data permintaan tidak valid." };
+  }
+
   const identifier = (formData.get("identifier") as string)?.trim();
   const password = formData.get("password") as string;
 
@@ -47,7 +60,7 @@ export async function loginWithCredentialsAction(formData: FormData) {
     // Re-throw redirect error to allow Next.js to navigate
     throw error;
   }
-  return { success: true };
+  return { success: true, error: null };
 }
 
 const registerSchema = z.object({
