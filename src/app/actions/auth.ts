@@ -8,6 +8,47 @@ import crypto from "crypto";
 import { z } from "zod";
 import { redeemInviteAndCreateMemberWithCredentials, extractInviteToken } from "@/lib/invites";
 import { sendVerificationEmail, sendPasswordResetEmail } from "@/lib/email";
+import { signIn } from "@/auth";
+import { AuthError } from "next-auth";
+
+export async function loginWithCredentialsAction(formData: FormData) {
+  const identifier = (formData.get("identifier") as string)?.trim();
+  const password = formData.get("password") as string;
+
+  if (!identifier || !password) {
+    return { success: false, error: "Email/username dan kata sandi wajib diisi." };
+  }
+
+  try {
+    await signIn("credentials", {
+      identifier,
+      password,
+      redirectTo: "/dashboard",
+    });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      if (error.cause?.err?.message === "EmailNotVerified") {
+        return {
+          success: false,
+          error: "Email Anda belum diverifikasi. Silakan periksa email Anda atau lakukan verifikasi.",
+        };
+      }
+      if (error.cause?.err?.message?.startsWith("Account")) {
+        return {
+          success: false,
+          error: "Status akun Anda tidak aktif atau ditangguhkan.",
+        };
+      }
+      return {
+        success: false,
+        error: "Email/username atau kata sandi tidak cocok.",
+      };
+    }
+    // Re-throw redirect error to allow Next.js to navigate
+    throw error;
+  }
+  return { success: true };
+}
 
 const registerSchema = z.object({
   inviteInput: z.string().min(1, "Kode atau tautan undangan wajib diisi."),

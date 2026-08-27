@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { signIn } from "next-auth/react";
-import { Loader2, Mail, Lock, ArrowRight, AlertCircle, ShieldAlert } from "lucide-react";
+import { Loader2, ArrowRight, AlertCircle } from "lucide-react";
 import Link from "next/link";
+import { loginWithCredentialsAction } from "@/app/actions/auth";
 
 interface LoginFormProps {
   initialError?: string;
@@ -29,33 +30,30 @@ export function LoginForm({ initialError }: LoginFormProps) {
     return null;
   });
 
-  const handleCredentialsLogin = async (e: React.FormEvent) => {
+  const handleCredentialsLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!identifier.trim() || !password) return;
 
     setIsLoading(true);
     setError(null);
 
-    try {
-      const res = await signIn("credentials", {
-        identifier: identifier.trim(),
-        password,
-        redirect: false,
-      });
+    const formData = new FormData();
+    formData.append("identifier", identifier.trim());
+    formData.append("password", password);
 
-      if (res?.error) {
-        if (res.error.includes("EmailNotVerified")) {
-          setError("Email Anda belum diverifikasi. Silakan periksa email Anda atau lakukan verifikasi.");
-        } else if (res.error.includes("Account")) {
-          setError("Status akun Anda tidak aktif.");
-        } else {
-          setError("Email/username atau kata sandi tidak cocok.");
-        }
+    try {
+      const res = await loginWithCredentialsAction(formData);
+      if (res && !res.success) {
+        setError(res.error || "Email/username atau kata sandi tidak cocok.");
         setIsLoading(false);
       } else {
         window.location.href = "/dashboard";
       }
     } catch (err: any) {
+      if (err?.message?.includes("NEXT_REDIRECT")) {
+        window.location.href = "/dashboard";
+        return;
+      }
       setError(err?.message || "Gagal masuk. Silakan coba kembali.");
       setIsLoading(false);
     }
@@ -126,9 +124,10 @@ export function LoginForm({ initialError }: LoginFormProps) {
           <label className="text-xs font-mono text-zinc-300">EMAIL ATAU USERNAME</label>
           <input
             type="text"
+            name="identifier"
             value={identifier}
             onChange={(e) => setIdentifier(e.target.value)}
-            placeholder="artist@example.com / username"
+            placeholder="admin@mengart.local / admin_atelier"
             required
             className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-sm font-sans"
           />
@@ -146,6 +145,7 @@ export function LoginForm({ initialError }: LoginFormProps) {
           </div>
           <input
             type="password"
+            name="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="••••••••"
