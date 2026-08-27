@@ -54,15 +54,15 @@ export function QuickUploadModal() {
   return (
     <AnimatePresence>
       {isUploadModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-md">
           <div className="fixed inset-0" onClick={closeUploadModal} />
 
           <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 10 }}
-            transition={{ duration: 0.15 }}
-            className="w-full max-w-2xl glass-panel-elevated p-6 sm:p-8 rounded-3xl border border-white/15 shadow-2xl relative z-10 max-h-[90vh] overflow-y-auto flex flex-col gap-6"
+            initial={{ opacity: 0, y: 40 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 40 }}
+            transition={{ type: "spring", stiffness: 350, damping: 30 }}
+            className="w-full max-w-2xl glass-panel-elevated p-5 sm:p-8 rounded-t-3xl sm:rounded-3xl border border-white/15 shadow-2xl relative z-10 max-h-[90vh] overflow-y-auto flex flex-col gap-5 sm:gap-6"
           >
             {/* Header */}
             <div className="flex items-center justify-between border-b border-white/10 pb-4">
@@ -141,7 +141,7 @@ export function QuickUploadModal() {
                     onChange={(e) => setTitle(e.target.value)}
                     placeholder="contoh: Ethereal Forest Sanctuary"
                     required
-                    className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-sm font-sans"
+                    className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-base sm:text-sm font-sans"
                   />
                 </div>
 
@@ -152,7 +152,7 @@ export function QuickUploadModal() {
                     value={tagsInput}
                     onChange={(e) => setTagsInput(e.target.value)}
                     placeholder="fantasy, landscape, conceptart"
-                    className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-sm font-sans"
+                    className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-base sm:text-sm font-sans"
                   />
                 </div>
               </div>
@@ -165,7 +165,7 @@ export function QuickUploadModal() {
                   onChange={(e) => setDescription(e.target.value)}
                   rows={3}
                   placeholder="Ceritakan latar belakang karya, inspirasi, software yang digunakan (Photoshop, Clip Studio, Blender)..."
-                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-sm font-sans resize-none"
+                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-base sm:text-sm font-sans resize-none"
                 />
               </div>
 
@@ -176,7 +176,7 @@ export function QuickUploadModal() {
                   <select
                     value={audience}
                     onChange={(e) => setAudience(e.target.value as any)}
-                    className="w-full px-4 py-2.5 rounded-xl bg-[#191c23] border border-white/10 text-white text-xs font-mono focus:outline-none"
+                    className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-[#191c23] border border-white/10 text-white text-base sm:text-xs font-mono focus:outline-none"
                   >
                     <option value="public">Publik (Tampil di Galeri Utama)</option>
                     <option value="members_only">Khusus Member Atelier</option>
@@ -189,7 +189,7 @@ export function QuickUploadModal() {
                   <select
                     value={critiqueMode}
                     onChange={(e) => setCritiqueMode(e.target.value as any)}
-                    className="w-full px-4 py-2.5 rounded-xl bg-[#191c23] border border-white/10 text-white text-xs font-mono focus:outline-none"
+                    className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-[#191c23] border border-white/10 text-white text-base sm:text-xs font-mono focus:outline-none"
                   >
                     <option value="open_for_critique">Buka untuk Kritik Konstruktif</option>
                     <option value="showcase_only">Showcase Only (Apresiasi Saja)</option>
@@ -202,7 +202,7 @@ export function QuickUploadModal() {
                 <button
                   type="button"
                   onClick={closeUploadModal}
-                  className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white text-xs font-mono transition-colors cursor-pointer"
+                  className="px-4 py-2.5 min-h-[44px] rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white text-xs font-mono transition-colors cursor-pointer"
                 >
                   Batal
                 </button>
@@ -210,7 +210,7 @@ export function QuickUploadModal() {
                 <button
                   type="submit"
                   disabled={uploadMutation.isPending || !file || !title.trim()}
-                  className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-md shadow-amber-500/20 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  className="px-6 py-2.5 min-h-[44px] rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-md shadow-amber-500/20 flex items-center gap-2 cursor-pointer disabled:opacity-50"
                 >
                   {uploadMutation.isPending ? (
                     <>

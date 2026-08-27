@@ -4,6 +4,7 @@ import "./globals.css";
 import { Providers } from "./providers";
 import { AppHeader } from "@/components/layout/AppHeader";
 import { AppFooter } from "@/components/layout/AppFooter";
+import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
 import { GlobalCommandPalette } from "@/components/layout/GlobalCommandPalette";
 import { QuickUploadModal } from "@/components/artworks/QuickUploadModal";
 import { auth } from "@/auth";
@@ -42,6 +43,17 @@ export default async function RootLayout({
     ? await getUserNotifications(session.user.id)
     : [];
 
+  const currentUser = session?.user
+    ? {
+        id: session.user.id,
+        email: session.user.email || "",
+        role: session.user.role,
+        displayName: session.user.name,
+        slug: session.user.profileSlug,
+        avatarUrl: session.user.image,
+      }
+    : null;
+
   return (
     <html lang="id" className="dark">
       <body
@@ -49,22 +61,12 @@ export default async function RootLayout({
       >
         <Providers>
           <AppHeader
-            user={
-              session?.user
-                ? {
-                    id: session.user.id,
-                    email: session.user.email || "",
-                    role: session.user.role,
-                    displayName: session.user.name,
-                    slug: session.user.profileSlug,
-                    avatarUrl: session.user.image,
-                  }
-                : null
-            }
+            user={currentUser}
             notifications={notifications as any}
           />
-          <div className="flex-1 flex flex-col">{children}</div>
+          <div className="flex-1 flex flex-col pb-20 md:pb-0">{children}</div>
           <AppFooter />
+          <MobileBottomNav user={currentUser} />
 
           {/* Global Modals & Command Palette */}
           <GlobalCommandPalette />

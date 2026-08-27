@@ -47,10 +47,10 @@ export function InviteManagerTable({ invites }: InviteManagerTableProps) {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Filter Tabs */}
-      <div className="flex items-center gap-2 p-1 rounded-2xl bg-white/5 border border-white/10 w-fit">
+      {/* Filter Tabs: Horizontally scrollable on mobile */}
+      <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-white/5 border border-white/10 w-full sm:w-fit overflow-x-auto no-scrollbar touch-pan-x">
         {[
-          { key: "all", label: "Semua Kunci" },
+          { key: "all", label: "Semua" },
           { key: "active", label: "Aktif" },
           { key: "exhausted", label: "Habis Kuota" },
           { key: "revoked", label: "Dicabut" },
@@ -59,7 +59,7 @@ export function InviteManagerTable({ invites }: InviteManagerTableProps) {
           <button
             key={tab.key}
             onClick={() => setStatusFilter(tab.key)}
-            className={`px-3 py-1.5 rounded-xl text-xs font-mono transition-all cursor-pointer ${
+            className={`px-3 py-2 min-h-[36px] rounded-xl text-xs font-mono transition-all cursor-pointer whitespace-nowrap shrink-0 ${
               statusFilter === tab.key
                 ? "bg-amber-500 text-black font-bold shadow-md shadow-amber-500/20"
                 : "text-zinc-400 hover:text-white"
@@ -70,9 +70,91 @@ export function InviteManagerTable({ invites }: InviteManagerTableProps) {
         ))}
       </div>
 
-      {/* Table */}
+      {/* Invites Display Container */}
       <div className="glass-panel rounded-3xl overflow-hidden border border-white/10 shadow-xl">
-        <div className="overflow-x-auto">
+        {/* Mobile Cards List (< md) */}
+        <div className="md:hidden divide-y divide-white/5">
+          {filtered.length === 0 ? (
+            <div className="p-8 text-center text-zinc-500 font-mono text-xs">
+              Tidak ada kunci undangan yang sesuai dengan filter.
+            </div>
+          ) : (
+            filtered.map((inv) => {
+              let status = "Aktif";
+              let statusBadgeClass = "border-emerald-500/30 bg-emerald-500/10 text-emerald-400";
+
+              if (inv.revokedAt) {
+                status = "Dicabut";
+                statusBadgeClass = "border-red-500/30 bg-red-500/10 text-red-400";
+              } else if (inv.expiresAt && new Date(inv.expiresAt) <= now) {
+                status = "Kedaluwarsa";
+                statusBadgeClass = "border-zinc-500/30 bg-zinc-500/10 text-zinc-400";
+              } else if (inv.maxUses !== null && inv.usesCount >= inv.maxUses) {
+                status = "Habis";
+                statusBadgeClass = "border-amber-500/30 bg-amber-500/10 text-amber-400";
+              }
+
+              const formattedExpiry = inv.expiresAt
+                ? new Intl.DateTimeFormat("id-ID", {
+                    timeZone: "Asia/Makassar",
+                    day: "numeric",
+                    month: "short",
+                    year: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  }).format(new Date(inv.expiresAt)) + " WITA"
+                : "Permanen";
+
+              return (
+                <div key={inv.id} className="p-4 flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 font-bold text-xs tracking-wider font-mono">
+                        {inv.tokenPrefix}
+                      </span>
+                      <button
+                        onClick={() => handleCopy(inv)}
+                        className="p-2 min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors cursor-pointer"
+                        title="Salin Tautan Undangan"
+                      >
+                        {copiedId === inv.id ? (
+                          <Check className="h-4 w-4 text-emerald-400" />
+                        ) : (
+                          <Copy className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase border shrink-0 ${statusBadgeClass}`}
+                    >
+                      {status}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col gap-1 text-xs">
+                    <span className="text-zinc-200 font-medium">
+                      {inv.label || <span className="text-zinc-500 italic">Tanpa Label</span>}
+                    </span>
+                    <div className="flex items-center justify-between text-zinc-400 font-mono text-[11px] pt-1">
+                      <span>Penggunaan: {inv.usesCount} / {inv.maxUses === null ? "∞" : inv.maxUses}</span>
+                      <span>{formattedExpiry}</span>
+                    </div>
+                  </div>
+
+                  {status === "Aktif" ? (
+                    <div className="pt-2 border-t border-white/5 flex justify-end">
+                      <RevokeInviteButton inviteId={inv.id} tokenPrefix={inv.tokenPrefix} />
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Desktop Table (hidden on mobile, visible on md+) */}
+        <div className="hidden md:block overflow-x-auto touch-pan-x">
           <table className="w-full text-left text-xs font-sans">
             <thead className="bg-white/5 border-b border-white/10 text-[11px] font-mono text-zinc-400 uppercase">
               <tr>

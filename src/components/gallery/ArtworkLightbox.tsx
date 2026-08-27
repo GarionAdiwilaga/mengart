@@ -76,75 +76,78 @@ export function ArtworkLightbox({
         )}
 
         {/* Quality Variant Capsule (Top-Left) */}
-        <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
+        <div className="absolute top-3 left-3 sm:top-4 sm:left-4 z-10 flex items-center gap-2">
           {isMember && masterMediaUrl ? (
             <div className="flex items-center gap-1 p-1 rounded-2xl bg-black/80 backdrop-blur-md border border-white/15 text-xs font-mono">
               <button
                 onClick={() => setUseMasterQuality(false)}
-                className={`px-3 py-1 rounded-xl transition-all cursor-pointer ${
+                className={`px-2.5 sm:px-3 py-1.5 min-h-[36px] rounded-xl transition-all cursor-pointer ${
                   !useMasterQuality
                     ? "bg-amber-500 text-black font-bold shadow-sm"
                     : "text-zinc-400 hover:text-white"
                 }`}
               >
-                Watermarked Preview
+                <span className="hidden sm:inline">Watermarked Preview</span>
+                <span className="sm:hidden">Preview</span>
               </button>
               <button
                 onClick={() => setUseMasterQuality(true)}
-                className={`px-3 py-1 rounded-xl transition-all flex items-center gap-1 cursor-pointer ${
+                className={`px-2.5 sm:px-3 py-1.5 min-h-[36px] rounded-xl transition-all flex items-center gap-1 cursor-pointer ${
                   useMasterQuality
                     ? "bg-amber-500 text-black font-bold shadow-sm"
                     : "text-zinc-400 hover:text-white"
                 }`}
               >
                 <Sparkles className="h-3 w-3" />
-                <span>Master Quality</span>
+                <span className="hidden sm:inline">Master Quality</span>
+                <span className="sm:hidden">Master</span>
               </button>
             </div>
           ) : (
-            <span className="px-3.5 py-1.5 rounded-2xl bg-black/80 backdrop-blur-md border border-white/15 text-xs font-mono text-zinc-300 flex items-center gap-1.5">
+            <span className="px-3 py-1.5 rounded-2xl bg-black/80 backdrop-blur-md border border-white/15 text-xs font-mono text-zinc-300 flex items-center gap-1.5">
               <ShieldCheck className="h-3.5 w-3.5 text-amber-400" />
-              <span>Versi Publik · Watermarked</span>
+              <span className="hidden sm:inline">Versi Publik · Watermarked</span>
+              <span className="sm:hidden">Watermarked</span>
             </span>
           )}
         </div>
 
         {/* Pan/Zoom & Fullscreen Controls (Bottom-Right) */}
         {mediaType === "image" ? (
-          <div className="absolute bottom-4 right-4 z-10 flex items-center gap-1 p-1.5 rounded-2xl bg-black/80 backdrop-blur-md border border-white/15 text-xs">
+          <div className="absolute bottom-3 right-3 sm:bottom-4 sm:right-4 z-10 flex items-center gap-1 p-1 rounded-2xl bg-black/80 backdrop-blur-md border border-white/15 text-xs">
             <button
               onClick={handleZoomOut}
               disabled={zoomLevel <= 0.5}
               title="Zoom Out"
-              className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40 cursor-pointer"
+              className="p-2.5 min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40 cursor-pointer"
             >
               <ZoomOut className="h-4 w-4" />
             </button>
-            <span className="font-mono text-xs text-zinc-300 px-2 tabular-nums">
+            <span className="font-mono text-xs text-zinc-300 px-1.5 tabular-nums">
               {Math.round(zoomLevel * 100)}%
             </span>
             <button
               onClick={handleZoomIn}
               disabled={zoomLevel >= 4}
               title="Zoom In"
-              className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40 cursor-pointer"
+              className="p-2.5 min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40 cursor-pointer"
             >
               <ZoomIn className="h-4 w-4" />
             </button>
             <button
               onClick={handleResetZoom}
               title="Reset Zoom"
-              className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+              className="p-2.5 min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
             >
               <RotateCcw className="h-4 w-4" />
             </button>
 
-            <div className="h-4 w-px bg-white/20 mx-1" />
+            <div className="h-4 w-px bg-white/20 mx-0.5" />
 
             <button
               onClick={() => setIsFullscreen(!isFullscreen)}
               title={isFullscreen ? "Keluar Fullscreen" : "Mode Fullscreen"}
-              className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+              className="p-2.5 min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
             >
               {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
             </button>

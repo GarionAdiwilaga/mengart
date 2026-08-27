@@ -34,11 +34,11 @@ export function AdminSidebar({ userRole, userEmail }: AdminSidebarProps) {
   ];
 
   return (
-    <aside className="w-full lg:w-64 shrink-0 flex flex-col gap-6 p-4 sm:p-6 glass-panel rounded-3xl border border-white/10 h-fit lg:sticky lg:top-24">
+    <aside className="w-full lg:w-64 shrink-0 flex flex-col gap-4 lg:gap-6 p-4 sm:p-6 glass-panel rounded-3xl border border-white/10 h-fit lg:sticky lg:top-24">
       {/* Sidebar Header */}
-      <div className="flex flex-col gap-1 pb-4 border-b border-white/10">
+      <div className="flex items-center justify-between pb-3 lg:pb-4 border-b border-white/10">
         <div className="flex items-center gap-2">
-          <div className="h-7 w-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30">
+          <div className="h-7 w-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30 shrink-0">
             <ShieldCheck className="h-4 w-4" />
           </div>
           <div>
@@ -48,10 +48,18 @@ export function AdminSidebar({ userRole, userEmail }: AdminSidebarProps) {
             </span>
           </div>
         </div>
+
+        <Link
+          href="/gallery"
+          className="lg:hidden flex items-center gap-1.5 text-[11px] font-mono text-zinc-400 hover:text-amber-400 transition-colors px-2 py-1 rounded-lg bg-white/5 border border-white/10"
+        >
+          <ArrowLeft className="h-3 w-3" />
+          <span>Galeri</span>
+        </Link>
       </div>
 
-      {/* Navigation List */}
-      <nav className="flex flex-col gap-1">
+      {/* Navigation List: Horizontal scroll on mobile, Vertical stack on desktop */}
+      <nav className="flex lg:flex-col gap-1.5 overflow-x-auto pb-1 lg:pb-0 no-scrollbar touch-pan-x">
         {navItems.map((item) => {
           const isActive = item.exact ? pathname === item.href : pathname.startsWith(item.href);
           const Icon = item.icon;
@@ -60,10 +68,10 @@ export function AdminSidebar({ userRole, userEmail }: AdminSidebarProps) {
             <Link
               key={item.href}
               href={item.href}
-              className={`relative flex items-center gap-3 px-3.5 py-2.5 rounded-2xl text-xs font-mono font-medium transition-all ${
+              className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-2xl text-xs font-mono font-medium transition-all whitespace-nowrap shrink-0 ${
                 isActive
                   ? "bg-amber-500 text-black font-bold shadow-md shadow-amber-500/20"
-                  : "text-zinc-400 hover:text-white hover:bg-white/5"
+                  : "text-zinc-400 hover:text-white hover:bg-white/5 bg-white/[0.02] lg:bg-transparent"
               }`}
             >
               <Icon className={`h-4 w-4 ${isActive ? "text-black" : "text-zinc-400"}`} />
@@ -73,8 +81,8 @@ export function AdminSidebar({ userRole, userEmail }: AdminSidebarProps) {
         })}
       </nav>
 
-      {/* Back to Public Atelier */}
-      <div className="pt-4 border-t border-white/10">
+      {/* Back to Public Atelier (Desktop only) */}
+      <div className="hidden lg:block pt-4 border-t border-white/10">
         <Link
           href="/gallery"
           className="flex items-center gap-2 text-xs font-mono text-zinc-400 hover:text-amber-400 transition-colors px-2 py-1.5"

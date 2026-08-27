@@ -14,7 +14,8 @@
   - Dedicated System Admin Command Center (`/admin/*`) with collapsible sidebar layout (`AdminSidebar.tsx`), Overview & Metrics hub (`/admin/page.tsx`), User Management directory with role switcher & suspension actions (`/admin/users/page.tsx`), Gallery curation & master file inspector (`/admin/artworks/page.tsx`), and upgraded Discord-style Invite Manager (`/admin/invites/page.tsx`).
   - Contextual Admin Overlays (`ArtworkAdminMenu.tsx`) allowing instant spotlight curation or moderation takedowns directly from gallery views.
   - Upgraded Gallery (`GalleryGrid.tsx`, `ArtworkCard.tsx`, `ArtworkLightbox.tsx`) with Framer Motion pan/zoom physics, master vs public watermarked toggle, and reactive filter bar.
-  - Verified with Turbopack production build (`npm run build`) passing across all 25 routes with 0 errors/warnings and passing all 4 integration test suites.
+  - Verified with Turbopack production build (`npm run build`) passing across all 25 routes with 0 errors/warnings and passing all 8 integration test suites.
+  - Eliminated duplicate inner headers, footers, and redundant navigation across all pages (`/`, `/dashboard`, `/artists`, `/artworks/[slug]`, `/challenges/*`, `/commissions`, `/admin/*`, `/me/*`), replacing them with clean breadcrumbs and sub-header action bars.
 
 ## Current Branch
 `main`
