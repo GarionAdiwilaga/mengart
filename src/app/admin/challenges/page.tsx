@@ -134,6 +134,7 @@ export default async function AdminChallengesOverviewPage() {
                         <ChallengeTransitionButtons
                           challengeId={item.id}
                           currentStatus={item.effectiveStatus}
+                          awardMode={item.awardMode}
                         />
                       </td>
                       <td className="p-4 text-right">

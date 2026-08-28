@@ -186,9 +186,13 @@ export async function getChallengeVotingData(challengeId: string, userId?: strin
 }
 
 /**
- * Fetch challenge results and Hall of Fame data
+ * Fetch challenge results and Hall of Fame data.
+ * By default, public retrieval strictly requires challenge.status === 'finished' and challengeResults.isPublished === true.
  */
-export async function getChallengeResultsData(challengeId: string) {
+export async function getChallengeResultsData(
+  challengeId: string,
+  options?: { includeUnpublished?: boolean }
+) {
   const [challenge] = await db
     .select()
     .from(challenges)
@@ -197,12 +201,33 @@ export async function getChallengeResultsData(challengeId: string) {
 
   if (!challenge) return null;
 
+  const includeUnpublished = options?.includeUnpublished ?? false;
+
+  // If public query and challenge is not finished, return empty results with challenge state
+  if (!includeUnpublished && challenge.status !== "finished") {
+    return {
+      challenge,
+      results: [],
+      isPublished: false,
+      status: challenge.status,
+    };
+  }
+
+  const whereCondition = includeUnpublished
+    ? eq(challengeResults.challengeId, challengeId)
+    : and(
+        eq(challengeResults.challengeId, challengeId),
+        eq(challengeResults.isPublished, true)
+      );
+
   const results = await db
     .select({
       resultId: challengeResults.id,
       finalRank: challengeResults.finalRank,
+      awardType: challengeResults.awardType,
       totalCommunityStars: challengeResults.totalCommunityStars,
       juryScore: challengeResults.juryScore,
+      isPublished: challengeResults.isPublished,
       slotTitle: challengeWinnerSlots.title,
       slotType: challengeWinnerSlots.slotType,
       submissionId: challengeSubmissions.id,
@@ -218,18 +243,27 @@ export async function getChallengeResultsData(challengeId: string) {
     })
     .from(challengeResults)
     .innerJoin(challengeSubmissions, eq(challengeSubmissions.id, challengeResults.submissionId))
-    .innerJoin(profiles, eq(profiles.id, challengeSubmissions.profileId))
-    .innerJoin(
+    .leftJoin(profiles, eq(profiles.id, challengeSubmissions.profileId))
+    .leftJoin(
       challengeSubmissionVersions,
       eq(challengeSubmissionVersions.id, challengeSubmissions.currentVersionId)
     )
-    .innerJoin(artworkVersions, eq(artworkVersions.id, challengeSubmissionVersions.artworkVersionId))
+    .leftJoin(artworkVersions, eq(artworkVersions.id, challengeSubmissionVersions.artworkVersionId))
     .leftJoin(challengeWinnerSlots, eq(challengeWinnerSlots.id, challengeResults.winnerSlotId))
-    .where(eq(challengeResults.challengeId, challengeId))
+    .where(whereCondition)
     .orderBy(asc(challengeResults.finalRank));
 
   return {
     challenge,
     results,
+    isPublished: challenge.status === "finished" && results.length > 0,
+    status: challenge.status,
   };
+}
+
+/**
+ * Moderator & Curator review result retrieval for REVIEW and RESULTS_REVOKED stages
+ */
+export async function getModeratorReviewResultsData(challengeId: string) {
+  return await getChallengeResultsData(challengeId, { includeUnpublished: true });
 }

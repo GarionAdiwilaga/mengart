@@ -12,8 +12,7 @@ import {
   auditLogs,
   users,
 } from "@/db/schema";
-import { eq, and, sql, desc, asc } from "drizzle-orm";
-import { createNotification } from "@/lib/notifications";
+import { eq, and, sql, desc, asc, lte, isNull } from "drizzle-orm";
 import type { EffectiveChallengeStatus } from "@/lib/challenges";
 
 export interface ServiceContext {
@@ -119,6 +118,18 @@ export async function transitionChallengeStatusService(
     throw new Error("Tidak memiliki izin mengubah status challenge.");
   }
 
+  // Protected Transitions: REVIEW -> FINISHED and FINISHED -> RESULTS_REVOKED must go through their dedicated services
+  if (newStatus === "finished") {
+    throw new Error(
+      "Transisi langsung ke 'finished' dilarang. Gunakan layanan publishChallengeResultsService untuk mempublikasikan hasil secara resmi."
+    );
+  }
+  if (newStatus === "results_revoked") {
+    throw new Error(
+      "Transisi langsung ke 'results_revoked' dilarang. Gunakan layanan revokeChallengeResultsService untuk mencabut hasil dengan alasan dan audit log yang valid."
+    );
+  }
+
   const [challenge] = await dbOrTx
     .select()
     .from(challenges)
@@ -175,19 +186,40 @@ export async function transitionChallengeStatusService(
     }
 
     if (newStatus === "voting_open" || newStatus === "tiebreak_open") {
+      // Look up active voting round deadline
+      const [activeRound] = await dbOrTx
+        .select()
+        .from(challengeVotingRounds)
+        .where(
+          and(
+            eq(challengeVotingRounds.challengeId, challengeId),
+            eq(challengeVotingRounds.roundType, newStatus === "tiebreak_open" ? "tiebreak" : "main")
+          )
+        )
+        .orderBy(desc(challengeVotingRounds.roundSequence))
+        .limit(1);
+
       const activeDeadline = options?.votingDeadline
         ? new Date(options.votingDeadline)
+        : activeRound?.deadline
+        ? new Date(activeRound.deadline)
         : challenge.votingDeadline
         ? new Date(challenge.votingDeadline)
         : null;
 
       if (activeDeadline && activeDeadline <= now) {
         throw new Error(
-          "Tidak dapat melanjutkan challenge ke sesi voting: Batas waktu voting telah terlewati saat challenge dijeda. Harap perbarui deadline voting sebelum melanjutkan."
+          `Tidak dapat melanjutkan challenge ke sesi voting (${newStatus}): Batas waktu voting ronde telah terlewati saat challenge dijeda. Harap perbarui deadline voting sebelum melanjutkan.`
         );
       }
       if (options?.votingDeadline) {
         updateData.votingDeadline = new Date(options.votingDeadline);
+        if (activeRound) {
+          await dbOrTx
+            .update(challengeVotingRounds)
+            .set({ deadline: new Date(options.votingDeadline), updatedAt: now })
+            .where(eq(challengeVotingRounds.id, activeRound.id));
+        }
       }
     }
   } else {
@@ -198,7 +230,7 @@ export async function transitionChallengeStatusService(
     updateData.cancellationReason = options?.reason || "Dibatalkan oleh moderator/admin";
   }
 
-  // 1. Entering VOTING_OPEN: Automatically Create & Freeze Main Voting Round Candidates if not present
+  // Entering VOTING_OPEN: Automatically Create & Freeze Main Voting Round Candidates if not present
   if (newStatus === "voting_open") {
     const existingRounds = await dbOrTx
       .select()
@@ -292,6 +324,12 @@ export async function revokeChallengeResultsService(
     throw new Error(`Hanya challenge berstatus "finished" yang dapat dicabut hasilnya (Status saat ini: "${challenge.status}").`);
   }
 
+  // Snapshot existing published results into audit history before unpublishing
+  const existingResults = await dbOrTx
+    .select()
+    .from(challengeResults)
+    .where(eq(challengeResults.challengeId, challengeId));
+
   // 1. Transition challenge to results_revoked
   await dbOrTx
     .update(challenges)
@@ -307,13 +345,18 @@ export async function revokeChallengeResultsService(
     .set({ isPublished: false })
     .where(eq(challengeResults.challengeId, challengeId));
 
-  // 3. Write Audit Log
+  // 3. Write Audit Log with Snapshot
   await dbOrTx.insert(auditLogs).values({
     actorId: actor.userId,
     action: "challenge.revoke_results",
     targetType: "challenge",
     targetId: challengeId,
     reason: `Pencabutan hasil resmi: ${reason.trim()}`,
+    metadata: {
+      revokedAt: new Date().toISOString(),
+      reason: reason.trim(),
+      previousResultsSnapshot: existingResults,
+    },
   });
 
   return { success: true, outcome: "results_revoked" };
@@ -341,8 +384,21 @@ export async function computeChallengeResultsService(
 
   if (!challenge) throw new Error("Challenge tidak ditemukan.");
 
-  // Allow computation from review, jury_selection_open, voting_open, tiebreak_open, or results_revoked
-  const allowedStatuses = ["voting_open", "tiebreak_open", "jury_selection_open", "review", "results_revoked", "finished"];
+  if (challenge.status === "finished") {
+    throw new Error(
+      "Challenge yang telah selesai (finished) tidak dapat dihitung ulang secara langsung. Hasil harus dicabut terlebih dahulu melalui aksi 'results_revoked'."
+    );
+  }
+
+  // Allow computation from voting_open, tiebreak_open, jury_selection_open, submission_locked, review, or results_revoked
+  const allowedStatuses = [
+    "voting_open",
+    "tiebreak_open",
+    "jury_selection_open",
+    "submission_locked",
+    "review",
+    "results_revoked",
+  ];
   if (!allowedStatuses.includes(challenge.status)) {
     throw new Error(`Hasil tidak dapat dihitung pada status "${challenge.status}".`);
   }
@@ -408,8 +464,7 @@ export async function computeChallengeResultsService(
     starTallies.length > communityCutoffCount &&
     challenge.tieStrategy === "tiebreak_round" &&
     challenge.status !== "tiebreak_open" &&
-    challenge.status !== "review" &&
-    challenge.status !== "finished"
+    challenge.status !== "review"
   ) {
     const cutoffSub = starTallies[communityCutoffCount - 1];
     const nextSub = starTallies[communityCutoffCount];
@@ -485,11 +540,29 @@ export async function computeChallengeResultsService(
     }
   }
 
-  // 6. Persist Calculated Results (ONLY for Configured Winner Slots)
+  // 6. Snapshot and Persist Calculated Results (ONLY for Configured Winner Slots)
+  const previousResults = await dbOrTx
+    .select()
+    .from(challengeResults)
+    .where(eq(challengeResults.challengeId, challengeId));
+
+  if (previousResults.length > 0) {
+    await dbOrTx.insert(auditLogs).values({
+      actorId: actor.userId,
+      action: "challenge.results_snapshot",
+      targetType: "challenge",
+      targetId: challengeId,
+      reason: "Snapshot hasil sebelumnya sebelum penghitungan ulang.",
+      metadata: {
+        snapshottedAt: new Date().toISOString(),
+        previousResults,
+      },
+    });
+  }
+
   await dbOrTx.delete(challengeResults).where(eq(challengeResults.challengeId, challengeId));
 
   const championSubmissionId = starTallies[0]?.submissionId;
-  const assignedJurySlotMap = new Map(juryAssignments.map((ja: any) => [ja.submissionId, ja.winnerSlotId]));
 
   // A. Persist Community Podium Ranks
   for (let i = 0; i < communitySlots.length; i++) {
@@ -545,14 +618,27 @@ export async function computeChallengeResultsService(
   };
 }
 
+export interface WinnerNotificationPayload {
+  userId: string;
+  type: string;
+  title: string;
+  body: string;
+  actionUrl: string;
+}
+
 /**
  * Service: Explicitly Review and Publish Results (Stage 2: REVIEW -> FINISHED)
+ * Note: Returns pending winner notifications for post-commit dispatch.
  */
 export async function publishChallengeResultsService(
   dbOrTx: any,
   actor: ServiceContext,
   challengeId: string
-) {
+): Promise<{
+  success: boolean;
+  outcome: "published";
+  pendingNotifications: WinnerNotificationPayload[];
+}> {
   if (actor.role !== "admin" && actor.role !== "moderator") {
     throw new Error("Hanya administrator atau moderator yang dapat mempublikasikan hasil resmi.");
   }
@@ -583,7 +669,7 @@ export async function publishChallengeResultsService(
     .set({ status: "finished", updatedAt: new Date() })
     .where(eq(challenges.id, challengeId));
 
-  // 4. Send Notifications to Winners
+  // 4. Collect Transaction-Safe Notifications for Post-Commit Dispatch
   const winningResults = await dbOrTx
     .select({
       resultId: challengeResults.id,
@@ -598,12 +684,13 @@ export async function publishChallengeResultsService(
     .leftJoin(challengeWinnerSlots, eq(challengeWinnerSlots.id, challengeResults.winnerSlotId))
     .where(eq(challengeResults.challengeId, challengeId));
 
+  const pendingNotifications: WinnerNotificationPayload[] = [];
   for (const wr of winningResults) {
     const title = wr.awardType === "community_rank"
       ? `Selamat! Juara #${wr.finalRank} di ${challenge.title}`
       : `Selamat! Meraih Penghargaan "${wr.winnerSlotTitle || 'Pilihan Juri'}" di ${challenge.title}`;
 
-    await createNotification({
+    pendingNotifications.push({
       userId: wr.artistUserId,
       type: "challenge_winner",
       title,
@@ -624,5 +711,76 @@ export async function publishChallengeResultsService(
   return {
     success: true,
     outcome: "published" as const,
+    pendingNotifications,
+  };
+}
+
+/**
+ * Service: Materialize Scheduled Status Transitions (Automated Scheduler / Cron)
+ * Materializes SCHEDULED -> SUBMISSION_OPEN and SUBMISSION_OPEN -> SUBMISSION_LOCKED based on persisted timestamps.
+ */
+export async function materializeScheduledTransitionsService(
+  dbOrTx: any = defaultDb,
+  now: Date = new Date()
+) {
+  const transitions: Array<{ challengeId: string; from: string; to: string }> = [];
+
+  // 1. Scheduled -> Submission Open
+  const scheduledChallenges = await dbOrTx
+    .select()
+    .from(challenges)
+    .where(
+      and(
+        eq(challenges.status, "scheduled"),
+        lte(challenges.submissionStartsAt, now)
+      )
+    );
+
+  for (const ch of scheduledChallenges) {
+    await dbOrTx
+      .update(challenges)
+      .set({ status: "submission_open", updatedAt: now })
+      .where(eq(challenges.id, ch.id));
+
+    await dbOrTx.insert(auditLogs).values({
+      action: "scheduler.challenge_submission_opened",
+      targetType: "challenge",
+      targetId: ch.id,
+      reason: `Otomatis membuka submisi karena waktu mulai (${ch.submissionStartsAt?.toISOString()}) telah tercapai.`,
+    });
+
+    transitions.push({ challengeId: ch.id, from: "scheduled", to: "submission_open" });
+  }
+
+  // 2. Submission Open -> Submission Locked
+  const openChallenges = await dbOrTx
+    .select()
+    .from(challenges)
+    .where(
+      and(
+        eq(challenges.status, "submission_open"),
+        lte(challenges.submissionDeadline, now)
+      )
+    );
+
+  for (const ch of openChallenges) {
+    await dbOrTx
+      .update(challenges)
+      .set({ status: "submission_locked", updatedAt: now })
+      .where(eq(challenges.id, ch.id));
+
+    await dbOrTx.insert(auditLogs).values({
+      action: "scheduler.challenge_submission_locked",
+      targetType: "challenge",
+      targetId: ch.id,
+      reason: `Otomatis mengunci submisi karena deadline (${ch.submissionDeadline?.toISOString()}) telah terlewati.`,
+    });
+
+    transitions.push({ challengeId: ch.id, from: "submission_open", to: "submission_locked" });
+  }
+
+  return {
+    processedCount: transitions.length,
+    transitions,
   };
 }

@@ -82,4 +82,75 @@ DO $$ BEGIN
   ALTER TABLE "challenge_ballots" ADD CONSTRAINT "challenge_ballots_voting_round_id_challenge_voting_rounds_id_fk" FOREIGN KEY ("voting_round_id") REFERENCES "public"."challenge_voting_rounds"("id") ON DELETE cascade ON UPDATE no action;
 EXCEPTION WHEN duplicate_object THEN null;
 END $$;--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "idx_ballots_voting_round_id" ON "challenge_ballots" USING btree ("voting_round_id");
+CREATE INDEX IF NOT EXISTS "idx_ballots_voting_round_id" ON "challenge_ballots" USING btree ("voting_round_id");--> statement-breakpoint
+-- ==============================================================================
+-- AUTHORITATIVE DATA BACKFILL FOR BLUEPRINT 2.1 (VOTING ROUNDS, BALLOTS, RESULTS)
+-- ==============================================================================
+
+DO $$
+DECLARE
+  ch RECORD;
+  new_round_id uuid;
+  sub RECORD;
+BEGIN
+  FOR ch IN 
+    SELECT c.id, c.status, c.stars_per_member, c.created_at, c.voting_deadline, c.voting_starts_at
+    FROM "challenges" c
+    LEFT JOIN "challenge_voting_rounds" vr ON vr.challenge_id = c.id AND vr.round_type = 'main'
+    WHERE vr.id IS NULL
+  LOOP
+    new_round_id := gen_random_uuid();
+    
+    INSERT INTO "challenge_voting_rounds" (
+      "id",
+      "challenge_id",
+      "round_type",
+      "round_sequence",
+      "status",
+      "starts_at",
+      "deadline",
+      "stars_per_member",
+      "created_at",
+      "updated_at"
+    ) VALUES (
+      new_round_id,
+      ch.id,
+      'main',
+      1,
+      CASE WHEN ch.status = 'voting_open' THEN 'open'::voting_round_status ELSE 'closed'::voting_round_status END,
+      COALESCE(ch.voting_starts_at, ch.created_at),
+      ch.voting_deadline,
+      COALESCE(ch.stars_per_member, 3),
+      ch.created_at,
+      now()
+    );
+
+    -- Link existing legacy ballots of this challenge to the newly created round
+    UPDATE "challenge_ballots"
+    SET "voting_round_id" = new_round_id
+    WHERE "challenge_id" = ch.id AND ("voting_round_id" IS NULL);
+
+    -- Freeze submitted candidate entries into challenge_voting_round_candidates
+    FOR sub IN 
+      SELECT id FROM "challenge_submissions" 
+      WHERE "challenge_id" = ch.id AND "submission_status" = 'submitted'
+    LOOP
+      INSERT INTO "challenge_voting_round_candidates" ("id", "voting_round_id", "submission_id", "created_at")
+      VALUES (gen_random_uuid(), new_round_id, sub.id, now())
+      ON CONFLICT ("voting_round_id", "submission_id") DO NOTHING;
+    END LOOP;
+  END LOOP;
+END $$;--> statement-breakpoint
+
+-- Deterministically backfill award_type on challenge_results based on winner_slot_type
+UPDATE "challenge_results" cr
+SET "award_type" = CASE 
+  WHEN ws.slot_type = 'jury_award' THEN 'jury_award'
+  ELSE 'community_rank'
+END
+FROM "challenge_winner_slots" ws
+WHERE cr.winner_slot_id = ws.id;--> statement-breakpoint
+
+UPDATE "challenge_results"
+SET "award_type" = 'jury_award'
+WHERE "winner_slot_id" IS NULL AND "final_rank" IS NULL;

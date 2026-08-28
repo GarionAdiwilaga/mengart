@@ -156,6 +156,19 @@
 5. Add `results_revoked` status to `challenge_status` enum, with legal transition `finished -> results_revoked -> review -> finished`, results visibility suppression, and audit logging.
 6. Decouple finalization into two distinct production services: `computeChallengeResultsService` (computes tallies and transitions to `review`) and `publishChallengeResultsService` (reviews, triggers notifications, and transitions `review -> finished`).
 **Business Rule:** Production deployments must never use `db:push`. State transitions must enforce mode-aware paths, viable deadlines, and explicit moderator review before final publication.
-**Reason:** Resolves QA findings QA-P0-001, QA-P0-006, QA-P0-007, QA-P0-008, QA-P1-007, and QA-P1-008.
+### Phase 1 Remediation Corrections & Production Migration Hardening
+**Decision:**
+1. Embedded authoritative data backfills directly in PostgreSQL migration `drizzle/0007_perfect_sunspot.sql` (voting rounds, candidate snapshots, ballot linkages, and deterministic `award_type` classification from winner slot type).
+2. Upgraded migration verification `scripts/verifyMigrations.ts` to exercise real Drizzle migrator (`migrate()`) across a genuine 0006 journal database.
+3. Added 4 strict migration invariant assertions (deterministic award_type, round existence, candidate freezing, ballot linkage integrity).
+4. Protected lifecycle transitions: blocked direct transitions to `finished` and `results_revoked` via generic `transitionChallengeStatusService` (only executable via `publishChallengeResultsService` and `revokeChallengeResultsService` respectively).
+5. Enforced results revocation governance before recomputing finished challenges (`computeChallengeResultsService` rejects `status === "finished"`).
+6. Preserved immutable previous results snapshots in `audit_logs.metadata` during result revocation and recomputation.
+7. Separated public result retrieval (`getChallengeResultsData` filters `isPublished = true` and `status === "finished"`) from moderator review retrieval (`getModeratorReviewResultsData`), suppressing winner podiums and Story Cards during `results_revoked` and displaying official Atelier notices.
+8. Made `ChallengeTransitionButtons` award-mode aware and removed the invalid `draft -> submission_open` bypass.
+9. Added idempotent `materializeScheduledTransitionsService` for automated scheduled state progression.
+10. Transaction-safe winner notifications: collected in service transaction and dispatched post-commit.
+**Business Rule:** Real migration paths must automatically backfill legacy data with strict invariant guarantees. Results visibility is strictly gated by publication status and moderator authority.
+**Reason:** Resolves all 15 targeted Phase 1 correction gaps identified during independent QA review.
 
 

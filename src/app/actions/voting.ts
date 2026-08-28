@@ -532,6 +532,7 @@ export async function computeChallengeResultsAction(challengeId: string) {
 
 /**
  * Stage 2: Explicitly Review and Publish Results (Transitions REVIEW -> FINISHED)
+ * Dispatches notifications safely post-commit.
  */
 export async function publishChallengeResultsAction(challengeId: string) {
   const user = await requireModerator("/dashboard");
@@ -543,6 +544,21 @@ export async function publishChallengeResultsAction(challengeId: string) {
       challengeId
     );
   });
+
+  // Post-commit: Dispatch winner notifications safely
+  if (result.pendingNotifications && result.pendingNotifications.length > 0) {
+    await Promise.all(
+      result.pendingNotifications.map((notif) =>
+        createNotification({
+          userId: notif.userId,
+          type: notif.type as any,
+          title: notif.title,
+          body: notif.body,
+          actionUrl: notif.actionUrl,
+        })
+      )
+    );
+  }
 
   const [challenge] = await db
     .select({ slug: challenges.slug })
@@ -557,22 +573,13 @@ export async function publishChallengeResultsAction(challengeId: string) {
   revalidatePath("/admin/challenges");
   revalidatePath("/challenges");
 
-  return result;
+  return { success: true, outcome: "published" as const };
 }
 
 /**
- * Deterministic Challenge Finalization Wrapper (Executes Compute -> Publish)
+ * @deprecated Use computeChallengeResultsAction and publishChallengeResultsAction explicitly.
+ * Does NOT auto-publish to prevent review bypass.
  */
 export async function finalizeChallengeResultsAction(challengeId: string) {
-  const computeResult = await computeChallengeResultsAction(challengeId);
-  
-  if (computeResult.outcome === "tiebreak_created") {
-    return { success: true, outcome: "tiebreak_created", votingRoundId: computeResult.votingRoundId };
-  }
-
-  if (computeResult.outcome === "review_ready") {
-    return await publishChallengeResultsAction(challengeId);
-  }
-
-  return computeResult;
+  return await computeChallengeResultsAction(challengeId);
 }

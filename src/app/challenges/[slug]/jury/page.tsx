@@ -8,7 +8,10 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Award, Shield, User, Image as ImageIcon, Sparkles, CheckCircle2 } from "lucide-react";
 import { JuryEvaluationForm } from "@/components/jury/JuryEvaluationForm";
-import { finalizeChallengeResultsAction } from "@/app/actions/voting";
+import {
+  computeChallengeResultsAction,
+  publishChallengeResultsAction,
+} from "@/app/actions/voting";
 
 interface JuryPageProps {
   params: Promise<{ slug: string }>;
@@ -96,20 +99,46 @@ export default async function ChallengeJuryPage({ params }: JuryPageProps) {
         </div>
 
         {isModOrAdmin ? (
-          <form
-            action={async () => {
-              "use server";
-              await finalizeChallengeResultsAction(challenge.id);
-            }}
-          >
-            <button
-              type="submit"
-              className="px-6 py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-lg shadow-amber-500/20 flex items-center gap-2 cursor-pointer"
-            >
-              <Sparkles className="h-4 w-4 text-black" />
-              <span>Finalisasi & Terbitkan Hasil</span>
-            </button>
-          </form>
+          <div className="flex items-center gap-3">
+            {challenge.status === "review" ? (
+              <form
+                action={async () => {
+                  "use server";
+                  await publishChallengeResultsAction(challenge.id);
+                }}
+              >
+                <button
+                  type="submit"
+                  className="px-6 py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs font-mono transition-all shadow-lg shadow-emerald-500/20 flex items-center gap-2 cursor-pointer"
+                >
+                  <Sparkles className="h-4 w-4 text-black" />
+                  <span>Publikasikan Hasil Resmi</span>
+                </button>
+              </form>
+            ) : challenge.status !== "finished" ? (
+              <form
+                action={async () => {
+                  "use server";
+                  await computeChallengeResultsAction(challenge.id);
+                }}
+              >
+                <button
+                  type="submit"
+                  className="px-6 py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-lg shadow-amber-500/20 flex items-center gap-2 cursor-pointer"
+                >
+                  <Sparkles className="h-4 w-4 text-black" />
+                  <span>Hitung Hasil (Masuk Tahap Review)</span>
+                </button>
+              </form>
+            ) : (
+              <Link
+                href={`/challenges/${challenge.slug}/results`}
+                className="px-6 py-3.5 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-amber-400 font-bold text-xs font-mono transition-all flex items-center gap-2"
+              >
+                <span>Lihat Hasil Resmi</span>
+              </Link>
+            )}
+          </div>
         ) : null}
       </section>
 

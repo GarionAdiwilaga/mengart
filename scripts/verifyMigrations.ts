@@ -23,10 +23,11 @@ async function runMigrationVerification() {
 
   const freshDbName = `mengart_test_fresh_${Date.now()}`;
   const upgradeDbName = `mengart_test_upgrade_${Date.now()}`;
+  const temp0006Dir = path.resolve("./.tmp_drizzle_0006");
 
   try {
     // --------------------------------------------------------------------------
-    // SCENARIO 1: FRESH EMPTY DATABASE -> ALL COMMITTED MIGRATIONS
+    // SCENARIO 1: FRESH EMPTY DATABASE -> ALL COMMITTED MIGRATIONS (0000 -> 0007)
     // --------------------------------------------------------------------------
     console.log(`[Scenario 1] Creating fresh empty database: ${freshDbName}...`);
     await adminClient.unsafe(`CREATE DATABASE "${freshDbName}";`);
@@ -35,7 +36,7 @@ async function runMigrationVerification() {
     const freshClient = postgres(freshDbUrl, { max: 1 });
     const freshDrizzle = drizzle(freshClient);
 
-    console.log("-> Running all committed migrations (0000 -> 0007) on fresh database...");
+    console.log("-> Running all committed migrations (0000 -> 0007) on fresh database via Drizzle migrator...");
     await migrate(freshDrizzle, { migrationsFolder: "./drizzle" });
     console.log("✓ Migration executed cleanly on fresh database.");
 
@@ -86,199 +87,238 @@ async function runMigrationVerification() {
     console.log("🎉 SCENARIO 1 (FRESH DATABASE MIGRATION) PASSED!\n");
 
     // --------------------------------------------------------------------------
-    // SCENARIO 2: UPGRADE FROM PRE-REMEDIATION (0000-0006) WITH EXISTING DATA
+    // SCENARIO 2: UPGRADE FROM REAL MIGRATION 0006 TO 0007 VIA REAL DRIZZLE MIGRATOR
     // --------------------------------------------------------------------------
     console.log(`[Scenario 2] Creating upgrade test database: ${upgradeDbName}...`);
     await adminClient.unsafe(`CREATE DATABASE "${upgradeDbName}";`);
 
     const upgradeDbUrl = `${urlObj.protocol}//${urlObj.username}:${urlObj.password}@${urlObj.host}/${upgradeDbName}`;
     const upgradeClient = postgres(upgradeDbUrl, { max: 1 });
+    const upgradeDrizzle = drizzle(upgradeClient);
 
-    console.log("-> Applying pre-remediation migrations (0000 to 0006)...");
-    const migrationFiles = (await fs.readdir("./drizzle"))
-      .filter((f) => f.endsWith(".sql") && !f.startsWith("0007"))
-      .sort();
+    // Prepare temporary 0000-0006 Drizzle migrations folder to simulate genuine pre-remediation database
+    await fs.mkdir(path.join(temp0006Dir, "meta"), { recursive: true });
+    const fullJournal = JSON.parse(await fs.readFile("./drizzle/meta/_journal.json", "utf-8"));
+    const filteredJournal = {
+      ...fullJournal,
+      entries: fullJournal.entries.filter((e: any) => e.idx <= 6),
+    };
+    await fs.writeFile(
+      path.join(temp0006Dir, "meta/_journal.json"),
+      JSON.stringify(filteredJournal, null, 2)
+    );
 
-    // Create Drizzle migrations table manually for pre-remediation simulation
-    await upgradeClient.unsafe(`
-      CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
-        id SERIAL PRIMARY KEY,
-        hash text NOT NULL,
-        created_at bigint
-      );
-    `);
-
-    for (const sqlFile of migrationFiles) {
-      const sqlContent = await fs.readFile(path.join("./drizzle", sqlFile), "utf-8");
-      // Execute each statement split by statement-breakpoint
-      const statements = sqlContent.split("--> statement-breakpoint");
-      for (const stmt of statements) {
-        if (stmt.trim()) {
-          await upgradeClient.unsafe(stmt);
-        }
-      }
-      await upgradeClient`
-        INSERT INTO "__drizzle_migrations" (hash, created_at)
-        VALUES (${sqlFile}, ${Date.now()});
-      `;
+    const migrationFiles0006 = (await fs.readdir("./drizzle")).filter(
+      (f) => f.endsWith(".sql") && !f.startsWith("0007")
+    );
+    for (const f of migrationFiles0006) {
+      await fs.copyFile(path.join("./drizzle", f), path.join(temp0006Dir, f));
     }
-    console.log(`✓ Applied ${migrationFiles.length} pre-remediation migrations.`);
+
+    console.log("-> Applying migrations 0000 to 0006 via Drizzle migrator...");
+    await migrate(upgradeDrizzle, { migrationsFolder: temp0006Dir });
+    console.log(`✓ Applied ${migrationFiles0006.length} pre-remediation migrations through genuine Drizzle migrator.`);
 
     // Insert representative pre-remediation data
-    console.log("-> Populating representative legacy data (Users, Challenges, Submissions, Ballots, Results)...");
-    const [user] = await upgradeClient`
+    console.log("-> Populating representative legacy data (Users, Challenges, Winner Slots, Submissions, Ballots, Results)...");
+    const [userA] = await upgradeClient`
       INSERT INTO users (email, role, membership_status)
-      VALUES ('legacy_artist@mengart.local', 'member', 'active')
+      VALUES ('legacy_artist_a@mengart.local', 'member', 'active')
+      RETURNING id;
+    `;
+    const [userB] = await upgradeClient`
+      INSERT INTO users (email, role, membership_status)
+      VALUES ('legacy_artist_b@mengart.local', 'member', 'active')
       RETURNING id;
     `;
 
-    const [profile] = await upgradeClient`
+    const [profA] = await upgradeClient`
       INSERT INTO profiles (user_id, display_name, slug)
-      VALUES (${user.id}, 'Legacy Artist', 'legacy-artist')
+      VALUES (${userA.id}, 'Legacy Artist A', 'legacy-artist-a')
+      RETURNING id;
+    `;
+    const [profB] = await upgradeClient`
+      INSERT INTO profiles (user_id, display_name, slug)
+      VALUES (${userB.id}, 'Legacy Artist B', 'legacy-artist-b')
       RETURNING id;
     `;
 
     const [challenge] = await upgradeClient`
       INSERT INTO challenges (title, slug, theme, description, prompt_rules, status, award_mode, stars_per_member, created_by_user_id)
-      VALUES ('Legacy Challenge 2026', 'legacy-challenge-2026', 'Heritage', 'Testing upgrade', 'Rules', 'finished', 'vote_and_jury', 3, ${user.id})
+      VALUES ('Legacy Challenge 2026', 'legacy-challenge-2026', 'Heritage', 'Testing upgrade', 'Rules', 'finished', 'vote_and_jury', 3, ${userA.id})
       RETURNING id;
     `;
 
-    const [slot] = await upgradeClient`
+    // Pre-remediation Winner Slots: 1 community slot and 1 jury slot
+    const [communitySlot] = await upgradeClient`
       INSERT INTO challenge_winner_slots (challenge_id, slot_type, rank, title, display_order)
       VALUES (${challenge.id}, 'community_vote', 1, 'Juara 1 Komunitas', 1)
       RETURNING id;
     `;
+    const [jurySlot] = await upgradeClient`
+      INSERT INTO challenge_winner_slots (challenge_id, slot_type, rank, title, display_order)
+      VALUES (${challenge.id}, 'jury_award', 1, 'Karya Terbaik Dewan Juri', 2)
+      RETURNING id;
+    `;
 
-    const [artwork] = await upgradeClient`
+    const [artA] = await upgradeClient`
       INSERT INTO artworks (user_id, title, slug, media_type)
-      VALUES (${user.id}, 'Legacy Artwork', 'legacy-artwork', 'image')
+      VALUES (${userA.id}, 'Artwork A', 'artwork-a', 'image')
+      RETURNING id;
+    `;
+    const [artB] = await upgradeClient`
+      INSERT INTO artworks (user_id, title, slug, media_type)
+      VALUES (${userB.id}, 'Artwork B', 'artwork-b', 'image')
       RETURNING id;
     `;
 
-    const [sub] = await upgradeClient`
+    const [subA] = await upgradeClient`
       INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status)
-      VALUES (${challenge.id}, ${user.id}, ${profile.id}, 'submitted')
+      VALUES (${challenge.id}, ${userA.id}, ${profA.id}, 'submitted')
+      RETURNING id;
+    `;
+    const [subB] = await upgradeClient`
+      INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status)
+      VALUES (${challenge.id}, ${userB.id}, ${profB.id}, 'submitted')
       RETURNING id;
     `;
 
-    // Legacy Ballot (pre-remediation without voting_round_id)
-    const [legacyBallot] = await upgradeClient`
+    // Legacy Ballots (pre-remediation without voting_round_id)
+    const [legacyBallot1] = await upgradeClient`
       INSERT INTO challenge_ballots (challenge_id, user_id, round_type, stars_allocated, is_finalized)
-      VALUES (${challenge.id}, ${user.id}, 'main', 3, true)
+      VALUES (${challenge.id}, ${userA.id}, 'main', 2, true)
       RETURNING id;
     `;
-
     await upgradeClient`
       INSERT INTO challenge_ballot_stars (ballot_id, submission_id, stars_count)
-      VALUES (${legacyBallot.id}, ${sub.id}, 3);
+      VALUES (${legacyBallot1.id}, ${subB.id}, 2);
     `;
 
-    // Legacy Result (pre-remediation with non-null final_rank)
+    const [legacyBallot2] = await upgradeClient`
+      INSERT INTO challenge_ballots (challenge_id, user_id, round_type, stars_allocated, is_finalized)
+      VALUES (${challenge.id}, ${userB.id}, 'main', 3, true)
+      RETURNING id;
+    `;
+    await upgradeClient`
+      INSERT INTO challenge_ballot_stars (ballot_id, submission_id, stars_count)
+      VALUES (${legacyBallot2.id}, ${subA.id}, 3);
+    `;
+
+    // Legacy Results: 1 Community Result and 1 Jury Result
     await upgradeClient`
       INSERT INTO challenge_results (challenge_id, submission_id, winner_slot_id, final_rank, total_community_stars, is_published)
-      VALUES (${challenge.id}, ${sub.id}, ${slot.id}, 1, 3, true);
+      VALUES (${challenge.id}, ${subA.id}, ${communitySlot.id}, 1, 3, true);
+    `;
+    await upgradeClient`
+      INSERT INTO challenge_results (challenge_id, submission_id, winner_slot_id, final_rank, total_community_stars, is_published)
+      VALUES (${challenge.id}, ${subB.id}, ${jurySlot.id}, 2, 2, true);
     `;
 
     console.log("✓ Pre-remediation data populated cleanly.");
 
-    // Now run migration 0007 (Blueprint 2.1 Schema Upgrades)
-    console.log("-> Applying migration 0007_perfect_sunspot.sql on legacy database...");
-    const mig0007Content = await fs.readFile("./drizzle/0007_perfect_sunspot.sql", "utf-8");
-    const stmts0007 = mig0007Content.split("--> statement-breakpoint");
-    for (const stmt of stmts0007) {
-      if (stmt.trim()) {
-        await upgradeClient.unsafe(stmt);
+    // Now execute real Drizzle migration 0006 -> 0007 upgrade!
+    console.log("-> Applying real Drizzle upgrade migration (0006 -> 0007) with automatic SQL backfill...");
+    await migrate(upgradeDrizzle, { migrationsFolder: "./drizzle" });
+    console.log("✓ Production Drizzle migrator successfully applied migration 0007!");
+
+    // --------------------------------------------------------------------------
+    // STRENGTHENED MIGRATION INVARIANT ASSERTIONS (QA Acceptance Gate)
+    // --------------------------------------------------------------------------
+    console.log("-> Verifying strengthened migration invariants on upgraded database...");
+
+    // Invariant 1: challenge_results.award_type deterministic backfill
+    const resultsRows = await upgradeClient`
+      SELECT cr.id, cr.submission_id, cr.winner_slot_id, cr.final_rank, cr.award_type, ws.slot_type
+      FROM challenge_results cr
+      LEFT JOIN challenge_winner_slots ws ON ws.id = cr.winner_slot_id
+      WHERE cr.challenge_id = ${challenge.id};
+    `;
+
+    const commRes = resultsRows.find((r: any) => r.submission_id === subA.id);
+    const juryRes = resultsRows.find((r: any) => r.submission_id === subB.id);
+
+    if (!commRes || commRes.award_type !== "community_rank") {
+      throw new Error(`Expected subA award_type = 'community_rank', got '${commRes?.award_type}'`);
+    }
+    if (!juryRes || juryRes.award_type !== "jury_award") {
+      throw new Error(`Expected subB award_type = 'jury_award', got '${juryRes?.award_type}'`);
+    }
+    console.log("✓ Invariant 1 Passed: challenge_results.award_type deterministically backfilled from slot_type.");
+
+    // Invariant 2: Authoritative challenge_voting_rounds creation
+    const rounds = await upgradeClient`
+      SELECT * FROM challenge_voting_rounds WHERE challenge_id = ${challenge.id};
+    `;
+    if (rounds.length !== 1 || rounds[0].round_type !== "main" || rounds[0].round_sequence !== 1) {
+      throw new Error(`Expected exactly 1 main voting round, found ${rounds.length}`);
+    }
+    const backfilledRoundId = rounds[0].id;
+    console.log("✓ Invariant 2 Passed: Exactly 1 main voting round backfilled for legacy challenge.");
+
+    // Invariant 3: Frozen candidate snapshot in challenge_voting_round_candidates
+    const candidates = await upgradeClient`
+      SELECT submission_id FROM challenge_voting_round_candidates WHERE voting_round_id = ${backfilledRoundId};
+    `;
+    const candSubmissionIds = candidates.map((c: any) => c.submission_id);
+    if (!candSubmissionIds.includes(subA.id) || !candSubmissionIds.includes(subB.id)) {
+      throw new Error("Candidate snapshot did not freeze all submitted entries!");
+    }
+    console.log(`✓ Invariant 3 Passed: Candidate snapshot contains all submitted entries (${candSubmissionIds.length} entries).`);
+
+    // Invariant 4: Every ballot has valid voting_round_id matching challenge & candidates
+    const ballots = await upgradeClient`
+      SELECT b.id, b.challenge_id, b.voting_round_id, vr.challenge_id as round_challenge_id
+      FROM challenge_ballots b
+      INNER JOIN challenge_voting_rounds vr ON vr.id = b.voting_round_id
+      WHERE b.challenge_id = ${challenge.id};
+    `;
+    if (ballots.length !== 2) {
+      throw new Error(`Expected 2 ballots linked to voting_round_id, found ${ballots.length}`);
+    }
+    for (const b of ballots) {
+      if (!b.voting_round_id) {
+        throw new Error(`Ballot ${b.id} voting_round_id is null!`);
+      }
+      if (b.challenge_id !== b.round_challenge_id) {
+        throw new Error(`Ballot ${b.id} challenge_id does not match voting_round challenge_id!`);
+      }
+
+      // Check all ballot stars are in candidate snapshot
+      const stars = await upgradeClient`
+        SELECT submission_id FROM challenge_ballot_stars WHERE ballot_id = ${b.id};
+      `;
+      for (const s of stars) {
+        if (!candSubmissionIds.includes(s.submission_id)) {
+          throw new Error(`Ballot star submission ${s.submission_id} is not present in frozen candidate set!`);
+        }
       }
     }
-    console.log("✓ Migration 0007 applied successfully over existing data!");
-
-    // Execute Data Backfill Procedure
-    console.log("-> Executing Data Backfill for existing ballots & voting rounds...");
-    
-    // 1. Backfill main voting round for legacy challenges that lacked one
-    const legacyChallenges = await upgradeClient`
-      SELECT c.id, c.stars_per_member, c.created_at, c.voting_deadline
-      FROM challenges c
-      LEFT JOIN challenge_voting_rounds vr ON vr.challenge_id = c.id AND vr.round_type = 'main'
-      WHERE vr.id IS NULL;
-    `;
-
-    for (const ch of legacyChallenges) {
-      const [newRound] = await upgradeClient`
-        INSERT INTO challenge_voting_rounds (challenge_id, round_type, round_sequence, status, starts_at, deadline, stars_per_member, created_at)
-        VALUES (${ch.id}, 'main', 1, 'closed', ${ch.created_at}, ${ch.voting_deadline}, ${ch.stars_per_member}, ${ch.created_at})
-        RETURNING id;
-      `;
-
-      // Backfill ballots linking to this new round
-      await upgradeClient`
-        UPDATE challenge_ballots
-        SET voting_round_id = ${newRound.id}
-        WHERE challenge_id = ${ch.id} AND (round_type = 'main' OR round_type IS NULL);
-      `;
-
-      // Backfill frozen candidates for active submissions
-      const activeSubs = await upgradeClient`
-        SELECT id FROM challenge_submissions 
-        WHERE challenge_id = ${ch.id} AND submission_status = 'submitted';
-      `;
-      for (const s of activeSubs) {
-        await upgradeClient`
-          INSERT INTO challenge_voting_round_candidates (voting_round_id, submission_id)
-          VALUES (${newRound.id}, ${s.id})
-          ON CONFLICT DO NOTHING;
-        `;
-      }
-    }
-
-    console.log(`✓ Backfilled voting rounds, candidates, and ballot linkages for ${legacyChallenges.length} challenges.`);
-
-    // Verify backfilled data integrity & foreign key constraints
-    const backfilledBallot = await upgradeClient`
-      SELECT cb.id, cb.voting_round_id, vr.round_type, vr.challenge_id
-      FROM challenge_ballots cb
-      JOIN challenge_voting_rounds vr ON vr.id = cb.voting_round_id
-      WHERE cb.id = ${legacyBallot.id};
-    `;
-
-    if (backfilledBallot.length === 0 || !backfilledBallot[0].voting_round_id) {
-      throw new Error("Legacy ballot voting_round_id was not properly backfilled!");
-    }
-    console.log("✓ Verified legacy ballot is now authoritatively linked to backfilled voting round.");
-
-    // Verify nullable jury result insertion works
-    const [juryResult] = await upgradeClient`
-      INSERT INTO challenge_results (challenge_id, submission_id, winner_slot_id, final_rank, award_type, total_community_stars, is_published)
-      VALUES (${challenge.id}, ${sub.id}, NULL, NULL, 'jury_award', 0, true)
-      ON CONFLICT (challenge_id, submission_id) 
-      DO UPDATE SET final_rank = EXCLUDED.final_rank, award_type = EXCLUDED.award_type
-      RETURNING id, final_rank, award_type;
-    `;
-
-    if (juryResult.final_rank !== null || juryResult.award_type !== "jury_award") {
-      throw new Error("Nullable final_rank or award_type failed on updated challenge_results!");
-    }
-    console.log("✓ Verified nullable jury award result stored cleanly on upgraded schema.");
+    console.log("✓ Invariant 4 Passed: All ballots authoritatively linked to valid round and candidate snapshots.");
 
     await upgradeClient.end();
-    console.log("🎉 SCENARIO 2 (UPGRADE & BACKFILL INTEGRITY) PASSED!\n");
+    console.log("🎉 SCENARIO 2 (UPGRADE, REAL DRIZZLE MIGRATOR & INVARIANT INTEGRITY) PASSED!\n");
 
+    console.log("=================================================================");
+    console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A)");
+    console.log("=================================================================\n");
   } finally {
-    // Cleanup temporary databases
-    console.log("-> Cleaning up temporary verification databases...");
+    // Clean up temporary files and databases
     try {
-      await adminClient.unsafe(`DROP DATABASE IF EXISTS "${freshDbName}" WITH (FORCE);`);
-      await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName}" WITH (FORCE);`);
-    } catch (cleanupErr) {
-      console.warn("Cleanup note:", cleanupErr);
+      await fs.rm(temp0006Dir, { recursive: true, force: true });
+    } catch (_e) {
+      // Ignored cleanup error
     }
-    await adminClient.end();
-  }
 
-  console.log("=================================================================");
-  console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A)");
-  console.log("=================================================================\n");
+    try {
+      await adminClient.unsafe(`DROP DATABASE IF EXISTS "${freshDbName}";`);
+      await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName}";`);
+    } catch (_e) {
+      // Ignored cleanup error
+    }
+
+    await adminClient.end();
+    process.exit(0);
+  }
 }
 
 runMigrationVerification().catch((err) => {

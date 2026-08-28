@@ -8,22 +8,24 @@ import {
   challengeBallots,
   challengeBallotStars,
   challengeResults,
+  auditLogs,
   users,
   profiles,
 } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import {
   transitionChallengeStatusService,
   revokeChallengeResultsService,
   computeChallengeResultsService,
   publishChallengeResultsService,
-  getLegalTransitionsForChallenge,
+  materializeScheduledTransitionsService,
 } from "@/lib/services/challengeService";
 import { getEffectiveChallengeStatus } from "@/lib/challenges";
+import { getChallengeResultsData, getModeratorReviewResultsData } from "@/lib/voting";
 
 async function runPhase1LifecycleTests() {
   console.log("\n=================================================================");
-  console.log("🔒 STARTING PHASE 1 (GATE A): LIFECYCLE & STATE MACHINE TEST SUITE");
+  console.log("🔒 STARTING PHASE 1 (GATE A): ENHANCED LIFECYCLE & STATE TEST SUITE");
   console.log("=================================================================\n");
 
   const suffix = Date.now().toString();
@@ -52,7 +54,6 @@ async function runPhase1LifecycleTests() {
   // 2. Mode-Aware State Machine Transitions
   console.log("\n[Test 2] Testing Mode-Aware State Machine Transitions...");
   
-  // Jury-Only Mode: submission_locked -> jury_selection_open -> review -> finished
   const [juryChallenge] = await db
     .insert(challenges)
     .values({
@@ -88,7 +89,7 @@ async function runPhase1LifecycleTests() {
   }
   console.log("✓ Illegal transition attempt safely blocked by mode matrix.");
 
-  // 3. Pause & Resume with Deadline Validation (QA-P1-007)
+  // 3. Pause & Resume with Persisted Deadline Validation (QA-P1-007)
   console.log("\n[Test 3] Testing Pause & Resume with Deadline Validation (QA-P1-007)...");
   
   const pastDeadline = new Date(Date.now() - 3600 * 1000); // 1 hour ago
@@ -232,8 +233,8 @@ async function runPhase1LifecycleTests() {
 
   // Step 2: Publish Results -> Status moves to FINISHED
   const pubRes = await publishChallengeResultsService(db, adminCtx, finChallenge.id);
-  if (pubRes.outcome !== "published") {
-    throw new Error(`Expected published, got ${pubRes.outcome}`);
+  if (pubRes.outcome !== "published" || !pubRes.pendingNotifications || pubRes.pendingNotifications.length === 0) {
+    throw new Error(`Expected published with pendingNotifications, got ${JSON.stringify(pubRes)}`);
   }
 
   const [finishedRow] = await db.select().from(challenges).where(eq(challenges.id, finChallenge.id));
@@ -251,8 +252,8 @@ async function runPhase1LifecycleTests() {
   }
   console.log("✓ Stage 2 (Publish Results) completed: Challenge in 'finished' status and results published.");
 
-  // 5. Results Revocation (RESULTS_REVOKED) (QA-P1-008)
-  console.log("\n[Test 5] Testing Results Revocation & Regovernance (QA-P1-008)...");
+  // 5. Results Revocation & Snapshot Preservation (QA-P1-008)
+  console.log("\n[Test 5] Testing Results Revocation & Snapshot Preservation (QA-P1-008)...");
   
   await revokeChallengeResultsService(db, adminCtx, finChallenge.id, "Audit recalculation required");
 
@@ -269,27 +270,129 @@ async function runPhase1LifecycleTests() {
   if (revokedResults[0].isPublished !== false) {
     throw new Error("Revoking results must set isPublished = false!");
   }
-  console.log("✓ Results revocation verified: Status is 'results_revoked' and results visibility suppressed.");
 
-  // Can transition from results_revoked -> review
+  // Verify Snapshot in Audit Log
+  const [revokeAudit] = await db
+    .select()
+    .from(auditLogs)
+    .where(
+      and(
+        eq(auditLogs.targetId, finChallenge.id),
+        eq(auditLogs.action, "challenge.revoke_results")
+      )
+    )
+    .orderBy(desc(auditLogs.createdAt))
+    .limit(1);
+
+  if (!revokeAudit || !revokeAudit.metadata || !(revokeAudit.metadata as any).previousResultsSnapshot) {
+    throw new Error("Revoke results did not persist historical results snapshot in audit logs!");
+  }
+  console.log("✓ Results revocation verified: Status is 'results_revoked', results unpublished, and historical snapshot stored in audit logs.");
+
+  // 6. Protected Transitions Bypasses Blocked
+  console.log("\n[Test 6] Testing Protected Lifecycle Transitions Cannot Be Bypassed...");
+  
+  let finishedBypassBlocked = false;
+  try {
+    await transitionChallengeStatusService(db, adminCtx, finChallenge.id, "finished");
+  } catch (err: any) {
+    finishedBypassBlocked = true;
+  }
+  if (!finishedBypassBlocked) {
+    throw new Error("Direct generic transition to 'finished' was not blocked!");
+  }
+
+  let revokedBypassBlocked = false;
+  try {
+    await transitionChallengeStatusService(db, adminCtx, finChallenge.id, "results_revoked");
+  } catch (err: any) {
+    revokedBypassBlocked = true;
+  }
+  if (!revokedBypassBlocked) {
+    throw new Error("Direct generic transition to 'results_revoked' was not blocked!");
+  }
+  console.log("✓ Protected transition bypasses ('finished' and 'results_revoked') safely blocked.");
+
+  // 7. Compute Blocked on FINISHED Challenge (Must Revoke First)
+  console.log("\n[Test 7] Testing Compute Results Blocked on FINISHED Challenge...");
+  
+  // Transition from results_revoked -> review -> publish
   await transitionChallengeStatusService(db, adminCtx, finChallenge.id, "review");
-  const [reReviewRow] = await db.select().from(challenges).where(eq(challenges.id, finChallenge.id));
-  if (reReviewRow.status !== "review") {
-    throw new Error("Failed to transition from results_revoked to review!");
-  }
-  console.log("✓ Transition from 'results_revoked' -> 'review' verified.");
+  await publishChallengeResultsService(db, adminCtx, finChallenge.id);
 
-  // 6. Authority of Persisted State (QA-P0-006)
-  console.log("\n[Test 6] Testing Persisted State Authority (QA-P0-006)...");
-  const effectiveStatus = getEffectiveChallengeStatus(reReviewRow);
-  if (effectiveStatus !== "review") {
-    throw new Error(`getEffectiveChallengeStatus returned "${effectiveStatus}" instead of persisted "review"!`);
+  let finishedComputeBlocked = false;
+  try {
+    await computeChallengeResultsService(db, adminCtx, finChallenge.id);
+  } catch (err: any) {
+    finishedComputeBlocked = true;
+    console.log(`✓ Direct compute on finished challenge blocked: "${err.message}"`);
   }
-  console.log("✓ getEffectiveChallengeStatus correctly returns persisted database state.");
+  if (!finishedComputeBlocked) {
+    throw new Error("Direct compute on finished challenge was not blocked!");
+  }
+
+  // 8. Public vs Moderator Result Retrieval Separation
+  console.log("\n[Test 8] Testing Public vs Moderator Results Retrieval Separation...");
+  
+  // Revoke challenge again
+  await revokeChallengeResultsService(db, adminCtx, finChallenge.id, "Second audit pass");
+
+  // Public Query must return 0 results for revoked challenge
+  const publicRevokedResults = await getChallengeResultsData(finChallenge.id);
+  if (!publicRevokedResults || publicRevokedResults.results.length !== 0 || publicRevokedResults.isPublished !== false) {
+    throw new Error(`Public query on revoked challenge should return 0 results! Got: ${publicRevokedResults?.results.length}`);
+  }
+
+  // Moderator Review Query returns full results
+  const modRevokedResults = await getModeratorReviewResultsData(finChallenge.id);
+  if (!modRevokedResults || modRevokedResults.results.length !== 1) {
+    throw new Error(`Moderator review query should return computed results! Got: ${modRevokedResults?.results.length}`);
+  }
+  console.log("✓ Results retrieval separation verified: Public sees 0 results on revoked challenge; moderator sees unpublished review results.");
+
+  // 9. Idempotent Scheduled Transition Materializer
+  console.log("\n[Test 9] Testing Idempotent Scheduled Transition Materializer...");
+  
+  const [scheduledCh] = await db
+    .insert(challenges)
+    .values({
+      title: `Scheduled Materializer Test ${suffix}`,
+      slug: `sched-mat-${suffix}`,
+      theme: "Automation",
+      description: "Testing scheduler",
+      promptRules: "Rules",
+      status: "scheduled",
+      submissionStartsAt: new Date(Date.now() - 60 * 1000), // 1 min ago
+      submissionDeadline: new Date(Date.now() + 86400 * 1000),
+      createdByUserId: admin.id,
+    })
+    .returning();
+
+  const schedResult = await materializeScheduledTransitionsService(db, new Date());
+  const transitionedCh = schedResult.transitions.find((t) => t.challengeId === scheduledCh.id);
+
+  if (!transitionedCh || transitionedCh.to !== "submission_open") {
+    throw new Error("Scheduler failed to materialize SCHEDULED -> SUBMISSION_OPEN!");
+  }
+
+  const [matRow] = await db.select().from(challenges).where(eq(challenges.id, scheduledCh.id));
+  if (matRow.status !== "submission_open") {
+    throw new Error(`Expected materialized status 'submission_open', got '${matRow.status}'`);
+  }
+  console.log("✓ Scheduler materializer successfully transitioned scheduled challenge to submission_open.");
+
+  // 10. Persisted State Authority
+  console.log("\n[Test 10] Testing Persisted State Authority...");
+  const effStatus = getEffectiveChallengeStatus(matRow);
+  if (effStatus !== "submission_open") {
+    throw new Error(`getEffectiveChallengeStatus returned "${effStatus}" instead of "submission_open"!`);
+  }
+  console.log("✓ Persisted state authority strictly confirmed.");
 
   console.log("\n=================================================================");
-  console.log("🎉 ALL PHASE 1 (GATE A) TESTS PASSED SUCCESSFULLY!");
+  console.log("🎉 ALL ENHANCED PHASE 1 (GATE A) TESTS PASSED CLEANLY!");
   console.log("=================================================================\n");
+  process.exit(0);
 }
 
 runPhase1LifecycleTests().catch((err) => {
