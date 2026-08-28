@@ -3,8 +3,14 @@
 import { useState, useRef, useEffect } from "react";
 import { useModalStore } from "@/stores/useModalStore";
 import { useUploadArtworkMutation } from "@/hooks/useArtworks";
-import { motion, AnimatePresence } from "framer-motion";
-import { Upload, X, Image as ImageIcon, Video as VideoIcon, Loader2, Sparkles } from "lucide-react";
+import { Upload, Image as ImageIcon, Loader2, Sparkles } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/AccessibleDialog";
 
 export function QuickUploadModal() {
   const { isUploadModalOpen, closeUploadModal } = useModalStore();
@@ -28,17 +34,6 @@ export function QuickUploadModal() {
       }
     };
   }, [previewUrl]);
-
-  // Handle Escape key to close modal
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isUploadModalOpen) {
-        closeUploadModal();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isUploadModalOpen, closeUploadModal]);
 
   const handleFileSelect = (selectedFile: File) => {
     if (previewUrl) {
@@ -104,219 +99,197 @@ export function QuickUploadModal() {
   };
 
   return (
-    <AnimatePresence>
-      {isUploadModalOpen ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="upload-modal-title"
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-md"
-        >
-          <div className="fixed inset-0" onClick={closeUploadModal} aria-hidden="true" />
-
-          <motion.div
-            initial={{ opacity: 0, y: 40 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 40 }}
-            transition={{ type: "spring", stiffness: 350, damping: 30 }}
-            className="w-full max-w-2xl glass-panel-elevated p-5 sm:p-8 rounded-t-3xl sm:rounded-3xl border border-white/15 shadow-2xl relative z-10 max-h-[90vh] overflow-y-auto flex flex-col gap-5 sm:gap-6"
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-white/10 pb-4">
-              <div className="flex items-center gap-2.5">
-                <div className="h-9 w-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-                  <Upload className="h-4 w-4" />
-                </div>
-                <div>
-                  <h3 id="upload-modal-title" className="font-display font-bold text-lg text-[#f6f2e9]">
-                    Unggah Karya Master
-                  </h3>
-                  <p className="text-xs text-zinc-400">
-                    File master dilindungi, otomatis diekstrak WebP & watermark publik.
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={closeUploadModal}
-                aria-label="Tutup jendela unggah"
-                className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center"
-              >
-                <X className="h-4 w-4" />
-              </button>
+    <Dialog
+      open={isUploadModalOpen}
+      onOpenChange={(open) => {
+        if (!open) closeUploadModal();
+      }}
+    >
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <div className="flex items-center gap-2.5">
+            <div className="h-9 w-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+              <Upload className="h-4 w-4" />
             </div>
+            <div>
+              <DialogTitle>Unggah Karya Master</DialogTitle>
+              <DialogDescription>
+                File master dilindungi, otomatis diekstrak WebP & watermark publik.
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
 
-            {/* Form */}
-            <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-              {/* File Dropzone / Dynamic Preview (Image vs Video) */}
-              <div
-                onClick={() => fileInputRef.current?.click()}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                className={`border-2 border-dashed rounded-3xl p-6 flex flex-col items-center justify-center text-center gap-3 transition-all cursor-pointer min-h-[160px] ${
-                  isDragging
-                    ? "border-amber-400 bg-amber-500/15 scale-[1.01]"
-                    : previewUrl
-                    ? "border-amber-500/40 bg-amber-500/5"
-                    : "border-white/15 hover:border-amber-500/50 bg-white/[0.02]"
-                }`}
-              >
-                <input
-                  ref={fileInputRef}
-                  id="artwork-file-input"
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp,image/gif,video/mp4"
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="flex flex-col gap-5 pt-2">
+          {/* File Dropzone / Dynamic Preview (Image vs Video) */}
+          <div
+            onClick={() => fileInputRef.current?.click()}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            className={`border-2 border-dashed rounded-3xl p-6 flex flex-col items-center justify-center text-center gap-3 transition-all cursor-pointer min-h-[160px] ${
+              isDragging
+                ? "border-amber-400 bg-amber-500/15 scale-[1.01]"
+                : previewUrl
+                ? "border-amber-500/40 bg-amber-500/5"
+                : "border-white/15 hover:border-amber-500/50 bg-white/[0.02]"
+            }`}
+          >
+            <input
+              ref={fileInputRef}
+              id="artwork-file-input"
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif,video/mp4"
+              onChange={handleFileChange}
+              className="hidden"
+            />
 
-                {previewUrl ? (
-                  <div className="relative w-full max-h-64 rounded-2xl overflow-hidden flex items-center justify-center bg-black/40 p-2">
-                    {isVideo ? (
-                      <video
-                        src={previewUrl}
-                        controls
-                        className="max-h-56 w-full object-contain rounded-xl"
-                      />
-                    ) : (
-                      <img
-                        src={previewUrl}
-                        alt="Pratinjau Karya"
-                        className="max-h-56 object-contain rounded-xl"
-                      />
-                    )}
-                  </div>
+            {previewUrl ? (
+              <div className="relative w-full max-h-64 rounded-2xl overflow-hidden flex items-center justify-center bg-black/40 p-2">
+                {isVideo ? (
+                  <video
+                    src={previewUrl}
+                    controls
+                    className="max-h-56 w-full object-contain rounded-xl"
+                  />
                 ) : (
-                  <div className="py-6 flex flex-col items-center gap-2">
-                    <div className="h-12 w-12 rounded-2xl bg-white/5 flex items-center justify-center text-amber-400">
-                      <ImageIcon className="h-6 w-6" />
-                    </div>
-                    <span className="font-display font-semibold text-sm text-[#f6f2e9]">
-                      Pilih atau Seret File Karya (PNG, JPG, WEBP, GIF, MP4)
-                    </span>
-                    <span className="text-xs font-mono text-zinc-500">
-                      Resolusi master asli dilindungi tanpa kompresi kasar
-                    </span>
-                  </div>
+                  <img
+                    src={previewUrl}
+                    alt="Pratinjau Karya"
+                    className="max-h-56 object-contain rounded-xl"
+                  />
                 )}
               </div>
-
-              {/* Title & Tags */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label htmlFor="artwork-title" className="text-xs font-mono text-zinc-300">
-                    JUDUL KARYA <span className="text-amber-400">*</span>
-                  </label>
-                  <input
-                    id="artwork-title"
-                    type="text"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder="contoh: Ethereal Forest Sanctuary"
-                    required
-                    className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-base sm:text-sm font-sans"
-                  />
+            ) : (
+              <div className="py-6 flex flex-col items-center gap-2">
+                <div className="h-12 w-12 rounded-2xl bg-white/5 flex items-center justify-center text-amber-400">
+                  <ImageIcon className="h-6 w-6" />
                 </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label htmlFor="artwork-tags" className="text-xs font-mono text-zinc-300">
-                    TAGS (PISAHKAN KOMA)
-                  </label>
-                  <input
-                    id="artwork-tags"
-                    type="text"
-                    value={tagsInput}
-                    onChange={(e) => setTagsInput(e.target.value)}
-                    placeholder="fantasy, landscape, conceptart"
-                    className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-base sm:text-sm font-sans"
-                  />
-                </div>
+                <span className="font-display font-semibold text-sm text-[#f6f2e9]">
+                  Pilih atau Seret File Karya (PNG, JPG, WEBP, GIF, MP4)
+                </span>
+                <span className="text-xs font-mono text-zinc-500">
+                  Resolusi master asli dilindungi tanpa kompresi kasar
+                </span>
               </div>
+            )}
+          </div>
 
-              {/* Description */}
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="artwork-description" className="text-xs font-mono text-zinc-300">
-                  DESKRIPSI & PROSES KREATIF
-                </label>
-                <textarea
-                  id="artwork-description"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  rows={3}
-                  placeholder="Ceritakan latar belakang karya, software yang digunakan (Photoshop, Blender, dll)..."
-                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-base sm:text-sm font-sans resize-none"
-                />
-              </div>
+          {/* Title & Tags */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="artwork-title" className="text-xs font-mono text-zinc-300">
+                JUDUL KARYA <span className="text-amber-400">*</span>
+              </label>
+              <input
+                id="artwork-title"
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="contoh: Ethereal Forest Sanctuary"
+                required
+                className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-base sm:text-sm font-sans"
+              />
+            </div>
 
-              {/* Settings Grid: Audience & Critique Mode */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label htmlFor="artwork-audience" className="text-xs font-mono text-zinc-300">
-                    VISIBILITAS KARYA
-                  </label>
-                  <select
-                    id="artwork-audience"
-                    value={audience}
-                    onChange={(e) => setAudience(e.target.value as any)}
-                    className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-[#191c23] border border-white/10 text-white text-base sm:text-xs font-mono focus:outline-none"
-                  >
-                    <option value="public">Publik (Tampil di Galeri Utama)</option>
-                    <option value="members_only">Khusus Member Atelier</option>
-                    <option value="unlisted">Unlisted (Hanya via Tautan Langsung)</option>
-                    <option value="private">Privat (Hanya Anda & Admin)</option>
-                  </select>
-                </div>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="artwork-tags" className="text-xs font-mono text-zinc-300">
+                TAGS (PISAHKAN KOMA)
+              </label>
+              <input
+                id="artwork-tags"
+                type="text"
+                value={tagsInput}
+                onChange={(e) => setTagsInput(e.target.value)}
+                placeholder="fantasy, landscape, conceptart"
+                className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-base sm:text-sm font-sans"
+              />
+            </div>
+          </div>
 
-                <div className="flex flex-col gap-1.5">
-                  <label htmlFor="artwork-critique-mode" className="text-xs font-mono text-zinc-300">
-                    MODE MASUKAN & KRITIK
-                  </label>
-                  <select
-                    id="artwork-critique-mode"
-                    value={critiqueMode}
-                    onChange={(e) => setCritiqueMode(e.target.value as any)}
-                    className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-[#191c23] border border-white/10 text-white text-base sm:text-xs font-mono focus:outline-none"
-                  >
-                    <option value="open_for_critique">Buka untuk Kritik Konstruktif</option>
-                    <option value="showcase_only">Showcase Only (Apresiasi Saja)</option>
-                  </select>
-                </div>
-              </div>
+          {/* Description */}
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="artwork-description" className="text-xs font-mono text-zinc-300">
+              DESKRIPSI & PROSES KREATIF
+            </label>
+            <textarea
+              id="artwork-description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={3}
+              placeholder="Ceritakan latar belakang karya, software yang digunakan (Photoshop, Blender, dll)..."
+              className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-base sm:text-sm font-sans resize-none"
+            />
+          </div>
 
-              {/* Submit Buttons */}
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
-                <button
-                  type="button"
-                  onClick={closeUploadModal}
-                  className="px-4 py-2.5 min-h-[44px] rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white text-xs font-mono transition-colors cursor-pointer"
-                >
-                  Batal
-                </button>
+          {/* Settings Grid: Audience & Critique Mode */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="artwork-audience" className="text-xs font-mono text-zinc-300">
+                VISIBILITAS KARYA
+              </label>
+              <select
+                id="artwork-audience"
+                value={audience}
+                onChange={(e) => setAudience(e.target.value as any)}
+                className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-[#191c23] border border-white/10 text-white text-base sm:text-xs font-mono focus:outline-none"
+              >
+                <option value="public">Publik (Tampil di Galeri Utama)</option>
+                <option value="members_only">Khusus Member Atelier</option>
+                <option value="unlisted">Unlisted (Hanya via Tautan Langsung)</option>
+                <option value="private">Privat (Hanya Anda & Admin)</option>
+              </select>
+            </div>
 
-                <button
-                  type="submit"
-                  disabled={uploadMutation.isPending || !file || !title.trim()}
-                  className="px-6 py-2.5 min-h-[44px] rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-md shadow-amber-500/20 flex items-center gap-2 cursor-pointer disabled:opacity-50"
-                >
-                  {uploadMutation.isPending ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin text-black" />
-                      <span>Memproses Karya...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="h-4 w-4" />
-                      <span>Publikasikan Karya</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          </motion.div>
-        </div>
-      ) : null}
-    </AnimatePresence>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="artwork-critique-mode" className="text-xs font-mono text-zinc-300">
+                MODE MASUKAN & KRITIK
+              </label>
+              <select
+                id="artwork-critique-mode"
+                value={critiqueMode}
+                onChange={(e) => setCritiqueMode(e.target.value as any)}
+                className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-[#191c23] border border-white/10 text-white text-base sm:text-xs font-mono focus:outline-none"
+              >
+                <option value="open_for_critique">Buka untuk Kritik Konstruktif</option>
+                <option value="showcase_only">Showcase Only (Apresiasi Saja)</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Submit Buttons */}
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
+            <button
+              type="button"
+              onClick={closeUploadModal}
+              aria-label="Batalkan pengunggahan karya"
+              className="px-4 py-2.5 min-h-[44px] rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white text-xs font-mono transition-colors cursor-pointer"
+            >
+              Batal
+            </button>
+
+            <button
+              type="submit"
+              disabled={uploadMutation.isPending || !file || !title.trim()}
+              aria-label="Publikasikan karya master ke galeri"
+              className="px-6 py-2.5 min-h-[44px] rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-md shadow-amber-500/20 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              {uploadMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin text-black" />
+                  <span>Memproses Karya...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-4 w-4" />
+                  <span>Publikasikan Karya</span>
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

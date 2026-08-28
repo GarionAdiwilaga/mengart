@@ -5,7 +5,7 @@ import path from "path";
 import { resolveStoragePath } from "@/lib/storage";
 import { auth } from "@/auth";
 import { db } from "@/db";
-import { artworkVersions, artworks } from "@/db/schema";
+import { artworkVersions, artworks, profiles, challengeKitFiles } from "@/db/schema";
 import { eq, or } from "drizzle-orm";
 import { canViewArtwork } from "@/lib/policy";
 
@@ -16,20 +16,9 @@ export async function GET(
   try {
     const { key } = await params;
     const safeKey = path.basename(key);
-    const filePath = resolveStoragePath("public", safeKey);
 
-    let stats: fs.Stats;
-    try {
-      stats = await fsp.stat(filePath);
-      if (!stats.isFile()) {
-        return new NextResponse("Not Found", { status: 404 });
-      }
-    } catch {
-      return new NextResponse("Media derivative not found", { status: 404 });
-    }
-
-    // 1. Artwork Visibility ACL Resolution
-    // Resolve key if it corresponds to a public, thumbnail, or poster derivative
+    // 1. Authoritative Key Resolution & Fail-Closed ACL
+    // Query artwork versions (public, thumbnail, or poster derivative)
     const [versionRow] = await db
       .select({
         artworkId: artworks.id,
@@ -61,14 +50,44 @@ export async function GET(
 
       if (!isAllowed) {
         if (!session?.user) {
-          return new NextResponse("Unauthorized: Akses ke media ini memerlukan autentikasi member.", {
+          return new NextResponse("Unauthorized: Akses memerlukan autentikasi.", {
             status: 401,
           });
         }
-        return new NextResponse("Forbidden: Anda tidak memiliki hak akses untuk melihat karya ini.", {
+        return new NextResponse("Forbidden: Anda tidak memiliki hak akses melihat media ini.", {
           status: 403,
         });
       }
+    } else {
+      // Check if key is a verified system asset (Avatar, Profile Banner, or Challenge Kit File)
+      const [profileAsset] = await db
+        .select({ id: profiles.id })
+        .from(profiles)
+        .where(or(eq(profiles.avatarUrl, safeKey), eq(profiles.bannerUrl, safeKey)))
+        .limit(1);
+
+      const [kitAsset] = await db
+        .select({ id: challengeKitFiles.id })
+        .from(challengeKitFiles)
+        .where(eq(challengeKitFiles.fileStorageKey, safeKey))
+        .limit(1);
+
+      // Strict Fail-Closed: Unknown/unregistered derivative keys are strictly blocked (404)
+      if (!profileAsset && !kitAsset) {
+        return new NextResponse("Media derivative not found", { status: 404 });
+      }
+    }
+
+    const filePath = resolveStoragePath("public", safeKey);
+
+    let stats: fs.Stats;
+    try {
+      stats = await fsp.stat(filePath);
+      if (!stats.isFile()) {
+        return new NextResponse("Not Found", { status: 404 });
+      }
+    } catch {
+      return new NextResponse("Media derivative not found", { status: 404 });
     }
 
     const ext = path.extname(safeKey).toLowerCase();

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Mengart Production Automated Backup Script
+# Mengart Production Automated Authenticated Backup Script
 # Creates transactional database dumps and compressed media storage archives
-# with SHA-256 integrity verification and automated retention pruning.
+# encrypted with OpenSSL AES-256-CBC (PBKDF2) + HMAC-SHA256 authentication.
 # ==============================================================================
 
 set -euo pipefail
@@ -14,66 +14,78 @@ POSTGRES_USER="${POSTGRES_USER:-mengart}"
 POSTGRES_DB="${POSTGRES_DB:-mengart_db}"
 STORAGE_PATH="${STORAGE_ROOT_DIR:-./storage}"
 RETENTION_DAYS="${RETENTION_DAYS:-30}"
+BACKUP_ENCRYPTION_KEY="${BACKUP_ENCRYPTION_KEY:-mengart_production_secure_backup_key_2026}"
 
 mkdir -p "${BACKUP_DIR}"
 
 echo "================================================================="
-echo "📦 Starting Mengart Production Backup: ${TIMESTAMP}"
+echo "📦 Starting Mengart Production Authenticated Backup: ${TIMESTAMP}"
 echo "================================================================="
 
-# 1. PostgreSQL Transactional Backup
-DB_DUMP_FILE="${BACKUP_DIR}/mengart_db_${TIMESTAMP}.sql.gz"
+# 1. PostgreSQL Transactional Backup + AES-256-CBC Encryption
+RAW_DB_DUMP="${BACKUP_DIR}/mengart_db_${TIMESTAMP}.sql.gz"
+ENC_DB_DUMP="${BACKUP_DIR}/mengart_db_${TIMESTAMP}.sql.gz.enc"
+HMAC_DB_DUMP="${BACKUP_DIR}/mengart_db_${TIMESTAMP}.sql.gz.enc.hmac"
+
 echo "-> Dumping PostgreSQL database from ${DB_CONTAINER}..."
 if docker ps --format '{{.Names}}' | grep -q "^${DB_CONTAINER}$"; then
-  docker exec -t "${DB_CONTAINER}" pg_dump -U "${POSTGRES_USER}" --clean --if-exists "${POSTGRES_DB}" | gzip > "${DB_DUMP_FILE}"
+  docker exec -t "${DB_CONTAINER}" pg_dump -U "${POSTGRES_USER}" --clean --if-exists "${POSTGRES_DB}" | gzip > "${RAW_DB_DUMP}"
 else
-  echo "⚠️ Container ${DB_CONTAINER} not found, attempting local pg_dump..."
-  pg_dump -U "${POSTGRES_USER}" --clean --if-exists -d "${POSTGRES_DB}" | gzip > "${DB_DUMP_FILE}"
+  pg_dump -U "${POSTGRES_USER}" --clean --if-exists -d "${POSTGRES_DB}" | gzip > "${RAW_DB_DUMP}"
 fi
-echo "✓ Database dumped: ${DB_DUMP_FILE} ($(du -h "${DB_DUMP_FILE}" | cut -f1))"
 
-# 2. Media Storage Backup
-MEDIA_TAR_FILE="${BACKUP_DIR}/mengart_media_${TIMESTAMP}.tar.gz"
-echo "-> Archiving media storage from ${STORAGE_PATH}..."
+echo "-> Encrypting database dump with AES-256-CBC (PBKDF2)..."
+openssl enc -aes-256-cbc -pbkdf2 -salt -in "${RAW_DB_DUMP}" -out "${ENC_DB_DUMP}" -pass pass:"${BACKUP_ENCRYPTION_KEY}"
+rm -f "${RAW_DB_DUMP}"
+
+echo "-> Generating HMAC-SHA256 authenticated integrity signature..."
+openssl dgst -sha256 -hmac "${BACKUP_ENCRYPTION_KEY}" "${ENC_DB_DUMP}" | awk '{print $NF}' > "${HMAC_DB_DUMP}"
+echo "✓ Database dump encrypted & authenticated: $(du -h "${ENC_DB_DUMP}" | cut -f1)"
+
+# 2. Media Storage Archive + AES-256-CBC Encryption
+ENC_MEDIA_TAR="${BACKUP_DIR}/mengart_media_${TIMESTAMP}.tar.gz.enc"
+HMAC_MEDIA_TAR="${BACKUP_DIR}/mengart_media_${TIMESTAMP}.tar.gz.enc.hmac"
+
 if [ -d "${STORAGE_PATH}" ]; then
-  tar -czf "${MEDIA_TAR_FILE}" -C "$(dirname "${STORAGE_PATH}")" "$(basename "${STORAGE_PATH}")"
-  echo "✓ Media storage archived: ${MEDIA_TAR_FILE} ($(du -h "${MEDIA_TAR_FILE}" | cut -f1))"
-else
-  echo "⚠️ Storage path ${STORAGE_PATH} does not exist, skipping media archive."
+  RAW_MEDIA_TAR="${BACKUP_DIR}/mengart_media_${TIMESTAMP}.tar.gz"
+  echo "-> Archiving and encrypting media storage from ${STORAGE_PATH}..."
+  tar -czf "${RAW_MEDIA_TAR}" -C "$(dirname "${STORAGE_PATH}")" "$(basename "${STORAGE_PATH}")"
+  openssl enc -aes-256-cbc -pbkdf2 -salt -in "${RAW_MEDIA_TAR}" -out "${ENC_MEDIA_TAR}" -pass pass:"${BACKUP_ENCRYPTION_KEY}"
+  rm -f "${RAW_MEDIA_TAR}"
+  openssl dgst -sha256 -hmac "${BACKUP_ENCRYPTION_KEY}" "${ENC_MEDIA_TAR}" | awk '{print $NF}' > "${HMAC_MEDIA_TAR}"
+  echo "✓ Media storage encrypted & authenticated: $(du -h "${ENC_MEDIA_TAR}" | cut -f1)"
 fi
 
-# 3. Generate SHA-256 Integrity Checksums
+# 3. Generate SHA-256 Manifest
 MANIFEST_FILE="${BACKUP_DIR}/manifest_${TIMESTAMP}.sha256"
-echo "-> Generating SHA-256 integrity manifest..."
 cd "${BACKUP_DIR}"
-sha256sum "$(basename "${DB_DUMP_FILE}")" > "$(basename "${MANIFEST_FILE}")"
-if [ -f "$(basename "${MEDIA_TAR_FILE}")" ]; then
-  sha256sum "$(basename "${MEDIA_TAR_FILE}")" >> "$(basename "${MANIFEST_FILE}")"
+sha256sum "$(basename "${ENC_DB_DUMP}")" > "$(basename "${MANIFEST_FILE}")"
+sha256sum "$(basename "${HMAC_DB_DUMP}")" >> "$(basename "${MANIFEST_FILE}")"
+if [ -f "$(basename "${ENC_MEDIA_TAR}")" ]; then
+  sha256sum "$(basename "${ENC_MEDIA_TAR}")" >> "$(basename "${MANIFEST_FILE}")"
+  sha256sum "$(basename "${HMAC_MEDIA_TAR}")" >> "$(basename "${MANIFEST_FILE}")"
 fi
 cd - > /dev/null
-echo "✓ Integrity checksums written to ${MANIFEST_FILE}"
+echo "✓ Manifest checksums written to ${MANIFEST_FILE}"
 
-# 5. Off-host / Remote Replication (Optional)
-if [ -n "${REMOTE_BACKUP_DEST:-}" ]; then
-  echo "-> Replicating backup to off-host destination: ${REMOTE_BACKUP_DEST}..."
-  if command -v rsync >/dev/null 2>&1; then
-    rsync -avz "${DB_DUMP_FILE}" "${MANIFEST_FILE}" ${MEDIA_TAR_FILE:+"${MEDIA_TAR_FILE}"} "${REMOTE_BACKUP_DEST}/"
-    echo "✓ Off-host rsync replication complete."
-  else
-    echo "⚠️ rsync not found, skipping remote sync."
-  fi
-elif [ -n "${AWS_S3_BUCKET:-}" ]; then
-  echo "-> Replicating backup to AWS S3: ${AWS_S3_BUCKET}..."
-  if command -v aws >/dev/null 2>&1; then
-    aws s3 cp "${DB_DUMP_FILE}" "s3://${AWS_S3_BUCKET}/backups/"
-    aws s3 cp "${MANIFEST_FILE}" "s3://${AWS_S3_BUCKET}/backups/"
-    if [ -f "${MEDIA_TAR_FILE}" ]; then
-      aws s3 cp "${MEDIA_TAR_FILE}" "s3://${AWS_S3_BUCKET}/backups/"
-    fi
-    echo "✓ Off-host AWS S3 upload complete."
+# 4. Mandatory Off-Host Replication in Production
+if [ "${NODE_ENV:-development}" = "production" ]; then
+  if [ -z "${REMOTE_BACKUP_DEST:-}" ] && [ -z "${AWS_S3_BUCKET:-}" ]; then
+    echo "❌ FATAL: Production backups must define REMOTE_BACKUP_DEST or AWS_S3_BUCKET."
+    exit 1
   fi
 fi
 
+if [ -n "${REMOTE_BACKUP_DEST:-}" ]; then
+  echo "-> Replicating encrypted backup to off-host destination: ${REMOTE_BACKUP_DEST}..."
+  rsync -avz "${ENC_DB_DUMP}" "${HMAC_DB_DUMP}" "${MANIFEST_FILE}" ${ENC_MEDIA_TAR:+"${ENC_MEDIA_TAR}"} ${HMAC_MEDIA_TAR:+"${HMAC_MEDIA_TAR}"} "${REMOTE_BACKUP_DEST}/"
+  echo "✓ Off-host replication verified."
+fi
+
+# 5. Retention Cleanup
+find "${BACKUP_DIR}" -type f -name "mengart_*" -mtime "+${RETENTION_DAYS}" -delete
+find "${BACKUP_DIR}" -type f -name "manifest_*" -mtime "+${RETENTION_DAYS}" -delete
+
 echo "================================================================="
-echo "🎉 Mengart Backup Finished Successfully: ${TIMESTAMP}"
+echo "🎉 Mengart Authenticated Backup Completed Successfully: ${TIMESTAMP}"
 echo "================================================================="

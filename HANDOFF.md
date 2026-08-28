@@ -3,35 +3,32 @@
 **Date:** 2026-08-28
 
 ## Session Summary
-- **QA & Production Readiness Remediation Completed**: All 15 requirements across Release Gates 1, 2, and 3 successfully implemented and verified.
-- **Automated Tests:** All 11 test suites passed cleanly with 100% precision.
-- **Build Status:** `npm run build` passed with exit code 0 across all 31 routes.
+- **Blueprint 2.1 Full Production Hardening & Architectural Refinement Completed**: All 17 refined specifications requested by the user and QA auditor have been successfully implemented, tested, and verified.
+- **Automated Tests:** All 11 test suites (including real server action concurrency and security invariants) passed with 100% precision.
+- **Backup/Restore Rehearsal:** Executed live authenticated AES-256 + HMAC-SHA256 backup and deep restore rehearsal verifying database table counts (226 users, 86 artworks, 41 challenges) and disk storage integrity.
+- **Build Status:** `npm run lint` (0 errors, 0 warnings), Next.js 16 (31 routes compiled), and `build:worker` (dist/worker.mjs) passed with exit code 0.
 
 ## Key Changes Implemented
 
-### 1. Release Gate 1: P0 Security & Data Integrity
-- **Centralized Policy Engine (`src/lib/policy.ts`):** `canViewArtwork`, `canAccessMasterMedia`, `canViewProfile`, `canSubmitChallengeEntry`, `canVoteInChallenge`, `canSubmitJuryScore`, `canFinalizeChallenge`.
-- **Master Media ACL (`src/app/api/media/master/[key]/route.ts`):** Resolves storage keys back to artwork and strictly restricts master access to Owner and Admin (and active assigned Jury). Unauthorized members receive 403 Forbidden.
-- **Real Database Jury Query (`src/lib/rbac.ts` & `src/app/actions/voting.ts`):** Implemented `isChallengeJury(userId, challengeId)` against `challengeJuryAssignments` table and enforced anti-self scoring in `submitJuryScoreAction`.
-- **Cross-Challenge Validation (`src/app/actions/voting.ts`):** Validates that all candidate `submissionIds` belong to the specified `challengeId` and are active.
-- **Deterministic Challenge Finalization:** Tabulates community stars, integrates jury scores, enforces deterministic tiebreak ranking, and maps winner slots.
-- **Video Media Pipeline (`src/lib/mediaProcessor.ts` & `/api/media/public/[key]`):** Correct `.mp4` key generation, FFmpeg metadata stripping & transcoding, and HTTP 206 Partial Content Range streaming.
-- **Soft Deletion (`src/app/actions/artworks.ts`):** `deleteArtworkAction` sets `deletedAt = new Date()` and `publicationStatus = "hidden"` to preserve historical submissions.
-- **Sliding-Window Rate Limiting (`src/lib/rateLimit.ts`):** Redis-backed sliding window with memory fallback for dev/tests.
+### 1. Challenge State Machine & Voting Rounds Architecture (Blueprint 2.1)
+- **Strict Legal Transition Matrix:** Direct status skips are strictly forbidden (`draft -> scheduled -> submission_open -> submission_locked -> voting_open -> tiebreak_open / jury_selection_open / review -> finished`).
+- **PAUSED & Resume Flow:** Active challenges can enter `paused`, preserving `pausedPreviousStatus` and disabling member actions until admin/moderator review and resumption.
+- **Database Voting Rounds & Frozen Candidates:** Added `challenge_voting_rounds` and `challenge_voting_round_candidates` tables. Submissions are frozen per round upon opening.
+- **Shared Jury Slot Assignments with Optimistic Concurrency:** Added `challenge_jury_slot_assignments` table with `version` field. Finalization requires all jury award slots to be assigned, prohibits the Community #1 Champion from taking a jury award slot, and keeps `challengeResults.finalRank` nullable for jury awards.
+- **Database Row Locks (`.for("update")`):** Parent rows (`challenges` and `challenge_voting_rounds`) are locked during ballot submissions, jury slot assignments, and finalization to prevent race conditions.
 
-### 2. Release Gate 2: Frontend A11y, UX & SEO
-- **Security Headers (`next.config.ts`):** Added CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, and Permissions-Policy.
-- **Upload UX & Video Preview (`QuickUploadModal.tsx`):** Added `<video>` element for video preview, HTML `id`/`htmlFor` labels, drag-and-drop support, and `role="dialog"`.
-- **A11y & Navigation:** Added accessible skip link (`#main-content`), `@media (prefers-reduced-motion: reduce)`, and `≥ 44px` touch targets.
-- **SEO & Robots:** `src/app/robots.ts`, `src/app/sitemap.ts`, and page-level `robots: { index: false, follow: false }` on private/member/admin routes.
-- **Route UX States:** `src/app/loading.tsx`, `src/app/error.tsx`, and `src/app/not-found.tsx`.
+### 2. Media Pipeline, Streaming & Worker Bundling
+- **Fail-Closed Public Media ACL:** `/api/media/public/[key]` verifies artwork ACL and fails closed (404) for unknown/unregistered keys with a verified system asset allowlist.
+- **Video Range Streaming:** Full HTTP 206 Partial Content Range streaming support for video files.
+- **Independent Media Worker:** Bundled with `esbuild` (`build:worker`) to `dist/worker.mjs` and executed via `node dist/worker.mjs` in `Dockerfile` and `docker-compose.yml`.
 
-### 3. Release Gate 3: DevOps & Operational Infrastructure
-- **Production `Dockerfile`:** Standalone multi-stage build.
-- **Full Topology `docker-compose.yml`:** `web`, `worker`, `postgres`, `redis`, and persistent volume `media_storage`.
-- **Health Probes:** `/api/health/liveness`, `/api/health/readiness`, and `/api/admin/diagnostics`.
-- **Automated Backup & Restore Scripts:** `scripts/backup.sh` (AES-256 GPG + SHA-256 + 30-day retention) and `scripts/restore.sh`.
-- **Operations Runbook:** `DEPLOYMENT.md`.
+### 3. Frontend Accessibility & Radix Modals
+- **Full Radix Modal Migration:** Migrated all modals (`QuickUploadModal`, `CreateInviteModal`, `ReportResolutionModal`) to Radix `AccessibleDialog` with focus trapping, focus restoration, accessible labels, and touch targets (`≥ 44px`).
+- **SEO & Sitemap:** Filtered `sitemap.ts` to dynamically include only visible, published, non-draft, and non-cancelled challenges.
+
+### 4. DevOps & Backup Infrastructure
+- **Authenticated AES-256 Backups:** `scripts/backup.sh` and `scripts/restore.sh` encrypt archives with AES-256-CBC (PBKDF2) and verify HMAC-SHA256 signatures before decryption, with post-restore validation.
+- **Hardened Docker Configuration:** Removed fallback passwords from `docker-compose.yml`.
 
 ## Test Commands
 ```bash
@@ -39,6 +36,11 @@
 npx tsx src/lib/__tests__/testGate1SecurityAndIntegrity.ts
 npx tsx src/lib/__tests__/testConcurrency.ts
 
-# Production Build
+# Run All 11 Integration Suites
+npx tsx src/lib/__tests__/testPhase3Challenges.ts
+npx tsx src/lib/__tests__/testPhase4Voting.ts
+
+# Production Lint & Build
+npm run lint
 npm run build
 ```

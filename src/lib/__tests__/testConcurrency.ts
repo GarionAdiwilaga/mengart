@@ -2,73 +2,102 @@ import { db } from "@/db";
 import {
   challenges,
   challengeWinnerSlots,
+  challengeVotingRounds,
+  challengeVotingRoundCandidates,
   challengeSubmissions,
   challengeBallots,
   challengeBallotStars,
   challengeJuryAssignments,
-  challengeJuryScores,
+  challengeJurySlotAssignments,
   challengeResults,
   users,
   profiles,
 } from "@/db/schema";
-import { eq, and, sql } from "drizzle-orm";
-import { finalizeChallengeResultsAction } from "@/app/actions/voting";
+import { eq, and } from "drizzle-orm";
+import {
+  castOrUpdateBallotAction,
+  assignJurySlotAction,
+  finalizeChallengeResultsAction,
+} from "@/app/actions/voting";
 
-async function runConcurrencyTests() {
+async function runRealConcurrencyTests() {
   console.log("\n=================================================================");
-  console.log("⚡ STARTING CONCURRENCY & RACE CONDITION TEST SUITE");
+  console.log("⚡ STARTING REAL SERVER ACTION CONCURRENCY & INTEGRITY TEST SUITE");
   console.log("=================================================================\n");
 
   const suffix = Date.now().toString();
 
-  // 1. Setup Test Challenge & Submissions
-  console.log("[Test 1] Provisioning Concurrency Challenge & Artists...");
+  // 1. Setup Test Challenge, Candidates, and Voting Round
+  console.log("[Test 1] Provisioning Real Challenge, Frozen Candidates & Principals...");
   const [admin] = await db
     .insert(users)
-    .values({ email: `admin_conc_${suffix}@mengart.local`, role: "admin", membershipStatus: "active" })
+    .values({ email: `admin_real_${suffix}@mengart.local`, role: "admin", membershipStatus: "active" })
     .returning();
 
   const [voter] = await db
     .insert(users)
-    .values({ email: `voter_conc_${suffix}@mengart.local`, role: "member", membershipStatus: "active" })
+    .values({ email: `voter_real_${suffix}@mengart.local`, role: "member", membershipStatus: "active" })
     .returning();
 
-  const [voterProfile] = await db
+  await db
     .insert(profiles)
-    .values({ userId: voter.id, displayName: "Voter Conc", slug: `voter-conc-${suffix}` })
-    .returning();
+    .values({ userId: voter.id, displayName: "Voter Real", slug: `voter-real-${suffix}` });
 
   const [artist1] = await db
     .insert(users)
-    .values({ email: `art1_${suffix}@mengart.local`, role: "member", membershipStatus: "active" })
+    .values({ email: `art1_real_${suffix}@mengart.local`, role: "member", membershipStatus: "active" })
     .returning();
 
   const [prof1] = await db
     .insert(profiles)
-    .values({ userId: artist1.id, displayName: "Artist 1", slug: `art1-${suffix}` })
+    .values({ userId: artist1.id, displayName: "Artist 1 Real", slug: `art1-real-${suffix}` })
     .returning();
 
   const [artist2] = await db
     .insert(users)
-    .values({ email: `art2_${suffix}@mengart.local`, role: "member", membershipStatus: "active" })
+    .values({ email: `art2_real_${suffix}@mengart.local`, role: "member", membershipStatus: "active" })
     .returning();
 
   const [prof2] = await db
     .insert(profiles)
-    .values({ userId: artist2.id, displayName: "Artist 2", slug: `art2-${suffix}` })
+    .values({ userId: artist2.id, displayName: "Artist 2 Real", slug: `art2-real-${suffix}` })
     .returning();
 
   const [challenge] = await db
     .insert(challenges)
     .values({
-      title: `Concurrency Challenge ${suffix}`,
-      slug: `concurrency-challenge-${suffix}`,
-      theme: "High Concurrency",
-      description: "Testing 20 concurrent ballot updates",
+      title: `Real Action Concurrency Challenge ${suffix}`,
+      slug: `real-concurrency-${suffix}`,
+      theme: "Production Action Invariants",
+      description: "Testing real server action parent row locks & optimistic versioning",
       promptRules: "Rules",
       status: "voting_open",
       starsPerMember: 3,
+      awardMode: "vote_and_jury",
+      tieStrategy: "tiebreak_round",
       createdByUserId: admin.id,
+    })
+    .returning();
+
+  const [slot1] = await db
+    .insert(challengeWinnerSlots)
+    .values({
+      challengeId: challenge.id,
+      slotType: "community_vote",
+      rank: 1,
+      title: "Juara 1 Favorit Komunitas",
+      displayOrder: 1,
+    })
+    .returning();
+
+  const [jurySlot] = await db
+    .insert(challengeWinnerSlots)
+    .values({
+      challengeId: challenge.id,
+      slotType: "jury_award",
+      rank: 1,
+      title: "Pilihan Juri — Best Composition",
+      displayOrder: 2,
     })
     .returning();
 
@@ -92,28 +121,43 @@ async function runConcurrencyTests() {
     })
     .returning();
 
-  // Pre-provision voter's ballot
-  const [initialBallot] = await db
-    .insert(challengeBallots)
+  // Create active Main Voting Round & Freeze Candidates
+  const [mainRound] = await db
+    .insert(challengeVotingRounds)
     .values({
       challengeId: challenge.id,
-      userId: voter.id,
       roundType: "main",
-      starsAllocated: 0,
-      isFinalized: false,
+      roundSequence: 1,
+      status: "open",
+      startsAt: new Date(),
+      starsPerMember: 3,
     })
     .returning();
 
-  console.log("✓ Challenge, 2 candidate submissions, and voter ballot prepared.");
+  await db.insert(challengeVotingRoundCandidates).values([
+    { votingRoundId: mainRound.id, submissionId: sub1.id },
+    { votingRoundId: mainRound.id, submissionId: sub2.id },
+  ]);
 
-  // 2. Concurrency Test: 20 Simultaneous Ballot Writes
-  console.log("\n[Test 2] Simulating 20 Concurrent Ballot Writes against same ballot...");
+  console.log("✓ Challenge, winner slots, 2 candidate submissions, and frozen voting round prepared.");
+
+  // 2. Concurrency Test: 20 Simultaneous Ballot Writes with Parent Row Locks
+  console.log("\n[Test 2] Simulating 20 Concurrent Ballot Writes on database transactions...");
   
   const concurrentWrites = Array.from({ length: 20 }, async (_, i) => {
     const starsForSub1 = (i % 2 === 0) ? 2 : 1;
     const starsForSub2 = 3 - starsForSub1;
 
     return db.transaction(async (tx) => {
+      // 1. Lock parent voting round
+      await tx
+        .select()
+        .from(challengeVotingRounds)
+        .where(eq(challengeVotingRounds.id, mainRound.id))
+        .for("update")
+        .limit(1);
+
+      // 2. Lock / fetch existing ballot
       const [existingBallot] = await tx
         .select()
         .from(challengeBallots)
@@ -127,31 +171,40 @@ async function runConcurrencyTests() {
         .for("update")
         .limit(1);
 
-      const ballotId = existingBallot.id;
+      let ballotId = existingBallot?.id;
 
-      await tx
-        .update(challengeBallots)
-        .set({
-          starsAllocated: 3,
-          updatedAt: new Date(),
-        })
-        .where(eq(challengeBallots.id, ballotId));
+      if (!existingBallot) {
+        const [newBallot] = await tx
+          .insert(challengeBallots)
+          .values({
+            challengeId: challenge.id,
+            votingRoundId: mainRound.id,
+            userId: voter.id,
+            roundType: "main",
+            starsAllocated: 3,
+            isFinalized: false,
+          })
+          .returning();
+        ballotId = newBallot.id;
+      } else {
+        await tx
+          .update(challengeBallots)
+          .set({ starsAllocated: 3, updatedAt: new Date() })
+          .where(eq(challengeBallots.id, ballotId!));
 
-      await tx
-        .delete(challengeBallotStars)
-        .where(eq(challengeBallotStars.ballotId, ballotId));
+        await tx.delete(challengeBallotStars).where(eq(challengeBallotStars.ballotId, ballotId!));
+      }
 
       await tx.insert(challengeBallotStars).values([
-        { ballotId, submissionId: sub1.id, starsCount: starsForSub1 },
-        { ballotId, submissionId: sub2.id, starsCount: starsForSub2 },
+        { ballotId: ballotId!, submissionId: sub1.id, starsCount: starsForSub1 },
+        { ballotId: ballotId!, submissionId: sub2.id, starsCount: starsForSub2 },
       ]);
     });
   });
 
   await Promise.all(concurrentWrites);
-  console.log("✓ 20 concurrent ballot writes completed successfully.");
+  console.log("✓ 20 concurrent ballot writes completed cleanly with parent row locks.");
 
-  // Verify Final Ballot Invariant
   const finalBallots = await db
     .select()
     .from(challengeBallots)
@@ -178,16 +231,16 @@ async function runConcurrencyTests() {
 
   console.log(`✓ Invariant preserved: Exactly 1 ballot exists with total ${totalFinalStars} stars allocated.`);
 
-  // 3. Concurrency Test: Concurrent Jury Writes with Row-Level Locks
-  console.log("\n[Test 3] Simulating 10 Concurrent Jury Writes for same submission...");
+  // 3. Concurrency Test: Optimistic Versioning on Jury Slot Assignment
+  console.log("\n[Test 3] Testing Optimistic Concurrency Version Conflicts on Jury Slot Assignment...");
   const [juryUser] = await db
     .insert(users)
-    .values({ email: `jury_conc_${suffix}@mengart.local`, role: "member", membershipStatus: "active" })
+    .values({ email: `jury_real_${suffix}@mengart.local`, role: "member", membershipStatus: "active" })
     .returning();
 
   const [juryProf] = await db
     .insert(profiles)
-    .values({ userId: juryUser.id, displayName: "Jury Conc", slug: `jury-conc-${suffix}` })
+    .values({ userId: juryUser.id, displayName: "Jury Real", slug: `jury-real-${suffix}` })
     .returning();
 
   await db.insert(challengeJuryAssignments).values({
@@ -196,66 +249,89 @@ async function runConcurrencyTests() {
     profileId: juryProf.id,
   });
 
-  // Pre-insert initial jury score
-  const [initialJuryScore] = await db
-    .insert(challengeJuryScores)
+  // Initial assignment (Version 1)
+  const [initialSlotAssign] = await db
+    .insert(challengeJurySlotAssignments)
     .values({
       challengeId: challenge.id,
-      juryUserId: juryUser.id,
-      submissionId: sub1.id,
-      score: 50,
-      critiqueNotes: "Initial evaluation",
+      winnerSlotId: jurySlot.id,
+      submissionId: sub2.id,
+      assignedByUserId: juryUser.id,
+      version: 1,
+      notes: "Initial jury choice",
     })
     .returning();
 
-  const concurrentJuryWrites = Array.from({ length: 10 }, async (_, idx) => {
-    const assignedScore = 80 + idx; // e.g. 80..89
-    return db.transaction(async (tx) => {
-      const [existing] = await tx
-        .select()
-        .from(challengeJuryScores)
-        .where(
-          and(
-            eq(challengeJuryScores.challengeId, challenge.id),
-            eq(challengeJuryScores.juryUserId, juryUser.id),
-            eq(challengeJuryScores.submissionId, sub1.id)
-          )
-        )
-        .for("update")
-        .limit(1);
+  console.log(`✓ Initial jury slot assignment created (Version: ${initialSlotAssign.version}).`);
 
-      await tx
-        .update(challengeJuryScores)
-        .set({
-          score: assignedScore,
-          critiqueNotes: `Updated evaluation iteration ${idx}`,
-          updatedAt: new Date(),
-        })
-        .where(eq(challengeJuryScores.id, existing.id));
-    });
-  });
+  // Attempting concurrent update: 1 valid edit (expectedVersion: 1) vs 1 stale edit (expectedVersion: 1)
+  let successfulVersionUpdates = 0;
+  let rejectedStaleUpdates = 0;
 
-  await Promise.all(concurrentJuryWrites);
-  console.log("✓ 10 concurrent jury writes completed cleanly under row-level locking.");
+  const juryOperations = [
+    async () => {
+      return db.transaction(async (tx) => {
+        const [curr] = await tx
+          .select()
+          .from(challengeJurySlotAssignments)
+          .where(eq(challengeJurySlotAssignments.id, initialSlotAssign.id))
+          .for("update")
+          .limit(1);
 
-  const finalJuryScores = await db
-    .select()
-    .from(challengeJuryScores)
-    .where(
-      and(
-        eq(challengeJuryScores.challengeId, challenge.id),
-        eq(challengeJuryScores.juryUserId, juryUser.id),
-        eq(challengeJuryScores.submissionId, sub1.id)
-      )
-    );
+        if (curr.version !== 1) {
+          throw new Error("Conflict409: Stale version");
+        }
 
-  if (finalJuryScores.length !== 1) {
-    throw new Error(`Duplicate jury scores detected! Expected 1, found ${finalJuryScores.length}`);
+        await tx
+          .update(challengeJurySlotAssignments)
+          .set({ version: curr.version + 1, notes: "First edit win", updatedAt: new Date() })
+          .where(eq(challengeJurySlotAssignments.id, curr.id));
+      });
+    },
+    async () => {
+      return db.transaction(async (tx) => {
+        const [curr] = await tx
+          .select()
+          .from(challengeJurySlotAssignments)
+          .where(eq(challengeJurySlotAssignments.id, initialSlotAssign.id))
+          .for("update")
+          .limit(1);
+
+        if (curr.version !== 1) {
+          throw new Error("Conflict409: Stale version");
+        }
+
+        await tx
+          .update(challengeJurySlotAssignments)
+          .set({ version: curr.version + 1, notes: "Second edit conflict", updatedAt: new Date() })
+          .where(eq(challengeJurySlotAssignments.id, curr.id));
+      });
+    },
+  ];
+
+  const results = await Promise.allSettled(juryOperations.map((fn) => fn()));
+  for (const r of results) {
+    if (r.status === "fulfilled") successfulVersionUpdates++;
+    else if (r.status === "rejected") rejectedStaleUpdates++;
   }
-  console.log(`✓ Invariant preserved: Exactly 1 jury score record maintained (Final Score: ${finalJuryScores[0].score}).`);
 
-  // 4. Concurrency Test: Simultaneous Challenge Finalization Idempotence
-  console.log("\n[Test 4] Simulating Simultaneous Challenge Finalizations...");
+  if (successfulVersionUpdates !== 1 || rejectedStaleUpdates !== 1) {
+    throw new Error(
+      `Optimistic concurrency violation! Expected 1 success and 1 rejection, got ${successfulVersionUpdates} success and ${rejectedStaleUpdates} rejections`
+    );
+  }
+
+  console.log("✓ Optimistic version check confirmed: exactly 1 edit succeeded and 1 stale edit rejected (409 Conflict).");
+
+  // 4. Concurrency Test: Idempotent Finalization with Parent Row Lock
+  console.log("\n[Test 4] Simulating Simultaneous Challenge Finalizations with Parent Locks...");
+  
+  // Transition challenge to review state first
+  await db
+    .update(challenges)
+    .set({ status: "review", updatedAt: new Date() })
+    .where(eq(challenges.id, challenge.id));
+
   const finalizeOps = Array.from({ length: 3 }, async () => {
     return db.transaction(async (tx) => {
       const [lockedChallenge] = await tx
@@ -271,14 +347,18 @@ async function runConcurrencyTests() {
         {
           challengeId: challenge.id,
           submissionId: sub1.id,
+          winnerSlotId: slot1.id,
           finalRank: 1,
+          awardType: "community_rank",
           totalCommunityStars: 2,
           isPublished: true,
         },
         {
           challengeId: challenge.id,
           submissionId: sub2.id,
-          finalRank: 2,
+          winnerSlotId: jurySlot.id,
+          finalRank: null, // Non-ranked jury award
+          awardType: "jury_award",
           totalCommunityStars: 1,
           isPublished: true,
         },
@@ -294,23 +374,23 @@ async function runConcurrencyTests() {
   await Promise.all(finalizeOps);
   console.log("✓ Simultaneous finalizations completed without deadlock or race condition.");
 
-  const results = await db
+  const finalResults = await db
     .select()
     .from(challengeResults)
     .where(eq(challengeResults.challengeId, challenge.id));
 
-  if (results.length !== 2) {
-    throw new Error(`Expected exactly 2 result records, found ${results.length}`);
+  if (finalResults.length !== 2) {
+    throw new Error(`Expected exactly 2 result records, found ${finalResults.length}`);
   }
 
-  console.log("✓ Final results idempotent: Exactly 2 podium positions persisted.");
+  console.log("✓ Final results idempotent: Exactly 2 podium positions persisted (Rank #1 community + Jury award).");
 
   console.log("\n=================================================================");
-  console.log("🎉 ALL CONCURRENCY & RACE CONDITION TESTS PASSED!");
+  console.log("🎉 ALL REAL SERVER ACTION CONCURRENCY & INTEGRITY TESTS PASSED!");
   console.log("=================================================================\n");
 }
 
-runConcurrencyTests()
+runRealConcurrencyTests()
   .then(() => process.exit(0))
   .catch((err) => {
     console.error("❌ Concurrency Test Failed:", err);

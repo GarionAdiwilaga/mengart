@@ -2,7 +2,8 @@ import { Worker, Job } from "bullmq";
 import { redisConnection, MEDIA_QUEUE_NAME, ProcessMediaJobData } from "@/lib/queue";
 import { processArtworkMediaJob } from "@/lib/mediaProcessor";
 
-console.log("🚀 Starting Mengart Media Processing Worker...");
+const concurrency = parseInt(process.env.WORKER_CONCURRENCY || "2", 10);
+console.log(`🚀 Starting Mengart Media Processing Worker (Concurrency: ${concurrency})...`);
 
 export const mediaWorker = new Worker<ProcessMediaJobData>(
   MEDIA_QUEUE_NAME,
@@ -12,7 +13,7 @@ export const mediaWorker = new Worker<ProcessMediaJobData>(
   },
   {
     connection: redisConnection,
-    concurrency: 4, // Utilizing our 14 GiB available RAM with 4 parallel threads
+    concurrency,
   }
 );
 

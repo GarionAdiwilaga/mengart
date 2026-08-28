@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 import { db } from "@/db";
 import { artworks, profiles, challenges, users } from "@/db/schema";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, ne } from "drizzle-orm";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const siteUrl = process.env.NEXTAUTH_URL || "https://mengart.local";
@@ -90,13 +90,21 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.7,
     }));
 
-    // Dynamic Challenges
+    // Dynamic Challenges (Excluding draft, cancelled, invisible, and soft-deleted)
     const challengeRows = await db
       .select({
         slug: challenges.slug,
         updatedAt: challenges.updatedAt,
       })
       .from(challenges)
+      .where(
+        and(
+          eq(challenges.isVisible, true),
+          isNull(challenges.deletedAt),
+          ne(challenges.status, "draft"),
+          ne(challenges.status, "cancelled")
+        )
+      )
       .limit(100);
 
     const challengeRoutes: MetadataRoute.Sitemap = challengeRows.map((ch) => ({

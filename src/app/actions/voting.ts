@@ -5,33 +5,32 @@ import { db } from "@/db";
 import {
   challenges,
   challengeSubmissions,
+  challengeWinnerSlots,
+  challengeVotingRounds,
+  challengeVotingRoundCandidates,
   challengeBallots,
   challengeBallotStars,
-  challengeWinnerSlots,
+  challengeJuryAssignments,
+  challengeJurySlotAssignments,
   challengeJuryScores,
   challengeResults,
   auditLogs,
 } from "@/db/schema";
-import { eq, and, sql, inArray, desc, asc } from "drizzle-orm";
+import { eq, and, sql, desc, asc, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getEffectiveChallengeStatus } from "@/lib/challenges";
-import { createNotification } from "@/lib/notifications";
 import { canVoteInChallenge, canSubmitJuryScore } from "@/lib/policy";
+import { createNotification } from "@/lib/notifications";
+import { checkRateLimit } from "@/lib/rateLimit";
 
-interface StarAllocationInput {
-  submissionId: string;
-  starsCount: number; // 1, 2, 3, etc.
-}
-
-export async function castOrUpdateBallotAction(
+/**
+ * Fetch challenge candidates and user's ballot for a specific voting round
+ */
+export async function getChallengeVotingData(
   challengeId: string,
-  allocations: StarAllocationInput[],
-  isFinalizing: boolean = false,
+  userId?: string | null,
   roundType: "main" | "tiebreak" = "main"
 ) {
-  const user = await requireAuth("/login");
-
-  // 1. Verify Challenge & Authoritative Voting Window
   const [challenge] = await db
     .select()
     .from(challenges)
@@ -40,67 +39,176 @@ export async function castOrUpdateBallotAction(
 
   if (!challenge) throw new Error("Challenge tidak ditemukan.");
 
-  const votePolicy = canVoteInChallenge(user as any, challenge as any, roundType);
-  if (!votePolicy.allowed) {
-    throw new Error(votePolicy.reason || "Voting tidak diizinkan saat ini.");
-  }
+  // Fetch or resolve active voting round
+  const [votingRound] = await db
+    .select()
+    .from(challengeVotingRounds)
+    .where(
+      and(
+        eq(challengeVotingRounds.challengeId, challengeId),
+        eq(challengeVotingRounds.roundType, roundType)
+      )
+    )
+    .orderBy(desc(challengeVotingRounds.roundSequence))
+    .limit(1);
 
-  const now = new Date();
-  if (challenge.votingDeadline && now > new Date(challenge.votingDeadline)) {
-    throw new Error("Batas waktu voting telah berakhir (Authoritative Deadline Passed).");
-  }
-
-  // 2. Filter valid positive allocations
-  const activeAllocations = allocations.filter((a) => a.starsCount > 0);
-  const totalStarsRequested = activeAllocations.reduce((sum, a) => sum + a.starsCount, 0);
-
-  const maxStarsAllowed = challenge.starsPerMember || 3;
-  if (totalStarsRequested > maxStarsAllowed) {
-    throw new Error(
-      `Alokasi Stars melebihi batas maksimal (${totalStarsRequested} / ${maxStarsAllowed} Stars).`
-    );
-  }
-
-  // 3. Strict Candidate Validation: Verify Challenge ID & Active Status & Anti-Self-Voting
-  if (activeAllocations.length > 0) {
-    const submissionIds = activeAllocations.map((a) => a.submissionId);
-    const targetSubmissions = await db
+  // If frozen candidates table exists for this round, load strictly from it
+  let candidateSubmissions: any[] = [];
+  if (votingRound) {
+    const frozenCandidates = await db
       .select({
-        id: challengeSubmissions.id,
-        challengeId: challengeSubmissions.challengeId,
+        submissionId: challengeVotingRoundCandidates.submissionId,
+      })
+      .from(challengeVotingRoundCandidates)
+      .where(eq(challengeVotingRoundCandidates.votingRoundId, votingRound.id));
+
+    const candidateIds = frozenCandidates.map((fc) => fc.submissionId);
+    if (candidateIds.length > 0) {
+      candidateSubmissions = await db
+        .select({
+          submissionId: challengeSubmissions.id,
+          userId: challengeSubmissions.userId,
+          createdAt: challengeSubmissions.createdAt,
+        })
+        .from(challengeSubmissions)
+        .where(inArray(challengeSubmissions.id, candidateIds));
+    }
+  } else {
+    // Fallback: all active submitted entries
+    candidateSubmissions = await db
+      .select({
+        submissionId: challengeSubmissions.id,
         userId: challengeSubmissions.userId,
-        status: challengeSubmissions.submissionStatus,
+        createdAt: challengeSubmissions.createdAt,
       })
       .from(challengeSubmissions)
-      .where(inArray(challengeSubmissions.id, submissionIds));
+      .where(
+        and(
+          eq(challengeSubmissions.challengeId, challengeId),
+          eq(challengeSubmissions.submissionStatus, "submitted")
+        )
+      );
+  }
 
-    if (targetSubmissions.length !== submissionIds.length) {
-      throw new Error("Satu atau lebih karya submisi tidak ditemukan dalam sistem.");
-    }
+  // Fetch current user's ballot for this round
+  let userBallot = null;
+  let allocatedStars: Record<string, number> = {};
 
-    for (const sub of targetSubmissions) {
-      // Validate challenge belonging
-      if (sub.challengeId !== challengeId) {
-        throw new Error("Pelanggaran integritas: Karya submisi berasal dari challenge yang berbeda.");
-      }
+  if (userId) {
+    const [existingBallot] = await db
+      .select()
+      .from(challengeBallots)
+      .where(
+        and(
+          eq(challengeBallots.challengeId, challengeId),
+          eq(challengeBallots.userId, userId),
+          eq(challengeBallots.roundType, roundType)
+        )
+      )
+      .limit(1);
 
-      // Validate active submission status
-      if (sub.status !== "submitted") {
-        throw new Error("Karya submisi yang dipilih telah didiskualifikasi atau ditarik.");
-      }
+    if (existingBallot) {
+      userBallot = existingBallot;
+      const starsList = await db
+        .select()
+        .from(challengeBallotStars)
+        .where(eq(challengeBallotStars.ballotId, existingBallot.id));
 
-      // Validate anti-self-voting
-      if (sub.userId === user.id) {
-        throw new Error(
-          "Voting untuk karya sendiri (self-voting) dilarang dalam aturan atelier."
-        );
+      for (const item of starsList) {
+        allocatedStars[item.submissionId] = item.starsCount;
       }
     }
   }
 
-  // 4. Atomic Transaction: Upsert Ballot & BallotStars
-  await db.transaction(async (tx) => {
-    // Find or create ballot
+  return {
+    challenge,
+    votingRound,
+    roundType,
+    candidates: candidateSubmissions,
+    userBallot,
+    allocatedStars,
+    starsAllowance: votingRound?.starsPerMember || challenge.starsPerMember,
+  };
+}
+
+/**
+ * Cast or Update Ballot for a Challenge Voting Round
+ */
+export async function castOrUpdateBallotAction(
+  challengeId: string,
+  votes: Array<{ submissionId: string; starsCount: number }>,
+  roundType: "main" | "tiebreak" = "main"
+) {
+  const user = await requireAuth("/login");
+
+  // Rate Limiting on voting actions
+  const rl = await checkRateLimit(`vote:${user.id}`, { limit: 20, windowSeconds: 60 });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak permintaan pemungutan suara. Harap tunggu beberapa saat.");
+  }
+
+  return db.transaction(async (tx) => {
+    // 1. Lock challenge parent row
+    const [challenge] = await tx
+      .select()
+      .from(challenges)
+      .where(eq(challenges.id, challengeId))
+      .for("update")
+      .limit(1);
+
+    if (!challenge) throw new Error("Challenge tidak ditemukan.");
+
+    // 2. Authoritative Policy Verification
+    const votePolicy = canVoteInChallenge(user as any, challenge as any, roundType);
+    if (!votePolicy.allowed) {
+      throw new Error(votePolicy.reason || "Pemungutan suara tidak diizinkan saat ini.");
+    }
+
+    // 3. Resolve active voting round
+    const [votingRound] = await tx
+      .select()
+      .from(challengeVotingRounds)
+      .where(
+        and(
+          eq(challengeVotingRounds.challengeId, challengeId),
+          eq(challengeVotingRounds.roundType, roundType)
+        )
+      )
+      .for("update")
+      .limit(1);
+
+    const maxStars = votingRound?.starsPerMember || challenge.starsPerMember;
+    const totalAllocated = votes.reduce((sum, v) => sum + v.starsCount, 0);
+
+    if (totalAllocated > maxStars) {
+      throw new Error(`Total Stars melebihi alokasi maksimal (${maxStars} Stars).`);
+    }
+
+    // 4. Validate Candidate Eligibility & Anti-Self Voting
+    const activeSubmissions = await tx
+      .select()
+      .from(challengeSubmissions)
+      .where(
+        and(
+          eq(challengeSubmissions.challengeId, challengeId),
+          eq(challengeSubmissions.submissionStatus, "submitted")
+        )
+      );
+
+    const validSubmissionMap = new Map(activeSubmissions.map((s) => [s.id, s]));
+
+    for (const vote of votes) {
+      if (vote.starsCount <= 0) continue;
+      const sub = validSubmissionMap.get(vote.submissionId);
+      if (!sub) {
+        throw new Error("Submisi karya tidak valid atau tidak terdaftar pada challenge ini.");
+      }
+      if (sub.userId === user.id) {
+        throw new Error("Self-voting dilarang dalam aturan atelier.");
+      }
+    }
+
+    // 5. Upsert Ballot with Parent Lock
     const [existingBallot] = await tx
       .select()
       .from(challengeBallots)
@@ -111,6 +219,7 @@ export async function castOrUpdateBallotAction(
           eq(challengeBallots.roundType, roundType)
         )
       )
+      .for("update")
       .limit(1);
 
     let ballotId = existingBallot?.id;
@@ -120,10 +229,11 @@ export async function castOrUpdateBallotAction(
         .insert(challengeBallots)
         .values({
           challengeId,
+          votingRoundId: votingRound?.id || null,
           userId: user.id,
           roundType,
-          starsAllocated: totalStarsRequested,
-          isFinalized: isFinalizing,
+          starsAllocated: totalAllocated,
+          isFinalized: false,
         })
         .returning();
       ballotId = newBallot.id;
@@ -131,103 +241,119 @@ export async function castOrUpdateBallotAction(
       await tx
         .update(challengeBallots)
         .set({
-          starsAllocated: totalStarsRequested,
-          isFinalized: isFinalizing,
-          updatedAt: now,
+          votingRoundId: votingRound?.id || existingBallot.votingRoundId,
+          starsAllocated: totalAllocated,
+          updatedAt: new Date(),
         })
         .where(eq(challengeBallots.id, ballotId!));
 
-      // Clear previous star rows
       await tx
         .delete(challengeBallotStars)
         .where(eq(challengeBallotStars.ballotId, ballotId!));
     }
 
-    // Insert new star allocations
-    if (activeAllocations.length > 0) {
+    // 6. Insert new star allocations
+    const activeStars = votes.filter((v) => v.starsCount > 0);
+    if (activeStars.length > 0) {
       await tx.insert(challengeBallotStars).values(
-        activeAllocations.map((a) => ({
+        activeStars.map((v) => ({
           ballotId: ballotId!,
-          submissionId: a.submissionId,
-          starsCount: a.starsCount,
+          submissionId: v.submissionId,
+          starsCount: v.starsCount,
         }))
       );
     }
 
-    await tx.insert(auditLogs).values({
-      actorId: user.id,
-      action: "challenge.ballot_cast",
-      targetType: "challenge_ballot",
-      targetId: ballotId!,
-      metadata: {
-        challengeId,
-        roundType,
-        starsCount: totalStarsRequested,
-        isFinalized: isFinalizing,
-      },
-    });
+    revalidatePath(`/challenges/${challenge.slug}/voting`);
+    return { success: true, ballotId };
   });
-
-  revalidatePath(`/challenges/${challenge.slug}`);
-  revalidatePath(`/challenges/${challenge.slug}/voting`);
-
-  return {
-    success: true,
-    totalStarsAllocated: totalStarsRequested,
-    remainingStars: maxStarsAllowed - totalStarsRequested,
-  };
 }
 
-export async function resetBallotAction(challengeId: string, roundType: "main" | "tiebreak" = "main") {
-  const user = await requireAuth("/login");
-
-  const [existingBallot] = await db
-    .select()
-    .from(challengeBallots)
-    .where(
-      and(
-        eq(challengeBallots.challengeId, challengeId),
-        eq(challengeBallots.userId, user.id),
-        eq(challengeBallots.roundType, roundType)
-      )
-    )
-    .limit(1);
-
-  if (existingBallot) {
-    await db.transaction(async (tx) => {
-      await tx
-        .delete(challengeBallotStars)
-        .where(eq(challengeBallotStars.ballotId, existingBallot.id));
-
-      await tx
-        .update(challengeBallots)
-        .set({ starsAllocated: 0, isFinalized: false, updatedAt: new Date() })
-        .where(eq(challengeBallots.id, existingBallot.id));
-    });
-  }
-
-  revalidatePath(`/challenges/${challengeId}`);
-  return { success: true };
-}
-
-export async function submitJuryScoreAction(
+/**
+ * Reset Ballot Action
+ */
+export async function resetBallotAction(
   challengeId: string,
-  submissionId: string,
-  winnerSlotId?: string,
-  score?: number,
-  critiqueNotes?: string
+  roundType: "main" | "tiebreak" = "main"
 ) {
   const user = await requireAuth("/login");
 
-  // 1. Strict Server-Side Jury Authorization via Policy
+  return db.transaction(async (tx) => {
+    const [challenge] = await tx
+      .select()
+      .from(challenges)
+      .where(eq(challenges.id, challengeId))
+      .for("update")
+      .limit(1);
+
+    if (!challenge) throw new Error("Challenge tidak ditemukan.");
+
+    const votePolicy = canVoteInChallenge(user as any, challenge as any, roundType);
+    if (!votePolicy.allowed) {
+      throw new Error(votePolicy.reason || "Reset suara tidak diizinkan.");
+    }
+
+    const [ballot] = await tx
+      .select()
+      .from(challengeBallots)
+      .where(
+        and(
+          eq(challengeBallots.challengeId, challengeId),
+          eq(challengeBallots.userId, user.id),
+          eq(challengeBallots.roundType, roundType)
+        )
+      )
+      .for("update")
+      .limit(1);
+
+    if (ballot) {
+      await tx.delete(challengeBallotStars).where(eq(challengeBallotStars.ballotId, ballot.id));
+      await tx
+        .update(challengeBallots)
+        .set({ starsAllocated: 0, updatedAt: new Date() })
+        .where(eq(challengeBallots.id, ballot.id));
+    }
+
+    revalidatePath(`/challenges/${challenge.slug}/voting`);
+    return { success: true };
+  });
+}
+
+/**
+ * Shared Jury Winner-Slot Assignment with Optimistic Concurrency Locking
+ */
+export async function assignJurySlotAction(params: {
+  challengeId: string;
+  winnerSlotId: string;
+  submissionId: string;
+  expectedVersion?: number;
+  notes?: string;
+}) {
+  const { challengeId, winnerSlotId, submissionId, expectedVersion = 1, notes } = params;
+  const user = await requireAuth("/login");
+
+  // Validate Jury Authorization
   const juryPolicy = await canSubmitJuryScore(user as any, challengeId, submissionId);
   if (!juryPolicy.allowed) {
-    throw new Error(juryPolicy.reason || "Anda tidak diizinkan memberikan nilai juri untuk karya ini.");
+    throw new Error(juryPolicy.reason || "Anda tidak diizinkan menetapkan slot juri.");
   }
 
-  // 2. Validate WinnerSlotId if provided
-  if (winnerSlotId) {
-    const [slot] = await db
+  return db.transaction(async (tx) => {
+    // 1. Lock challenge and winner slot row
+    const [challenge] = await tx
+      .select()
+      .from(challenges)
+      .where(eq(challenges.id, challengeId))
+      .for("update")
+      .limit(1);
+
+    if (!challenge) throw new Error("Challenge tidak ditemukan.");
+    if (challenge.status === "finished" || challenge.status === "cancelled") {
+      throw new Error(`Challenge tidak dapat menerima penetapan juri pada status "${challenge.status}".`);
+    }
+
+    // 2. Validate target winner slot exists and is a jury award slot
+    const [slot] = await tx
       .select()
       .from(challengeWinnerSlots)
       .where(
@@ -237,202 +363,303 @@ export async function submitJuryScoreAction(
           eq(challengeWinnerSlots.slotType, "jury_award")
         )
       )
+      .for("update")
       .limit(1);
 
     if (!slot) {
-      throw new Error("Penetapan slot juara dewan juri tidak valid untuk challenge ini.");
+      throw new Error("Slot penghargaan juri tidak valid untuk challenge ini.");
     }
-  }
 
-  // 3. Validate Score bounds if provided
-  if (score !== undefined && score !== null) {
-    if (score < 1 || score > 100) {
-      throw new Error("Skor juri harus berada di antara 1 dan 100.");
-    }
-  }
-
-  // 4. Upsert Jury Score
-  const [existingScore] = await db
-    .select()
-    .from(challengeJuryScores)
-    .where(
-      and(
-        eq(challengeJuryScores.challengeId, challengeId),
-        eq(challengeJuryScores.juryUserId, user.id),
-        eq(challengeJuryScores.submissionId, submissionId)
+    // 3. Optimistic Concurrency Version Verification
+    const [existingAssignment] = await tx
+      .select()
+      .from(challengeJurySlotAssignments)
+      .where(
+        and(
+          eq(challengeJurySlotAssignments.challengeId, challengeId),
+          eq(challengeJurySlotAssignments.winnerSlotId, winnerSlotId)
+        )
       )
-    )
-    .limit(1);
+      .for("update")
+      .limit(1);
 
-  if (existingScore) {
-    await db
-      .update(challengeJuryScores)
-      .set({
-        winnerSlotId: winnerSlotId || null,
-        score: score !== undefined ? Math.round(score) : null,
-        critiqueNotes: critiqueNotes?.trim() || null,
-        updatedAt: new Date(),
-      })
-      .where(eq(challengeJuryScores.id, existingScore.id));
-  } else {
-    await db.insert(challengeJuryScores).values({
-      challengeId,
-      juryUserId: user.id,
-      submissionId,
-      winnerSlotId: winnerSlotId || null,
-      score: score !== undefined ? Math.round(score) : null,
-      critiqueNotes: critiqueNotes?.trim() || null,
+    if (existingAssignment) {
+      if (existingAssignment.version !== expectedVersion) {
+        throw new Error(
+          `Konflik konkurensi (409 Conflict): Slot ini telah diperbarui oleh juri lain (Versi terkini: ${existingAssignment.version}, Versi Anda: ${expectedVersion}). Harap muat ulang halaman.`
+        );
+      }
+
+      const nextVersion = existingAssignment.version + 1;
+      await tx
+        .update(challengeJurySlotAssignments)
+        .set({
+          submissionId,
+          assignedByUserId: user.id,
+          version: nextVersion,
+          notes: notes?.trim() || null,
+          updatedAt: new Date(),
+        })
+        .where(eq(challengeJurySlotAssignments.id, existingAssignment.id));
+    } else {
+      await tx.insert(challengeJurySlotAssignments).values({
+        challengeId,
+        winnerSlotId,
+        submissionId,
+        assignedByUserId: user.id,
+        version: 1,
+        notes: notes?.trim() || null,
+      });
+    }
+
+    // 4. Audit Log
+    await tx.insert(auditLogs).values({
+      actorId: user.id,
+      action: "jury.assign_slot",
+      targetType: "challenge_winner_slot",
+      targetId: winnerSlotId,
+      reason: `Penetapan slot "${slot.title}" ke karya submisi ${submissionId}`,
     });
-  }
 
-  revalidatePath(`/challenges/${challengeId}/jury`);
-  return { success: true };
+    revalidatePath(`/challenges/${challenge.slug}/jury`);
+    return { success: true };
+  });
 }
 
 /**
- * Deterministic Challenge Finalization Algorithm
+ * Submit or update jury evaluation notes and winner slot recommendation
+ */
+export async function submitJuryScoreAction(
+  challengeId: string,
+  submissionId: string,
+  winnerSlotId?: string,
+  score?: number,
+  critiqueNotes?: string
+) {
+  const user = await requireAuth("/login");
+
+  // Validate Jury Authorization
+  const juryPolicy = await canSubmitJuryScore(user as any, challengeId, submissionId);
+  if (!juryPolicy.allowed) {
+    throw new Error(juryPolicy.reason || "Anda tidak diizinkan mengevaluasi karya ini.");
+  }
+
+  return db.transaction(async (tx) => {
+    // 1. If winnerSlotId is provided, assign jury slot
+    if (winnerSlotId) {
+      await assignJurySlotAction({
+        challengeId,
+        winnerSlotId,
+        submissionId,
+        notes: critiqueNotes,
+      });
+    }
+
+    // 2. Upsert challenge_jury_scores evaluation record
+    const [existingScore] = await tx
+      .select()
+      .from(challengeJuryScores)
+      .where(
+        and(
+          eq(challengeJuryScores.challengeId, challengeId),
+          eq(challengeJuryScores.juryUserId, user.id),
+          eq(challengeJuryScores.submissionId, submissionId)
+        )
+      )
+      .limit(1);
+
+    if (existingScore) {
+      await tx
+        .update(challengeJuryScores)
+        .set({
+          winnerSlotId: winnerSlotId || null,
+          score: score || null,
+          critiqueNotes: critiqueNotes || null,
+          updatedAt: new Date(),
+        })
+        .where(eq(challengeJuryScores.id, existingScore.id));
+    } else {
+      await tx.insert(challengeJuryScores).values({
+        challengeId,
+        juryUserId: user.id,
+        submissionId,
+        winnerSlotId: winnerSlotId || null,
+        score: score || null,
+        critiqueNotes: critiqueNotes || null,
+      });
+    }
+
+    revalidatePath(`/challenges/${challengeId}`);
+    return { success: true };
+  });
+}
+
+/**
+ * Deterministic Challenge Finalization with Parent Row Lock & Slot Completion Check
  */
 export async function finalizeChallengeResultsAction(challengeId: string) {
   const user = await requireModerator("/dashboard");
 
-  const [challenge] = await db
-    .select()
-    .from(challenges)
-    .where(eq(challenges.id, challengeId))
-    .limit(1);
+  return db.transaction(async (tx) => {
+    // 1. Lock challenge parent row
+    const [challenge] = await tx
+      .select()
+      .from(challenges)
+      .where(eq(challenges.id, challengeId))
+      .for("update")
+      .limit(1);
 
-  if (!challenge) throw new Error("Challenge tidak ditemukan.");
+    if (!challenge) throw new Error("Challenge tidak ditemukan.");
 
-  const dynamicStatus = getEffectiveChallengeStatus(challenge);
-  if (
-    dynamicStatus !== "review" &&
-    dynamicStatus !== "voting_open" &&
-    dynamicStatus !== "jury_selection_open" &&
-    challenge.status !== "finished"
-  ) {
-    throw new Error(`Challenge tidak dapat difinalisasi pada status "${dynamicStatus}".`);
-  }
-
-  // 1. Fetch configured winner slots
-  const winnerSlots = await db
-    .select()
-    .from(challengeWinnerSlots)
-    .where(eq(challengeWinnerSlots.challengeId, challengeId))
-    .orderBy(asc(challengeWinnerSlots.displayOrder), asc(challengeWinnerSlots.rank));
-
-  const communitySlots = winnerSlots.filter((s) => s.slotType === "community_vote");
-  const jurySlots = winnerSlots.filter((s) => s.slotType === "jury_award");
-
-  // 2. Fetch Jury Evaluations
-  const juryScores = await db
-    .select()
-    .from(challengeJuryScores)
-    .where(eq(challengeJuryScores.challengeId, challengeId));
-
-  // If awardMode requires jury, check that jury evaluations exist
-  if (challenge.awardMode === "jury_only" || challenge.awardMode === "vote_and_jury") {
-    if (jurySlots.length > 0 && juryScores.length === 0) {
-      console.warn("Peringatan: Finalisasi challenge dilakukan tanpa penilaian juri yang lengkap.");
-    }
-  }
-
-  // 3. Tabulate total community stars for all active submissions
-  const submissionStars = await db
-    .select({
-      submissionId: challengeSubmissions.id,
-      artistUserId: challengeSubmissions.userId,
-      submissionCreatedAt: challengeSubmissions.createdAt,
-      totalStars: sql<number>`COALESCE(SUM(${challengeBallotStars.starsCount}), 0)::int`,
-    })
-    .from(challengeSubmissions)
-    .leftJoin(
-      challengeBallotStars,
-      eq(challengeBallotStars.submissionId, challengeSubmissions.id)
-    )
-    .where(
-      and(
-        eq(challengeSubmissions.challengeId, challengeId),
-        eq(challengeSubmissions.submissionStatus, "submitted")
-      )
-    )
-    .groupBy(challengeSubmissions.id, challengeSubmissions.userId, challengeSubmissions.createdAt)
-    .orderBy(
-      desc(sql`COALESCE(SUM(${challengeBallotStars.starsCount}), 0)::int`),
-      asc(challengeSubmissions.createdAt),
-      asc(challengeSubmissions.id)
-    );
-
-  // 4. Map Jury Scores per submission
-  const juryScoresBySubmission = new Map<string, { avgScore: number; count: number; designatedSlotId?: string }>();
-  for (const js of juryScores) {
-    const prev = juryScoresBySubmission.get(js.submissionId) || { avgScore: 0, count: 0 };
-    const scoreVal = js.score || 0;
-    const newCount = prev.count + 1;
-    const newAvg = (prev.avgScore * prev.count + scoreVal) / newCount;
-    juryScoresBySubmission.set(js.submissionId, {
-      avgScore: newAvg,
-      count: newCount,
-      designatedSlotId: js.winnerSlotId || prev.designatedSlotId,
-    });
-  }
-
-  // 5. Detect Cutoff Ties BEFORE concluding finalization
-  const communityCutoffCount = communitySlots.length;
-  if (
-    communityCutoffCount > 0 &&
-    submissionStars.length > communityCutoffCount &&
-    challenge.tieStrategy === "tiebreak_round" &&
-    challenge.status !== "finished"
-  ) {
-    const cutoffSubmission = submissionStars[communityCutoffCount - 1];
-    const nextSubmission = submissionStars[communityCutoffCount];
-
-    if (cutoffSubmission.totalStars === nextSubmission.totalStars && cutoffSubmission.totalStars > 0) {
-      // Transition challenge to tiebreak_open so community can vote in tiebreak round
-      await db
-        .update(challenges)
-        .set({ status: "tiebreak_open", updatedAt: new Date() })
-        .where(eq(challenges.id, challengeId));
-
-      revalidatePath(`/challenges/${challenge.slug}`);
-      revalidatePath("/challenges");
+    const dynamicStatus = getEffectiveChallengeStatus(challenge);
+    if (dynamicStatus === "voting_open" || dynamicStatus === "tiebreak_open") {
       throw new Error(
-        `Tiebreak terdeteksi pada batas kuota juara (Peringkat #${communityCutoffCount} dan #${communityCutoffCount + 1} sama-sama meraih ${cutoffSubmission.totalStars} Stars). Status challenge dialihkan ke putaran tiebreak.`
+        `Finalisasi ditolak: Sesi pemungutan suara ("${dynamicStatus}") masih aktif. Finalisasi hanya dapat dilakukan setelah pemungutan suara ditutup.`
       );
     }
-  }
 
-  // 6. Transactional Result Persistence & Slot Mapping
-  await db.transaction(async (tx) => {
+    if (dynamicStatus !== "review" && dynamicStatus !== "jury_selection_open" && challenge.status !== "finished") {
+      throw new Error(`Challenge tidak dapat difinalisasi pada status "${dynamicStatus}".`);
+    }
+
+    // 2. Fetch Configured Winner Slots
+    const winnerSlots = await tx
+      .select()
+      .from(challengeWinnerSlots)
+      .where(eq(challengeWinnerSlots.challengeId, challengeId))
+      .orderBy(asc(challengeWinnerSlots.displayOrder), asc(challengeWinnerSlots.rank));
+
+    const communitySlots = winnerSlots.filter((s) => s.slotType === "community_vote");
+    const jurySlots = winnerSlots.filter((s) => s.slotType === "jury_award");
+
+    // 3. Required Jury Slots Completion Check
+    const juryAssignments = await tx
+      .select()
+      .from(challengeJurySlotAssignments)
+      .where(eq(challengeJurySlotAssignments.challengeId, challengeId));
+
+    if (challenge.awardMode === "jury_only" || challenge.awardMode === "vote_and_jury") {
+      if (jurySlots.length > 0) {
+        const assignedSlotIds = new Set(juryAssignments.map((a) => a.winnerSlotId));
+        const unassignedSlots = jurySlots.filter((slot) => !assignedSlotIds.has(slot.id));
+        if (unassignedSlots.length > 0) {
+          throw new Error(
+            `Finalisasi diblokir: Terdapat ${unassignedSlots.length} slot penghargaan dewan juri yang belum ditetapkan (${unassignedSlots.map((s) => s.title).join(", ")}).`
+          );
+        }
+      }
+    }
+
+    // 4. Tabulate Main Round Stars Deterministically
+    const mainRoundStars = await tx
+      .select({
+        submissionId: challengeSubmissions.id,
+        artistUserId: challengeSubmissions.userId,
+        createdAt: challengeSubmissions.createdAt,
+        totalStars: sql<number>`COALESCE(SUM(CASE WHEN ${challengeBallots.roundType} = 'main' THEN ${challengeBallotStars.starsCount} ELSE 0 END), 0)::int`,
+        tiebreakStars: sql<number>`COALESCE(SUM(CASE WHEN ${challengeBallots.roundType} = 'tiebreak' THEN ${challengeBallotStars.starsCount} ELSE 0 END), 0)::int`,
+      })
+      .from(challengeSubmissions)
+      .leftJoin(challengeBallotStars, eq(challengeBallotStars.submissionId, challengeSubmissions.id))
+      .leftJoin(challengeBallots, eq(challengeBallots.id, challengeBallotStars.ballotId))
+      .where(
+        and(
+          eq(challengeSubmissions.challengeId, challengeId),
+          eq(challengeSubmissions.submissionStatus, "submitted")
+        )
+      )
+      .groupBy(challengeSubmissions.id, challengeSubmissions.userId, challengeSubmissions.createdAt)
+      .orderBy(
+        desc(sql`COALESCE(SUM(CASE WHEN ${challengeBallots.roundType} = 'main' THEN ${challengeBallotStars.starsCount} ELSE 0 END), 0)::int`),
+        desc(sql`COALESCE(SUM(CASE WHEN ${challengeBallots.roundType} = 'tiebreak' THEN ${challengeBallotStars.starsCount} ELSE 0 END), 0)::int`),
+        asc(challengeSubmissions.createdAt),
+        asc(challengeSubmissions.id)
+      );
+
+    // 5. Detect Cutoff Ties BEFORE Concluding Finalization
+    const communityCutoffCount = communitySlots.length;
+    if (
+      communityCutoffCount > 0 &&
+      mainRoundStars.length > communityCutoffCount &&
+      challenge.tieStrategy === "tiebreak_round" &&
+      challenge.status !== "finished" &&
+      challenge.status !== "tiebreak_open"
+    ) {
+      const cutoffSub = mainRoundStars[communityCutoffCount - 1];
+      const nextSub = mainRoundStars[communityCutoffCount];
+
+      if (cutoffSub.totalStars === nextSub.totalStars && cutoffSub.totalStars > 0) {
+        // Collect all tied candidates at this exact score
+        const tiedScore = cutoffSub.totalStars;
+        const tiedCandidates = mainRoundStars.filter((s) => s.totalStars === tiedScore);
+
+        // Create and Freeze Tiebreak Round
+        const [tiebreakRound] = await tx
+          .insert(challengeVotingRounds)
+          .values({
+            challengeId,
+            roundType: "tiebreak",
+            roundSequence: 2,
+            status: "open",
+            startsAt: new Date(),
+            starsPerMember: 1,
+          })
+          .returning();
+
+        await tx.insert(challengeVotingRoundCandidates).values(
+          tiedCandidates.map((tc) => ({
+            votingRoundId: tiebreakRound.id,
+            submissionId: tc.submissionId,
+          }))
+        );
+
+        // Transition challenge to tiebreak_open
+        await tx
+          .update(challenges)
+          .set({ status: "tiebreak_open", updatedAt: new Date() })
+          .where(eq(challenges.id, challengeId));
+
+        revalidatePath(`/challenges/${challenge.slug}`);
+        throw new Error(
+          `Tiebreak terdeteksi pada batas kuota juara (${tiedCandidates.length} karya memiliki ${tiedScore} Stars). Putaran tiebreak telah diaktifkan.`
+        );
+      }
+    }
+
+    // 6. Persist Final Results
     await tx.delete(challengeResults).where(eq(challengeResults.challengeId, challengeId));
 
-    const assignedJurySlotIds = new Set<string>();
+    // Map Community Podium Winners
+    const championSubmissionId = mainRoundStars[0]?.submissionId;
+    const assignedJurySlotMap = new Map(juryAssignments.map((ja) => [ja.submissionId, ja.winnerSlotId]));
 
-    for (let i = 0; i < submissionStars.length; i++) {
-      const sub = submissionStars[i];
+    for (let i = 0; i < mainRoundStars.length; i++) {
+      const sub = mainRoundStars[i];
       const rank = i + 1;
       const matchingCommunitySlot = communitySlots.find((s) => s.rank === rank);
-      const juryInfo = juryScoresBySubmission.get(sub.submissionId);
+      const assignedJurySlotId = assignedJurySlotMap.get(sub.submissionId);
 
+      // Community Champion cannot receive a Jury Award Slot per Blueprint
       let winnerSlotId: string | null = null;
+      let awardType = "community_rank";
+
       if (matchingCommunitySlot) {
         winnerSlotId = matchingCommunitySlot.id;
-      } else if (juryInfo?.designatedSlotId && !assignedJurySlotIds.has(juryInfo.designatedSlotId)) {
-        winnerSlotId = juryInfo.designatedSlotId;
-        assignedJurySlotIds.add(juryInfo.designatedSlotId);
+      } else if (assignedJurySlotId && sub.submissionId !== championSubmissionId) {
+        winnerSlotId = assignedJurySlotId;
+        awardType = "jury_award";
       }
 
       await tx.insert(challengeResults).values({
         challengeId,
         submissionId: sub.submissionId,
         winnerSlotId,
-        finalRank: rank,
+        finalRank: matchingCommunitySlot ? rank : null,
+        awardType,
         totalCommunityStars: sub.totalStars,
-        juryScore: juryInfo?.avgScore ? juryInfo.avgScore.toFixed(2) : null,
         isPublished: true,
       });
 
-      // Send winner notification to top podium artists
       if (rank <= 3) {
         await createNotification({
           userId: sub.artistUserId,
@@ -444,7 +671,7 @@ export async function finalizeChallengeResultsAction(challengeId: string) {
       }
     }
 
-    // Authoritatively mark challenge finished
+    // 7. Authoritatively Finish Challenge
     await tx
       .update(challenges)
       .set({ status: "finished", updatedAt: new Date() })
@@ -452,16 +679,16 @@ export async function finalizeChallengeResultsAction(challengeId: string) {
 
     await tx.insert(auditLogs).values({
       actorId: user.id,
-      action: "challenge.results_finalized",
+      action: "challenge.finalize",
       targetType: "challenge",
       targetId: challengeId,
-      metadata: { totalSubmissionsRanked: submissionStars.length },
+      reason: "Hasil resmi challenge berhasil difinalisasi.",
     });
+
+    revalidatePath(`/challenges/${challenge.slug}/results`);
+    revalidatePath(`/challenges/${challenge.slug}`);
+    revalidatePath("/challenges");
+
+    return { success: true };
   });
-
-  revalidatePath(`/challenges/${challenge.slug}`);
-  revalidatePath(`/challenges/${challenge.slug}/results`);
-  revalidatePath("/challenges");
-
-  return { success: true };
 }

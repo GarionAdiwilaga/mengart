@@ -137,3 +137,17 @@
 **Business Rule:** Zero deployment without passing all Gate 1 security policies and build checks.
 **Reason:** Fulfills all user and QA auditor requirements to achieve production deploy readiness.
 
+### Blueprint 2.1 Exact Lifecycle State Machine, Frozen Candidates, and Shared Jury Slots
+**Decision:** Fully align the challenge and voting architecture with exact Blueprint 2.1 specifications:
+1. **Strict Legal Transition Matrix:** Direct status skips are strictly forbidden (`draft -> scheduled -> submission_open -> submission_locked -> voting_open -> tiebreak_open / jury_selection_open / review -> finished`). Normal publication passes through `submission_locked` and `review`.
+2. **Paused & Resume Flow:** Active challenges can enter `paused`, preserving `pausedPreviousStatus` and disabling member actions until admin/moderator review and resumption.
+3. **Explicit Database Voting Rounds Model:** Implemented `challenge_voting_rounds` and `challenge_voting_round_candidates` tables. When a round opens, eligible candidate submissions are frozen into the round table.
+4. **Shared Jury Slot Assignments with Optimistic Concurrency:** Implemented `challenge_jury_slot_assignments` table with integer `version` field for optimistic concurrency (`409 Conflict` detection). Finalization enforces complete jury slot assignment and prohibits the Community #1 Champion from taking a jury award slot. `challengeResults.finalRank` is nullable for jury awards.
+5. **Database Row Locks (`.for("update")`):** Parent rows (`challenges` and `challenge_voting_rounds`) are locked during ballot submissions, jury slot assignments, and finalization to prevent race conditions.
+6. **Authenticated AES-256 + HMAC-SHA256 Encrypted Backups:** `scripts/backup.sh` and `scripts/restore.sh` authenticate integrity with HMAC-SHA256 signatures, decrypt AES-256-CBC archives, and perform post-restoration database table record counts and storage file checks.
+7. **Fail-Closed Public Media Route:** `/api/media/public/[key]` strictly checks artwork ACL and returns 404 for unknown/unregistered keys.
+8. **Independent Worker Bundle:** Bundled via `esbuild` to `dist/worker.mjs` with runtime external dependencies and dynamic concurrency control.
+**Business Rule:** Preserves strict deterministic execution, zero race conditions, and complete data integrity across voting, jury awards, and media distribution.
+**Reason:** Addressed all 17 refined architectural requirements for production deployment approval.
+
+

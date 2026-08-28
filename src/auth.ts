@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import { db } from "@/db";
 import { users, profiles } from "@/db/schema";
 import { eq, or } from "drizzle-orm";
+import { checkRateLimit } from "@/lib/rateLimit";
 
 declare module "next-auth" {
   interface Session {
@@ -48,6 +49,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         const identifier = String(credentials.identifier).trim().toLowerCase();
         const password = String(credentials.password);
+
+        // Enforce rate limiting on credentials authentication
+        const rl = await checkRateLimit(`auth_credentials:${identifier}`, {
+          limit: 5,
+          windowSeconds: 60,
+        });
+        if (!rl.success) {
+          throw new Error("RateLimited");
+        }
 
         // Find user by email or username
         const [dbUser] = await db

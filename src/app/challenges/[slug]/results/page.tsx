@@ -36,8 +36,8 @@ export default async function ChallengeResultsPage({ params }: ResultsPageProps)
   const topWinners = results.slice(0, 3);
   const otherRanks = results.slice(3);
 
-  const storyWinners = results.map((r) => ({
-    rank: r.finalRank,
+  const storyWinners = results.map((r, idx) => ({
+    rank: r.finalRank ?? (idx + 1),
     title: r.title,
     artistName: r.artistName,
     artistSlug: r.artistSlug,

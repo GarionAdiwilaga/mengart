@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build && npm run build:worker",
+    "build:worker": "esbuild src/workers/mediaWorker.ts --bundle --platform=node --target=node20 --format=esm --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\" --external:sharp --external:ioredis --external:bullmq --external:postgres --external:dotenv --outfile=dist/worker.mjs",
     "start": "next start",
     "lint": "eslint .",
     "db:generate": "drizzle-kit generate",
@@ -13,7 +14,7 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed:accounts": "tsx src/db/seedTestAccounts.ts",
-    "worker:media": "tsx src/workers/mediaWorker.ts"
+    "worker:media": "node dist/worker.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.23",
@@ -52,6 +53,7 @@
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "drizzle-kit": "^0.30.4",
+    "esbuild": "^0.25.0",
     "eslint": "^9.20.1",
     "eslint-config-next": "^16.3.3",
     "postcss": "^8.5.2",

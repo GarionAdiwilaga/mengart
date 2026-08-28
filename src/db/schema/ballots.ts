@@ -11,7 +11,12 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { users } from "./users";
-import { challenges, challengeSubmissions, challengeWinnerSlots } from "./challenges";
+import {
+  challenges,
+  challengeSubmissions,
+  challengeWinnerSlots,
+  challengeVotingRounds,
+} from "./challenges";
 
 export const ballotRoundTypeEnum = pgEnum("ballot_round_type", ["main", "tiebreak"]);
 
@@ -22,6 +27,9 @@ export const challengeBallots = pgTable(
     challengeId: uuid("challenge_id")
       .notNull()
       .references(() => challenges.id, { onDelete: "cascade" }),
+    votingRoundId: uuid("voting_round_id").references(() => challengeVotingRounds.id, {
+      onDelete: "cascade",
+    }),
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -34,6 +42,7 @@ export const challengeBallots = pgTable(
   (table) => [
     index("idx_ballots_challenge_id").on(table.challengeId),
     index("idx_ballots_user_id").on(table.userId),
+    index("idx_ballots_voting_round_id").on(table.votingRoundId),
     uniqueIndex("uniq_challenge_user_ballot").on(table.challengeId, table.userId, table.roundType),
   ]
 );
@@ -75,7 +84,7 @@ export const challengeJuryScores = pgTable(
     winnerSlotId: uuid("winner_slot_id").references(() => challengeWinnerSlots.id, {
       onDelete: "set null",
     }),
-    score: integer("score"), // Optional 1-100 score
+    score: integer("score"),
     critiqueNotes: text("critique_notes"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -105,7 +114,8 @@ export const challengeResults = pgTable(
     winnerSlotId: uuid("winner_slot_id").references(() => challengeWinnerSlots.id, {
       onDelete: "set null",
     }),
-    finalRank: integer("final_rank").notNull(),
+    finalRank: integer("final_rank"), // Nullable for non-ranked jury award winners
+    awardType: text("award_type").default("community_rank").notNull(), // 'community_rank' | 'jury_award' | 'honorable_mention'
     totalCommunityStars: integer("total_community_stars").default(0).notNull(),
     juryScore: numeric("jury_score", { precision: 5, scale: 2 }),
     isPublished: boolean("is_published").default(false).notNull(),

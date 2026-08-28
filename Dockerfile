@@ -10,7 +10,7 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci
 
-# Stage 2: Build application
+# Stage 2: Build application and worker bundle
 FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
@@ -34,13 +34,15 @@ RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
 # Create persistent storage directories
-RUN mkdir -p /app/storage/master /app/storage/public /app/storage/temp && \
-    chown -R nextjs:nodejs /app/storage
+RUN mkdir -p /app/storage/master /app/storage/public /app/storage/temp /app/dist && \
+    chown -R nextjs:nodejs /app/storage /app/dist
 
 # Copy build artifacts
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/dist/worker.mjs ./dist/worker.mjs
+COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
 
 USER nextjs
 

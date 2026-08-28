@@ -53,6 +53,17 @@ export const slotTypeEnum = pgEnum("slot_type", [
   "jury_award",
 ]);
 
+export const votingRoundTypeEnum = pgEnum("voting_round_type", [
+  "main",
+  "tiebreak",
+]);
+
+export const votingRoundStatusEnum = pgEnum("voting_round_status", [
+  "pending",
+  "open",
+  "closed",
+]);
+
 export const challenges = pgTable(
   "challenges",
   {
@@ -74,7 +85,7 @@ export const challenges = pgTable(
     awardMode: awardModeEnum("award_mode").default("vote_and_jury").notNull(),
     tieStrategy: tieStrategyEnum("tie_strategy").default("tiebreak_round").notNull(),
     starsPerMember: integer("stars_per_member").default(3).notNull(),
-    quorumRequirement: integer("quorum_requirement").default(0).notNull(), // 0 = no quorum required
+    quorumRequirement: integer("quorum_requirement").default(0).notNull(),
     maxSubmissionsPerArtist: integer("max_submissions_per_artist").default(1).notNull(),
     allowRevisions: boolean("allow_revisions").default(true).notNull(),
     
@@ -120,9 +131,9 @@ export const challengeWinnerSlots = pgTable(
     challengeId: uuid("challenge_id")
       .notNull()
       .references(() => challenges.id, { onDelete: "cascade" }),
-    slotType: slotTypeEnum("slot_type").notNull(), // community_vote or jury_award
-    rank: integer("rank").notNull(), // 1 = 1st Place, 2 = 2nd Place, etc.
-    title: text("title").notNull(), // "Juara 1 Favorit Komunitas", "Pilihan Juri — Best Lighting"
+    slotType: slotTypeEnum("slot_type").notNull(),
+    rank: integer("rank").notNull(),
+    title: text("title").notNull(),
     badgeId: uuid("badge_id").references(() => badges.id, { onDelete: "set null" }),
     displayOrder: integer("display_order").default(0).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -203,5 +214,76 @@ export const challengeSubmissionVersions = pgTable(
   (table) => [
     index("idx_submission_versions_submission_id").on(table.submissionId),
     uniqueIndex("uniq_submission_version").on(table.submissionId, table.versionNumber),
+  ]
+);
+
+// Voting Rounds with Frozen Candidates
+export const challengeVotingRounds = pgTable(
+  "challenge_voting_rounds",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    challengeId: uuid("challenge_id")
+      .notNull()
+      .references(() => challenges.id, { onDelete: "cascade" }),
+    roundType: votingRoundTypeEnum("round_type").default("main").notNull(),
+    roundSequence: integer("round_sequence").default(1).notNull(),
+    status: votingRoundStatusEnum("status").default("pending").notNull(),
+    startsAt: timestamp("starts_at", { withTimezone: true }),
+    deadline: timestamp("deadline", { withTimezone: true }),
+    starsPerMember: integer("stars_per_member").default(3).notNull(),
+    finalizedAt: timestamp("finalized_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_voting_rounds_challenge_id").on(table.challengeId),
+    uniqueIndex("uniq_challenge_round_sequence").on(table.challengeId, table.roundSequence),
+  ]
+);
+
+export const challengeVotingRoundCandidates = pgTable(
+  "challenge_voting_round_candidates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    votingRoundId: uuid("voting_round_id")
+      .notNull()
+      .references(() => challengeVotingRounds.id, { onDelete: "cascade" }),
+    submissionId: uuid("submission_id")
+      .notNull()
+      .references(() => challengeSubmissions.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_round_candidates_round_id").on(table.votingRoundId),
+    uniqueIndex("uniq_round_submission_candidate").on(table.votingRoundId, table.submissionId),
+  ]
+);
+
+// Shared Jury Slot Assignments with Optimistic Concurrency Versioning
+export const challengeJurySlotAssignments = pgTable(
+  "challenge_jury_slot_assignments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    challengeId: uuid("challenge_id")
+      .notNull()
+      .references(() => challenges.id, { onDelete: "cascade" }),
+    winnerSlotId: uuid("winner_slot_id")
+      .notNull()
+      .references(() => challengeWinnerSlots.id, { onDelete: "cascade" }),
+    submissionId: uuid("submission_id")
+      .notNull()
+      .references(() => challengeSubmissions.id, { onDelete: "cascade" }),
+    assignedByUserId: uuid("assigned_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    version: integer("version").default(1).notNull(),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_jury_slot_assignments_challenge_id").on(table.challengeId),
+    uniqueIndex("uniq_jury_slot_winner_slot").on(table.challengeId, table.winnerSlotId),
+    uniqueIndex("uniq_jury_slot_submission").on(table.challengeId, table.submissionId),
   ]
 );

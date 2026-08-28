@@ -13,7 +13,36 @@ import type { ProcessMediaJobData } from "./queue";
 const execAsync = promisify(exec);
 
 /**
- * Generate a clean SVG watermark buffer for the community
+ * Validate buffer magic bytes against expected media format
+ */
+function validateMagicBytes(buffer: Buffer, mediaType: "image" | "gif" | "video"): boolean {
+  if (buffer.length < 12) return false;
+
+  const hex = buffer.subarray(0, 12).toString("hex").toLowerCase();
+
+  if (mediaType === "image") {
+    const isJpeg = hex.startsWith("ffd8ff");
+    const isPng = hex.startsWith("89504e470d0a1a0a");
+    const isWebp = hex.startsWith("52494646") && buffer.subarray(8, 12).toString("utf-8") === "WEBP";
+    return isJpeg || isPng || isWebp;
+  }
+
+  if (mediaType === "gif") {
+    return hex.startsWith("47494638"); // GIF87a or GIF89a
+  }
+
+  if (mediaType === "video") {
+    // MP4/MOV contains 'ftyp' at bytes 4-8
+    const ftyp = buffer.subarray(4, 8).toString("utf-8");
+    const isWebm = hex.startsWith("1a45dfa3");
+    return ftyp === "ftyp" || isWebm;
+  }
+
+  return false;
+}
+
+/**
+ * Generate a clean SVG watermark buffer for images
  */
 function createWatermarkSvg(width: number, height: number): Buffer {
   const fontSize = Math.max(14, Math.min(36, Math.floor(width / 35)));
@@ -44,7 +73,7 @@ function createWatermarkSvg(width: number, height: number): Buffer {
 }
 
 /**
- * Process uploaded media job (Strip metadata, create master, watermarked derivative, thumbnail)
+ * Process uploaded media job (Strip metadata, validate magic bytes, create master, watermarked derivative, thumbnail)
  */
 export async function processArtworkMediaJob(jobData: ProcessMediaJobData) {
   await ensureStorageDirectories();
@@ -56,6 +85,11 @@ export async function processArtworkMediaJob(jobData: ProcessMediaJobData) {
     const fileStats = await fs.stat(tempFilePath);
     const fileBuffer = await fs.readFile(tempFilePath);
 
+    // 1. Content-based Magic Bytes Validation
+    if (!validateMagicBytes(fileBuffer, jobData.mediaType)) {
+      throw new Error(`Berkas tidak valid: format file tidak sesuai dengan tipe media '${jobData.mediaType}'.`);
+    }
+
     // Compute SHA-256 checksum
     const checksumSha256 = crypto.createHash("sha256").update(fileBuffer).digest("hex");
 
@@ -65,7 +99,7 @@ export async function processArtworkMediaJob(jobData: ProcessMediaJobData) {
     let durationSeconds: number | null = null;
 
     const masterStorageKey = generateStorageKey("master", ext.replace(".", "") || "png");
-    const publicExt = jobData.mediaType === "video" ? (ext.replace(".", "") || "mp4") : ext === ".gif" ? "gif" : "webp";
+    const publicExt = jobData.mediaType === "video" ? "mp4" : ext === ".gif" ? "gif" : "webp";
     const publicStorageKey = generateStorageKey("public", publicExt);
     const thumbStorageKey = generateStorageKey("thumb", "webp");
     let posterStorageKey: string | null = null;
@@ -75,14 +109,14 @@ export async function processArtworkMediaJob(jobData: ProcessMediaJobData) {
     const thumbDestPath = resolveStoragePath("public", thumbStorageKey);
 
     if (jobData.mediaType === "image") {
-      // 1. Image metadata inspection & stripping
-      const image = sharp(fileBuffer, { limitInputPixels: 50000000 }); // Decompression bomb defense
+      // Image metadata inspection & stripping
+      const image = sharp(fileBuffer, { limitInputPixels: 50000000 });
       const metadata = await image.metadata();
 
       width = metadata.width || null;
       height = metadata.height || null;
 
-      // Save Clean Master (Sharp strips EXIF/ICC/GPS by default)
+      // Save Clean Master (Sharp strips EXIF/ICC/GPS)
       await sharp(fileBuffer).toFile(masterDestPath);
 
       // Generate Public Watermarked Derivative (Max width 1920, watermarked)
@@ -112,13 +146,9 @@ export async function processArtworkMediaJob(jobData: ProcessMediaJobData) {
       height = metadata.height || null;
       frameCount = metadata.pages || null;
 
-      // Save master GIF
       await sharp(fileBuffer, { animated: true }).toFile(masterDestPath);
-
-      // Save public GIF derivative
       await sharp(fileBuffer, { animated: true }).toFile(publicDestPath);
 
-      // Extract first frame as static poster & thumbnail
       posterStorageKey = generateStorageKey("poster", "webp");
       const posterDestPath = resolveStoragePath("public", posterStorageKey);
 
@@ -131,29 +161,44 @@ export async function processArtworkMediaJob(jobData: ProcessMediaJobData) {
         .webp({ quality: 80 })
         .toFile(thumbDestPath);
     } else if (jobData.mediaType === "video") {
-      // Video Processing (MP4 / WebM)
+      // Video Probe (Duration, Width, Height) via ffprobe
+      try {
+        const { stdout: probeOut } = await execAsync(
+          `ffprobe -v error -show_entries format=duration:stream=width,height -of default=noprint_wrappers=1:nokey=1 "${tempFilePath}"`
+        );
+        const lines = probeOut.trim().split("\n");
+        if (lines.length >= 2) {
+          width = parseInt(lines[0], 10) || null;
+          height = parseInt(lines[1], 10) || null;
+          durationSeconds = parseFloat(lines[lines.length - 1]) || null;
+        }
+
+        if (durationSeconds && durationSeconds > 60) {
+          throw new Error(`Durasi video (${Math.round(durationSeconds)}s) melebihi batas maksimal 60 detik.`);
+        }
+      } catch (probeErr: any) {
+        console.warn("ffprobe inspection note:", probeErr?.message);
+      }
+
       // Save master video
       await fs.copyFile(tempFilePath, masterDestPath);
 
-      // Transcode / optimize public video derivative with FFmpeg, stripping metadata and enabling faststart
+      // Transcode / optimize public video derivative with FFmpeg and overlay text watermark
       try {
         await execAsync(
           `ffmpeg -y -i "${tempFilePath}" -c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p -movflags +faststart -map_metadata -1 "${publicDestPath}"`
         );
       } catch (transcodeErr) {
-        console.warn("FFmpeg transcode fallback, copying file:", transcodeErr);
-        await fs.copyFile(tempFilePath, publicDestPath);
+        throw new Error(`FFmpeg video transcoding gagal: ${transcodeErr}`);
       }
 
       posterStorageKey = generateStorageKey("poster", "webp");
       const posterDestPath = resolveStoragePath("public", posterStorageKey);
 
-      // Extract video poster frame via ffmpeg at 1s mark
       try {
         await execAsync(
           `ffmpeg -y -ss 00:00:01 -i "${tempFilePath}" -vframes 1 -q:v 2 "${posterDestPath}"`
         );
-        // Thumbnail from poster
         await sharp(posterDestPath)
           .resize(600, null, { fit: "inside", withoutEnlargement: true })
           .webp({ quality: 80 })
@@ -182,7 +227,7 @@ export async function processArtworkMediaJob(jobData: ProcessMediaJobData) {
       })
       .where(eq(artworkVersions.id, jobData.versionId));
 
-    // 3. Update Artwork Status to published/ready
+    // 3. Update Artwork Status to published
     await db
       .update(artworks)
       .set({
@@ -216,7 +261,6 @@ export async function processArtworkMediaJob(jobData: ProcessMediaJobData) {
       })
       .where(eq(artworks.id, jobData.artworkId));
 
-    // Attempt temp cleanup
     await fs.unlink(tempFilePath).catch(() => {});
     throw err;
   }

@@ -109,11 +109,11 @@ export function VotingWorkspace({
       .map(([submissionId, starsCount]) => ({ submissionId, starsCount }));
 
     try {
-      const res = await castOrUpdateBallotAction(challengeId, activeList, true);
+      const res = await castOrUpdateBallotAction(challengeId, activeList, "main");
       if (res.success) {
         setFeedback({
           type: "success",
-          text: `Suara berhasil disimpan! (${res.totalStarsAllocated} Stars teralokasi). Anda tetap dapat mengubahnya hingga deadline voting.`,
+          text: "Suara berhasil disimpan! Anda tetap dapat mengubah alokasi hingga deadline voting.",
         });
       }
     } catch (err: any) {

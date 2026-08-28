@@ -8,6 +8,8 @@ import {
   challengeSubmissionVersions,
   challengeWinnerSlots,
   challengeKitFiles,
+  challengeVotingRounds,
+  challengeVotingRoundCandidates,
   profiles,
   artworks,
   artworkVersions,
@@ -25,6 +27,7 @@ import { resolveStoragePath, ensureStorageDirectories } from "@/lib/storage";
 import { processArtworkMediaJob } from "@/lib/mediaProcessor";
 import { createNotification } from "@/lib/notifications";
 import { canSubmitChallengeEntry } from "@/lib/policy";
+import { checkRateLimit } from "@/lib/rateLimit";
 
 function slugify(text: string): string {
   const base = text
@@ -39,6 +42,12 @@ function slugify(text: string): string {
 
 export async function submitArtworkToChallengeAction(formData: FormData) {
   const user = await requireAuth("/login");
+
+  // Rate Limiting per user
+  const rl = await checkRateLimit(`challenge_submit:${user.id}`, { limit: 10, windowSeconds: 60 });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak pengiriman submisi. Harap tunggu beberapa saat.");
+  }
 
   const [profile] = await db
     .select()
@@ -83,12 +92,14 @@ export async function submitArtworkToChallengeAction(formData: FormData) {
     );
 
   const isRevision = existingSubmissions.length > 0;
-  if (!isRevision) {
-    const submitPolicy = canSubmitChallengeEntry(user as any, challenge as any, existingSubmissions.length);
-    if (!submitPolicy.allowed) {
-      throw new Error(submitPolicy.reason || "Submisi challenge tidak diizinkan saat ini.");
-    }
-  } else if (!challenge.allowRevisions) {
+  
+  // Authoritative submission policy evaluation (even on revisions)
+  const submitPolicy = canSubmitChallengeEntry(user as any, challenge as any, isRevision ? 0 : existingSubmissions.length);
+  if (!submitPolicy.allowed) {
+    throw new Error(submitPolicy.reason || "Submisi challenge tidak diizinkan saat ini.");
+  }
+
+  if (isRevision && !challenge.allowRevisions) {
     throw new Error("Revisi karya tidak diizinkan untuk challenge ini.");
   }
 
@@ -99,221 +110,124 @@ export async function submitArtworkToChallengeAction(formData: FormData) {
 
   let finalArtworkVersionId = existingArtworkVersionId;
 
-  // 2. If uploading a fresh file, process it through the media pipeline
+  // 2. Handle File Upload if provided
   if (file && file.size > 0) {
+    const rawBuffer = Buffer.from(await file.arrayBuffer());
+    const tempKey = `temp_sub_${Date.now()}_${crypto.randomBytes(6).toString("hex")}${path.extname(file.name)}`;
+    const tempPath = resolveStoragePath("temp", tempKey);
+
     await ensureStorageDirectories();
-    const ext = path.extname(file.name).toLowerCase();
-    const mime = file.type.toLowerCase() || "image/jpeg";
-    const tempFilename = `challenge_temp_${Date.now()}_${crypto.randomBytes(12).toString("hex")}${ext}`;
-    const tempPath = resolveStoragePath("temp", tempFilename);
-    const buffer = Buffer.from(await file.arrayBuffer());
-    await fs.writeFile(tempPath, buffer);
+    await fs.writeFile(tempPath, rawBuffer);
 
-    const isGif = mime === "image/gif" || ext === ".gif";
-    const isVideo = mime.startsWith("video/") || ext === ".mp4" || ext === ".webm";
-    const mediaType: "image" | "gif" | "video" = isGif ? "gif" : isVideo ? "video" : "image";
-
-    // Create artwork container
-    const [artwork] = await db
+    // Canonical Artwork creation
+    const artSlug = slugify(title);
+    const [createdArtwork] = await db
       .insert(artworks)
       .values({
         userId: user.id,
         title,
-        slug: slugify(title),
+        slug: artSlug,
         description,
-        mediaType,
+        mediaType: file.type.startsWith("video/") ? "video" : file.type === "image/gif" ? "gif" : "image",
         audience: "public",
         critiqueMode: "showcase_only",
         publicationStatus: "published",
       })
       .returning();
 
-    // Create artwork version
-    const [version] = await db
+    const [createdVersion] = await db
       .insert(artworkVersions)
       .values({
-        artworkId: artwork.id,
+        artworkId: createdArtwork.id,
         versionNumber: 1,
-        mediaType,
-        masterStorageKey: tempFilename,
-        mimeType: mime,
+        mediaType: createdArtwork.mediaType as any,
         fileSizeBytes: file.size,
-        checksumSha256: crypto.createHash("sha256").update(buffer).digest("hex"),
+        mimeType: file.type,
+        masterStorageKey: tempKey,
+        checksumSha256: "pending",
         processingStatus: "pending",
       })
       .returning();
 
-    // Process media synchronously inline / worker
     await processArtworkMediaJob({
-      artworkId: artwork.id,
-      versionId: version.id,
-      tempFilename,
-      mediaType,
+      artworkId: createdArtwork.id,
+      versionId: createdVersion.id,
+      tempFilename: tempKey,
+      mediaType: createdArtwork.mediaType as any,
       originalFilename: file.name,
       userId: user.id,
     });
 
-    finalArtworkVersionId = version.id;
+    await db
+      .update(artworks)
+      .set({ currentVersionId: createdVersion.id })
+      .where(eq(artworks.id, createdArtwork.id));
+
+    finalArtworkVersionId = createdVersion.id;
   }
 
   if (!finalArtworkVersionId) {
-    throw new Error("Silakan unggah file karya atau pilih dari portofolio Anda.");
+    throw new Error("Karya belum dipilih atau berkas gagal diunggah.");
   }
 
-  // 3. Create or Revise Submission in Database Transaction
-  const result = await db.transaction(async (tx) => {
-    // Check if member already has a submission record for this challenge
-    const [existingSubmission] = await tx
-      .select()
-      .from(challengeSubmissions)
-      .where(
-        and(
-          eq(challengeSubmissions.challengeId, challengeId),
-          eq(challengeSubmissions.userId, user.id)
-        )
-      )
+  // 3. Upsert Submission and record Immutable Submission Version
+  let submissionId: string;
+  let nextVersionNumber = 1;
+
+  if (isRevision) {
+    const existingSub = existingSubmissions[0];
+    submissionId = existingSub.id;
+
+    const [lastVersion] = await db
+      .select({ versionNumber: challengeSubmissionVersions.versionNumber })
+      .from(challengeSubmissionVersions)
+      .where(eq(challengeSubmissionVersions.submissionId, submissionId))
+      .orderBy(desc(challengeSubmissionVersions.versionNumber))
       .limit(1);
 
-    if (!existingSubmission) {
-      // First submission
-      const [newSub] = await tx
-        .insert(challengeSubmissions)
-        .values({
-          challengeId,
-          userId: user.id,
-          profileId: profile.id,
-          submissionStatus: "submitted",
-        })
-        .returning();
+    nextVersionNumber = (lastVersion?.versionNumber || 1) + 1;
 
-      const [newVer] = await tx
-        .insert(challengeSubmissionVersions)
-        .values({
-          submissionId: newSub.id,
-          versionNumber: 1,
-          title,
-          description,
-          softwareUsed,
-          artworkVersionId: finalArtworkVersionId!,
-        })
-        .returning();
+    await db
+      .update(challengeSubmissions)
+      .set({
+        currentVersionId: finalArtworkVersionId,
+        submissionStatus: "submitted",
+        updatedAt: new Date(),
+      })
+      .where(eq(challengeSubmissions.id, submissionId));
+  } else {
+    const [newSub] = await db
+      .insert(challengeSubmissions)
+      .values({
+        challengeId,
+        userId: user.id,
+        profileId: profile.id,
+        currentVersionId: finalArtworkVersionId,
+        submissionStatus: "submitted",
+      })
+      .returning();
 
-      await tx
-        .update(challengeSubmissions)
-        .set({ currentVersionId: newVer.id, updatedAt: now })
-        .where(eq(challengeSubmissions.id, newSub.id));
-
-      await tx.insert(auditLogs).values({
-        actorId: user.id,
-        action: "challenge.submission_created",
-        targetType: "challenge_submission",
-        targetId: newSub.id,
-        metadata: { challengeId, title, versionNumber: 1 },
-      });
-
-      return { submission: newSub, version: newVer, isRevision: false };
-    } else {
-      // Revision
-      if (!challenge.allowRevisions) {
-        throw new Error("Challenge ini tidak mengizinkan revisi setelah dikirimkan.");
-      }
-
-      // Get latest version number
-      const [latestVer] = await tx
-        .select({ versionNumber: challengeSubmissionVersions.versionNumber })
-        .from(challengeSubmissionVersions)
-        .where(eq(challengeSubmissionVersions.submissionId, existingSubmission.id))
-        .orderBy(desc(challengeSubmissionVersions.versionNumber))
-        .limit(1);
-
-      const nextVersionNum = (latestVer?.versionNumber || 1) + 1;
-
-      const [newVer] = await tx
-        .insert(challengeSubmissionVersions)
-        .values({
-          submissionId: existingSubmission.id,
-          versionNumber: nextVersionNum,
-          title,
-          description,
-          softwareUsed,
-          artworkVersionId: finalArtworkVersionId!,
-        })
-        .returning();
-
-      await tx
-        .update(challengeSubmissions)
-        .set({
-          currentVersionId: newVer.id,
-          submissionStatus: "submitted",
-          updatedAt: now,
-        })
-        .where(eq(challengeSubmissions.id, existingSubmission.id));
-
-      await tx.insert(auditLogs).values({
-        actorId: user.id,
-        action: "challenge.submission_revised",
-        targetType: "challenge_submission",
-        targetId: existingSubmission.id,
-        metadata: { challengeId, title, versionNumber: nextVersionNum },
-      });
-
-      return { submission: existingSubmission, version: newVer, isRevision: true };
-    }
-  });
-
-  // 4. In-App Notification
-  await createNotification({
-    userId: user.id,
-    type: "challenge_submitted",
-    title: result.isRevision ? "Revisi Submisi Diterima" : "Karya Submisi Terkirim!",
-    body: `Karya Anda "${title}" telah berhasil didaftarkan pada "${challenge.title}".`,
-    actionUrl: `/challenges/${challenge.slug}`,
-  });
-
-  revalidatePath(`/challenges/${challenge.slug}`);
-  revalidatePath("/challenges");
-
-  return {
-    success: true,
-    isRevision: result.isRevision,
-    submissionId: result.submission.id,
-  };
-}
-
-export async function withdrawSubmissionAction(challengeId: string) {
-  const user = await requireAuth("/login");
-
-  const [challenge] = await db
-    .select()
-    .from(challenges)
-    .where(eq(challenges.id, challengeId))
-    .limit(1);
-
-  if (!challenge) throw new Error("Challenge tidak ditemukan.");
-
-  const effectiveStatus = getEffectiveChallengeStatus(challenge);
-  if (effectiveStatus !== "submission_open") {
-    throw new Error("Submisi hanya dapat ditarik selama periode submisi masih dibuka.");
+    submissionId = newSub.id;
   }
 
-  await db
-    .update(challengeSubmissions)
-    .set({ submissionStatus: "withdrawn", updatedAt: new Date() })
-    .where(
-      and(
-        eq(challengeSubmissions.challengeId, challengeId),
-        eq(challengeSubmissions.userId, user.id)
-      )
-    );
+  await db.insert(challengeSubmissionVersions).values({
+    submissionId,
+    versionNumber: nextVersionNumber,
+    title,
+    description,
+    softwareUsed,
+    artworkVersionId: finalArtworkVersionId,
+  });
 
   revalidatePath(`/challenges/${challenge.slug}`);
-  return { success: true };
+  revalidatePath("/me/portfolio");
+  return { success: true, submissionId, versionNumber: nextVersionNumber };
 }
 
 export async function createOrUpdateChallengeAction(formData: FormData) {
   const user = await requireAuth("/login");
   if (user.role !== "admin" && user.role !== "moderator") {
-    throw new Error("Hanya administrator/moderator yang dapat mengelola challenge.");
+    throw new Error("Tidak memiliki izin mengelola challenge.");
   }
 
   const id = formData.get("id") as string | null;
@@ -322,28 +236,27 @@ export async function createOrUpdateChallengeAction(formData: FormData) {
   const description = (formData.get("description") as string)?.trim();
   const promptRules = (formData.get("promptRules") as string)?.trim();
   const awardMode = (formData.get("awardMode") as any) || "vote_and_jury";
-  const starsPerMember = Number(formData.get("starsPerMember") || 3);
-  const quorumRequirement = Number(formData.get("quorumRequirement") || 0);
+  const starsPerMember = parseInt(formData.get("starsPerMember") as string, 10) || 3;
+  const quorumRequirement = parseInt(formData.get("quorumRequirement") as string, 10) || 0;
   const allowRevisions = formData.get("allowRevisions") === "true";
-  const submissionStartsAt = formData.get("submissionStartsAt")
-    ? new Date(formData.get("submissionStartsAt") as string)
-    : null;
-  const submissionDeadline = formData.get("submissionDeadline")
-    ? new Date(formData.get("submissionDeadline") as string)
-    : null;
-  const votingStartsAt = formData.get("votingStartsAt")
-    ? new Date(formData.get("votingStartsAt") as string)
-    : null;
-  const votingDeadline = formData.get("votingDeadline")
-    ? new Date(formData.get("votingDeadline") as string)
-    : null;
+
+  const subStartsRaw = formData.get("submissionStartsAt") as string;
+  const subDeadRaw = formData.get("submissionDeadline") as string;
+  const voteStartsRaw = formData.get("votingStartsAt") as string;
+  const voteDeadRaw = formData.get("votingDeadline") as string;
+
+  const submissionStartsAt = subStartsRaw ? new Date(subStartsRaw) : null;
+  const submissionDeadline = subDeadRaw ? new Date(subDeadRaw) : null;
+  const votingStartsAt = voteStartsRaw ? new Date(voteStartsRaw) : null;
+  const votingDeadline = voteDeadRaw ? new Date(voteDeadRaw) : null;
 
   if (!title || !theme || !description || !promptRules) {
-    throw new Error("Harap lengkapi seluruh informasi dasar challenge.");
+    throw new Error("Harap lengkapi semua kolom wajib.");
   }
 
+  const slug = slugify(title);
+
   if (id) {
-    // Update
     await db
       .update(challenges)
       .set({
@@ -367,12 +280,6 @@ export async function createOrUpdateChallengeAction(formData: FormData) {
     revalidatePath("/challenges");
     return { success: true, id };
   } else {
-    // Create new
-    const slug = slugify(title);
-    const now = new Date();
-    const initialStatus =
-      submissionStartsAt && new Date(submissionStartsAt) > now ? "scheduled" : "submission_open";
-
     const [created] = await db
       .insert(challenges)
       .values({
@@ -381,7 +288,7 @@ export async function createOrUpdateChallengeAction(formData: FormData) {
         theme,
         description,
         promptRules,
-        status: initialStatus,
+        status: "scheduled",
         awardMode,
         starsPerMember,
         quorumRequirement,
@@ -425,6 +332,23 @@ export async function createOrUpdateChallengeAction(formData: FormData) {
   }
 }
 
+/**
+ * Blueprint 2.1 Strict Legal Transition Matrix
+ */
+const LEGAL_TRANSITIONS: Record<string, string[]> = {
+  draft: ["scheduled", "cancelled"],
+  scheduled: ["submission_open", "cancelled", "paused"],
+  submission_open: ["submission_locked", "cancelled", "paused"],
+  submission_locked: ["voting_open", "cancelled", "paused"],
+  voting_open: ["tiebreak_open", "jury_selection_open", "review", "cancelled", "paused"],
+  tiebreak_open: ["jury_selection_open", "review", "cancelled", "paused"],
+  jury_selection_open: ["review", "cancelled", "paused"],
+  review: ["finished", "cancelled", "paused"],
+  paused: [], // Resolved dynamically from pausedPreviousStatus
+  finished: [],
+  cancelled: [],
+};
+
 export async function transitionChallengeStatusAction(
   challengeId: string,
   newStatus: EffectiveChallengeStatus,
@@ -432,37 +356,186 @@ export async function transitionChallengeStatusAction(
 ) {
   const user = await requireAuth("/login");
   if (user.role !== "admin" && user.role !== "moderator") {
+    throw new Error("Tidak memiliki izin mengubah status challenge.");
+  }
+
+  return db.transaction(async (tx) => {
+    const [challenge] = await tx
+      .select()
+      .from(challenges)
+      .where(eq(challenges.id, challengeId))
+      .for("update")
+      .limit(1);
+
+    if (!challenge) throw new Error("Challenge tidak ditemukan.");
+
+    const currentStatus = challenge.status;
+    let allowedTransitions = LEGAL_TRANSITIONS[currentStatus] || [];
+
+    if (currentStatus === "paused") {
+      allowedTransitions = challenge.pausedPreviousStatus
+        ? [challenge.pausedPreviousStatus, "cancelled"]
+        : ["cancelled"];
+    }
+
+    if (!allowedTransitions.includes(newStatus)) {
+      throw new Error(
+        `Transisi status ilegal: dari "${currentStatus}" ke "${newStatus}". Transisi yang diizinkan: ${
+          allowedTransitions.length > 0 ? allowedTransitions.join(", ") : "Tidak ada (status terminal)"
+        }.`
+      );
+    }
+
+    // 1. Entering VOTING_OPEN: Create and Freeze Main Voting Round Candidates
+    if (newStatus === "voting_open") {
+      const activeSubmissions = await tx
+        .select({ id: challengeSubmissions.id })
+        .from(challengeSubmissions)
+        .where(
+          and(
+            eq(challengeSubmissions.challengeId, challengeId),
+            eq(challengeSubmissions.submissionStatus, "submitted")
+          )
+        );
+
+      const [round] = await tx
+        .insert(challengeVotingRounds)
+        .values({
+          challengeId,
+          roundType: "main",
+          roundSequence: 1,
+          status: "open",
+          startsAt: new Date(),
+          deadline: challenge.votingDeadline,
+          starsPerMember: challenge.starsPerMember,
+        })
+        .returning();
+
+      if (activeSubmissions.length > 0) {
+        await tx.insert(challengeVotingRoundCandidates).values(
+          activeSubmissions.map((sub) => ({
+            votingRoundId: round.id,
+            submissionId: sub.id,
+          }))
+        );
+      }
+    }
+
+    // 2. Update status
+    await tx
+      .update(challenges)
+      .set({
+        status: newStatus as any,
+        cancellationReason: newStatus === "cancelled" ? reason || "Dibatalkan oleh moderator/admin" : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(challenges.id, challengeId));
+
+    // 3. Write Audit Log
+    await tx.insert(auditLogs).values({
+      actorId: user.id,
+      action: `challenge.transition_${newStatus}`,
+      targetType: "challenge",
+      targetId: challengeId,
+      reason: reason || `Status transisi dari ${currentStatus} ke ${newStatus}`,
+    });
+
+    revalidatePath(`/challenges/${challenge.slug}`);
+    revalidatePath("/admin/challenges");
+    revalidatePath("/challenges");
+
+    return { success: true };
+  });
+}
+
+export async function pauseChallengeAction(challengeId: string, reason: string) {
+  const user = await requireAuth("/login");
+  if (user.role !== "admin" && user.role !== "moderator") {
     throw new Error("Tidak memiliki izin.");
   }
 
-  const [challenge] = await db
-    .select()
-    .from(challenges)
-    .where(eq(challenges.id, challengeId))
-    .limit(1);
+  if (!reason?.trim()) {
+    throw new Error("Alasan penangguhan (pause) wajib diisi.");
+  }
 
-  if (!challenge) throw new Error("Challenge tidak ditemukan.");
+  return db.transaction(async (tx) => {
+    const [challenge] = await tx
+      .select()
+      .from(challenges)
+      .where(eq(challenges.id, challengeId))
+      .for("update")
+      .limit(1);
 
-  await db
-    .update(challenges)
-    .set({
-      status: newStatus as any,
-      cancellationReason: newStatus === "cancelled" ? reason || "Dibatalkan oleh admin" : null,
-      updatedAt: new Date(),
-    })
-    .where(eq(challenges.id, challengeId));
+    if (!challenge) throw new Error("Challenge tidak ditemukan.");
+    if (challenge.status === "finished" || challenge.status === "cancelled" || challenge.status === "paused") {
+      throw new Error(`Challenge tidak dapat dijeda dari status "${challenge.status}".`);
+    }
 
-  await db.insert(auditLogs).values({
-    actorId: user.id,
-    action: `challenge.transition_${newStatus}`,
-    targetType: "challenge",
-    targetId: challengeId,
-    reason: reason || `Status changed from ${challenge.status} to ${newStatus}`,
+    await tx
+      .update(challenges)
+      .set({
+        pausedPreviousStatus: challenge.status,
+        status: "paused",
+        cancellationReason: reason.trim(),
+        updatedAt: new Date(),
+      })
+      .where(eq(challenges.id, challengeId));
+
+    await tx.insert(auditLogs).values({
+      actorId: user.id,
+      action: "challenge.pause",
+      targetType: "challenge",
+      targetId: challengeId,
+      reason: `Dijeda dari ${challenge.status}: ${reason}`,
+    });
+
+    revalidatePath(`/challenges/${challenge.slug}`);
+    revalidatePath("/admin/challenges");
+    return { success: true };
   });
+}
 
-  revalidatePath(`/challenges/${challenge.slug}`);
-  revalidatePath("/admin/challenges");
-  revalidatePath("/challenges");
+export async function resumeChallengeAction(challengeId: string) {
+  const user = await requireAuth("/login");
+  if (user.role !== "admin" && user.role !== "moderator") {
+    throw new Error("Tidak memiliki izin.");
+  }
 
-  return { success: true };
+  return db.transaction(async (tx) => {
+    const [challenge] = await tx
+      .select()
+      .from(challenges)
+      .where(eq(challenges.id, challengeId))
+      .for("update")
+      .limit(1);
+
+    if (!challenge) throw new Error("Challenge tidak ditemukan.");
+    if (challenge.status !== "paused" || !challenge.pausedPreviousStatus) {
+      throw new Error("Challenge tidak dalam status jeda (paused).");
+    }
+
+    const resumeStatus = challenge.pausedPreviousStatus;
+
+    await tx
+      .update(challenges)
+      .set({
+        status: resumeStatus,
+        pausedPreviousStatus: null,
+        cancellationReason: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(challenges.id, challengeId));
+
+    await tx.insert(auditLogs).values({
+      actorId: user.id,
+      action: "challenge.resume",
+      targetType: "challenge",
+      targetId: challengeId,
+      reason: `Melanjutkan challenge kembali ke status ${resumeStatus}`,
+    });
+
+    revalidatePath(`/challenges/${challenge.slug}`);
+    revalidatePath("/admin/challenges");
+    return { success: true, status: resumeStatus };
+  });
 }

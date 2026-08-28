@@ -5,33 +5,24 @@
 - Mobile Design System Optimization: **COMPLETED**
 - Phase 6 — Historical Backfill & Media Automation: **COMPLETED**
 - Phase 7 — Production Hardening, Security, A11y & Deployment Remediation: **COMPLETED & VERIFIED**
+- Blueprint 2.1 Full Refinement & Final Hardening: **COMPLETED & VERIFIED**
 
 ## Last Completed
-- **Full QA Remediation & Release Gates 1, 2, & 3 Completed (2026-08-28)**:
-  - **Release Gate 1 (P0 Security & Data Integrity):**
-    - Centralized access policy engine in `src/lib/policy.ts` applied across all read/write paths.
-    - Master media ACL matrix enforced in `/api/media/master/[key]` (clean master restricted to Owner & Admin; unassigned members receive 403).
-    - Real database `isChallengeJury` query implemented in `src/lib/rbac.ts` and anti-self scoring enforced in `submitJuryScoreAction`.
-    - Cross-challenge candidate validation and `challengeId` verification in `castOrUpdateBallotAction`.
-    - Deterministic ranking calculation (`stars DESC` -> `earliestSubmission ASC` -> `submissionId ASC`), jury score integration, and winner slots assignment in `finalizeChallengeResultsAction`.
-    - Video derivative transcoding with `.mp4` key preservation and HTTP 206 Partial Content Range streaming in `/api/media/public/[key]`.
-    - Soft-delete implemented in `deleteArtworkAction` (`deletedAt` set, relations and submissions preserved).
-    - Sliding-window rate limiting in `src/lib/rateLimit.ts`.
-  - **Release Gate 2 (Frontend A11y, UX & SEO):**
-    - Production security headers in `next.config.ts` (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, etc.).
-    - Accessible `<video>` preview in `QuickUploadModal.tsx`, explicit `id`/`htmlFor` labels, drag-and-drop support, and `role="dialog"`.
-    - Lightbox keyboard controls and `≥ 44px` touch targets.
-    - Accessible skip link (`#main-content`) and `@media (prefers-reduced-motion: reduce)`.
-    - Dynamic `robots.ts` and `sitemap.ts` with strict page-level `noindex` on private/member/admin routes.
-    - Route-level UX states: `loading.tsx`, `error.tsx`, and `not-found.tsx`.
-  - **Release Gate 3 (DevOps & Operational Infrastructure):**
-    - Standalone multi-stage `Dockerfile`.
-    - Full topology `docker-compose.yml` (web, worker, postgres, redis, persistent storage).
-    - `/api/health/liveness` and `/api/health/readiness` health probes.
-    - Authenticated `/api/admin/diagnostics` endpoint.
-    - Automated encrypted backup and restore scripts (`scripts/backup.sh`, `scripts/restore.sh`).
-    - Production operations runbook `DEPLOYMENT.md`.
-  - **Verification:** All 11 automated test suites passed; Turbopack production build compiled 31 routes with exit code 0.
+- **Blueprint 2.1 Full Production Hardening & Architectural Refinement (2026-08-28)**:
+  - **Challenge State Machine (Blueprint 2.1):** Enforced strict legal transitions (`draft -> scheduled -> submission_open -> submission_locked -> voting_open -> tiebreak_open / jury_selection_open / review -> finished`) and PAUSED/Resume flow with `pausedPreviousStatus` tracking.
+  - **Explicit Voting Rounds Model:** Implemented `challenge_voting_rounds` and `challenge_voting_round_candidates` tables with frozen candidate sets per round.
+  - **Shared Jury Slot Assignments:** Implemented `challenge_jury_slot_assignments` table with integer `version` field for optimistic concurrency (`409 Conflict` detection). Finalization enforces complete jury slot assignment and prohibits the Community #1 Champion from taking a jury award slot. `challengeResults.finalRank` is nullable for jury awards.
+  - **Database Parent Row Locks:** Ballot updates, jury slot assignments, and finalization lock parent rows with `.for("update")` to eliminate concurrency race conditions.
+  - **Authenticated AES-256 + HMAC-SHA256 Encrypted Backups:** `scripts/backup.sh` and `scripts/restore.sh` authenticate archive integrity with HMAC-SHA256 signatures, decrypt AES-256-CBC archives, and perform post-restoration database table record counts and storage file checks (verified in rehearsal: 226 users, 86 artworks, 41 challenges).
+  - **Fail-Closed Public Media Route:** `/api/media/public/[key]` strictly checks artwork ACL and returns 404 for unknown/unregistered keys with a verified system asset allowlist.
+  - **Independent Worker Bundle:** Bundled via `esbuild` to `dist/worker.mjs` with runtime external dependencies and dynamic concurrency control.
+  - **Full Radix Modal Migration:** Migrated all modals (`QuickUploadModal`, `CreateInviteModal`, `ReportResolutionModal`) to Radix `AccessibleDialog` with focus trapping, focus restoration, and accessible form labels.
+  - **Comprehensive Verification:**
+    - Real Server Action Concurrency & Row Lock suite passed (`testConcurrency.ts`).
+    - Gate 1 Security & Authorization suite passed (`testGate1SecurityAndIntegrity.ts`).
+    - All 11 core integration test suites passed.
+    - ESLint passed with 0 errors and 0 warnings.
+    - Production build (`npm run build`) compiled all 31 routes and worker bundle cleanly with exit code 0.
 
 ## Current Branch
 `main`
@@ -40,4 +31,4 @@
 - Ready for Staging / Production Deployment.
 
 ## Blockers
-- None. All P0 and P1 QA blockers resolved and verified.
+- None. All P0, P1, and Blueprint 2.1 refinements fully implemented, tested, and verified.
