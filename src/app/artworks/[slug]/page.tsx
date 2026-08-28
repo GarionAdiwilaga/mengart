@@ -26,6 +26,7 @@ import {
 import { ArtworkLightbox } from "@/components/gallery/ArtworkLightbox";
 import { CritiqueSection } from "@/components/artworks/CritiqueSection";
 import { ReportModal } from "@/components/artworks/ReportModal";
+import { canViewArtwork, canAccessMasterMedia } from "@/lib/policy";
 
 interface ArtworkDetailPageProps {
   params: Promise<{ slug: string }>;
@@ -61,6 +62,8 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
       height: artworkVersions.height,
       fileSizeBytes: artworkVersions.fileSizeBytes,
       processingStatus: artworkVersions.processingStatus,
+      publicationStatus: artworks.publicationStatus,
+      deletedAt: artworks.deletedAt,
     })
     .from(artworks)
     .innerJoin(profiles, eq(profiles.userId, artworks.userId))
@@ -69,6 +72,19 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
     .limit(1);
 
   if (!artwork) {
+    notFound();
+  }
+
+  const artworkEntity = {
+    id: artwork.id,
+    userId: artwork.userId,
+    audience: artwork.audience,
+    publicationStatus: artwork.publicationStatus,
+    deletedAt: artwork.deletedAt,
+  };
+
+  const isAllowedToView = canViewArtwork(session?.user as any, artworkEntity);
+  if (!isAllowedToView) {
     notFound();
   }
 
@@ -105,8 +121,9 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
     ? `/api/media/public/${artwork.publicStorageKey}`
     : "/placeholder.png";
 
+  const isAllowedToAccessMaster = await canAccessMasterMedia(session?.user as any, artworkEntity);
   const masterMediaUrl =
-    isMember && artwork.masterStorageKey
+    isAllowedToAccessMaster && artwork.masterStorageKey
       ? `/api/media/master/${artwork.masterStorageKey}`
       : null;
 

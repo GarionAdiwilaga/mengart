@@ -60,11 +60,20 @@ export default async function RootLayout({
         className={`${syne.variable} ${jakarta.variable} ${jetbrains.variable} bg-[#0e1015] text-[#f6f2e9] antialiased min-h-screen flex flex-col`}
       >
         <Providers>
+          {/* Accessible Skip Navigation Link for A11y & Keyboard Navigation */}
+          <a
+            href="#main-content"
+            className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2.5 focus:bg-amber-500 focus:text-black focus:font-semibold focus:rounded-lg focus:shadow-2xl focus:outline-none"
+          >
+            Lewati ke konten utama
+          </a>
           <AppHeader
             user={currentUser}
             notifications={notifications as any}
           />
-          <div className="flex-1 flex flex-col pb-20 md:pb-0">{children}</div>
+          <main id="main-content" className="flex-1 flex flex-col pb-20 md:pb-0 outline-none">
+            {children}
+          </main>
           <AppFooter />
           <MobileBottomNav user={currentUser} />
 

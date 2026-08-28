@@ -48,10 +48,24 @@ export async function requireAdmin(redirectTo: string = "/dashboard") {
   return user;
 }
 
+import { db } from "@/db";
+import { challengeJuryAssignments } from "@/db/schema";
+import { eq, and } from "drizzle-orm";
+
 /**
  * Check if a user is an authorized challenge jury member
  */
 export async function isChallengeJury(userId: string, challengeId: string): Promise<boolean> {
-  // Will query challenge_judges table in Phase 3
-  return false;
+  const [assignment] = await db
+    .select()
+    .from(challengeJuryAssignments)
+    .where(
+      and(
+        eq(challengeJuryAssignments.challengeId, challengeId),
+        eq(challengeJuryAssignments.userId, userId)
+      )
+    )
+    .limit(1);
+
+  return Boolean(assignment);
 }

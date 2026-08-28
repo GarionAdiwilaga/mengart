@@ -1,4 +1,53 @@
 services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mengart_web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-mengart}:${POSTGRES_PASSWORD:-mengart_dev_pass}@postgres:5432/${POSTGRES_DB:-mengart_db}
+      - REDIS_URL=redis://redis:6379
+      - AUTH_SECRET=${AUTH_SECRET:-mengart_production_secret_key_at_least_32_characters_long}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      - STORAGE_ROOT_DIR=/app/storage
+    volumes:
+      - media_storage:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health/liveness"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mengart_media_worker
+    restart: unless-stopped
+    command: ["npm", "run", "worker"]
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-mengart}:${POSTGRES_PASSWORD:-mengart_dev_pass}@postgres:5432/${POSTGRES_DB:-mengart_db}
+      - REDIS_URL=redis://redis:6379
+      - STORAGE_ROOT_DIR=/app/storage
+    volumes:
+      - media_storage:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   postgres:
     image: postgres:16-alpine
     container_name: mengart_postgres
@@ -35,3 +84,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  media_storage:

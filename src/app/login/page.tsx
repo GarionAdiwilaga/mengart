@@ -1,6 +1,14 @@
+import { Metadata } from "next";
 import Link from "next/link";
 import { Palette, Sparkles, ArrowLeft, Key } from "lucide-react";
 import { LoginForm } from "@/components/auth/LoginForm";
+
+export const metadata: Metadata = {
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 
 interface LoginPageProps {
   searchParams: Promise<{ error?: string; callbackUrl?: string }>;

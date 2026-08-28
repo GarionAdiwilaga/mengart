@@ -1,31 +1,44 @@
-**Date:** 2026-08-27
+# Handoff Context
 
-## Completed
-- Completed **Mobile-First & Touch-First Design System (`/mobile-design`)**:
-  - `MobileBottomNav.tsx` docked at bottom with safe-area insets, 5 core tabs, and amber upload action button.
-  - Sized touch targets `≥ 44px` on all interactive buttons, pills, and zoom controls.
-  - Set form inputs to `text-base sm:text-xs` to prevent iOS Safari auto-zoom.
-  - Responsive table fallbacks on `< md` screens for `UserManagementTable` and `InviteManagerTable`.
-- Completed **Phase 6 — Historical Backfill & Media Automation**:
-  - `importHistoricalChallengeAction` (`src/app/actions/historicalBackfill.ts`) supporting backfilling past offline/Discord challenges with finished status, custom dates, versioned artwork submissions, Star vote counts, and Jury Choice Awards with transactional database consistency and audit logging.
-  - `HistoricalImportForm.tsx` & admin page (`/admin/challenges/import`).
-  - `StoryCardGenerator.tsx` 9:16 high-density canvas generator (1080 × 1920 px) with Announcement and Results & Podium modes and 1-click PNG export.
-  - Full test suite in `src/lib/__tests__/testPhase6HistoricalAndMedia.ts`.
-  - Verified Turbopack build (`npm run build`) passing across all 26 routes with 0 errors.
+**Date:** 2026-08-28
 
-## Current Focus
-- **Phase 7 — Production Hardening & Operational Polish**:
-  - Rate limiting, security headers, production backup scripts, and final end-to-end smoke checks.
+## Session Summary
+- **QA & Production Readiness Remediation Completed**: All 15 requirements across Release Gates 1, 2, and 3 successfully implemented and verified.
+- **Automated Tests:** All 11 test suites passed cleanly with 100% precision.
+- **Build Status:** `npm run build` passed with exit code 0 across all 31 routes.
 
-## Notes for Next Agent / Session
-- Remote repository is set to `git@github.com:GarionAdiwilaga/mengart.git`.
-- PostgreSQL is running on host port `5433`.
-- Redis is running on host port `6379`.
-- Media worker script: `npm run worker:media`.
-- Seed script for test accounts: `npm run db:seed:accounts`.
-- Test accounts:
-  - Admin: `admin@mengart.local` (`admin_atelier`) / `Password123!`
-  - Moderator: `moderator@mengart.local` (`mod_atelier`) / `Password123!`
-  - Member: `member@mengart.local` (`member_artist`) / `Password123!`
-- All 9 integration test suites can be run via:
-  `npx tsx src/lib/__tests__/testAuthAndMerging.ts && npx tsx src/lib/__tests__/testInvites.ts && npx tsx src/lib/__tests__/testLoginFlow.ts && npx tsx src/lib/__tests__/testPhase2Pipeline.ts && npx tsx src/lib/__tests__/testPhase3Challenges.ts && npx tsx src/lib/__tests__/testPhase4Voting.ts && npx tsx src/lib/__tests__/testPhase5Community.ts && npx tsx src/lib/__tests__/testPhase6HistoricalAndMedia.ts && npx tsx src/lib/__tests__/testModernizedArchitecture.ts`
+## Key Changes Implemented
+
+### 1. Release Gate 1: P0 Security & Data Integrity
+- **Centralized Policy Engine (`src/lib/policy.ts`):** `canViewArtwork`, `canAccessMasterMedia`, `canViewProfile`, `canSubmitChallengeEntry`, `canVoteInChallenge`, `canSubmitJuryScore`, `canFinalizeChallenge`.
+- **Master Media ACL (`src/app/api/media/master/[key]/route.ts`):** Resolves storage keys back to artwork and strictly restricts master access to Owner and Admin (and active assigned Jury). Unauthorized members receive 403 Forbidden.
+- **Real Database Jury Query (`src/lib/rbac.ts` & `src/app/actions/voting.ts`):** Implemented `isChallengeJury(userId, challengeId)` against `challengeJuryAssignments` table and enforced anti-self scoring in `submitJuryScoreAction`.
+- **Cross-Challenge Validation (`src/app/actions/voting.ts`):** Validates that all candidate `submissionIds` belong to the specified `challengeId` and are active.
+- **Deterministic Challenge Finalization:** Tabulates community stars, integrates jury scores, enforces deterministic tiebreak ranking, and maps winner slots.
+- **Video Media Pipeline (`src/lib/mediaProcessor.ts` & `/api/media/public/[key]`):** Correct `.mp4` key generation, FFmpeg metadata stripping & transcoding, and HTTP 206 Partial Content Range streaming.
+- **Soft Deletion (`src/app/actions/artworks.ts`):** `deleteArtworkAction` sets `deletedAt = new Date()` and `publicationStatus = "hidden"` to preserve historical submissions.
+- **Sliding-Window Rate Limiting (`src/lib/rateLimit.ts`):** Redis-backed sliding window with memory fallback for dev/tests.
+
+### 2. Release Gate 2: Frontend A11y, UX & SEO
+- **Security Headers (`next.config.ts`):** Added CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, and Permissions-Policy.
+- **Upload UX & Video Preview (`QuickUploadModal.tsx`):** Added `<video>` element for video preview, HTML `id`/`htmlFor` labels, drag-and-drop support, and `role="dialog"`.
+- **A11y & Navigation:** Added accessible skip link (`#main-content`), `@media (prefers-reduced-motion: reduce)`, and `≥ 44px` touch targets.
+- **SEO & Robots:** `src/app/robots.ts`, `src/app/sitemap.ts`, and page-level `robots: { index: false, follow: false }` on private/member/admin routes.
+- **Route UX States:** `src/app/loading.tsx`, `src/app/error.tsx`, and `src/app/not-found.tsx`.
+
+### 3. Release Gate 3: DevOps & Operational Infrastructure
+- **Production `Dockerfile`:** Standalone multi-stage build.
+- **Full Topology `docker-compose.yml`:** `web`, `worker`, `postgres`, `redis`, and persistent volume `media_storage`.
+- **Health Probes:** `/api/health/liveness`, `/api/health/readiness`, and `/api/admin/diagnostics`.
+- **Automated Backup & Restore Scripts:** `scripts/backup.sh` (AES-256 GPG + SHA-256 + 30-day retention) and `scripts/restore.sh`.
+- **Operations Runbook:** `DEPLOYMENT.md`.
+
+## Test Commands
+```bash
+# Run Security & Concurrency Test Suites
+npx tsx src/lib/__tests__/testGate1SecurityAndIntegrity.ts
+npx tsx src/lib/__tests__/testConcurrency.ts
+
+# Production Build
+npm run build
+```

@@ -1,6 +1,14 @@
+import { Metadata } from "next";
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
+
+export const metadata: Metadata = {
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 
 export default async function AdminLayout({
   children,

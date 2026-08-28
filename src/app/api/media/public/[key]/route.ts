@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs/promises";
+import fs from "fs";
+import fsp from "fs/promises";
 import path from "path";
 import { resolveStoragePath } from "@/lib/storage";
 
@@ -12,15 +13,17 @@ export async function GET(
     const safeKey = path.basename(key);
     const filePath = resolveStoragePath("public", safeKey);
 
+    let stats: fs.Stats;
     try {
-      await fs.access(filePath);
+      stats = await fsp.stat(filePath);
+      if (!stats.isFile()) {
+        return new NextResponse("Not Found", { status: 404 });
+      }
     } catch {
       return new NextResponse("Media derivative not found", { status: 404 });
     }
 
-    const fileBuffer = await fs.readFile(filePath);
     const ext = path.extname(safeKey).toLowerCase();
-
     let contentType = "image/webp";
     if (ext === ".jpg" || ext === ".jpeg") contentType = "image/jpeg";
     else if (ext === ".png") contentType = "image/png";
@@ -28,10 +31,72 @@ export async function GET(
     else if (ext === ".mp4") contentType = "video/mp4";
     else if (ext === ".webm") contentType = "video/webm";
 
-    return new NextResponse(fileBuffer, {
+    const fileSize = stats.size;
+    const rangeHeader = request.headers.get("range");
+
+    // HTTP Range Request Handling (206 Partial Content)
+    if (rangeHeader && rangeHeader.startsWith("bytes=")) {
+      const parts = rangeHeader.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+
+      // Range validation (416 Range Not Satisfiable)
+      if (isNaN(start) || isNaN(end) || start < 0 || end >= fileSize || start > end) {
+        return new NextResponse(null, {
+          status: 416,
+          headers: {
+            "Content-Range": `bytes */${fileSize}`,
+            "X-Content-Type-Options": "nosniff",
+          },
+        });
+      }
+
+      const chunkSize = end - start + 1;
+      const nodeStream = fs.createReadStream(filePath, { start, end });
+
+      const webStream = new ReadableStream({
+        start(controller) {
+          nodeStream.on("data", (chunk) => controller.enqueue(chunk));
+          nodeStream.on("end", () => controller.close());
+          nodeStream.on("error", (err) => controller.error(err));
+        },
+        cancel() {
+          nodeStream.destroy();
+        },
+      });
+
+      return new NextResponse(webStream, {
+        status: 206,
+        headers: {
+          "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+          "Accept-Ranges": "bytes",
+          "Content-Length": chunkSize.toString(),
+          "Content-Type": contentType,
+          "Cache-Control": "public, max-age=31536000, immutable",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    }
+
+    // Full File Streaming (200 OK)
+    const nodeStream = fs.createReadStream(filePath);
+    const webStream = new ReadableStream({
+      start(controller) {
+        nodeStream.on("data", (chunk) => controller.enqueue(chunk));
+        nodeStream.on("end", () => controller.close());
+        nodeStream.on("error", (err) => controller.error(err));
+      },
+      cancel() {
+        nodeStream.destroy();
+      },
+    });
+
+    return new NextResponse(webStream, {
       status: 200,
       headers: {
+        "Content-Length": fileSize.toString(),
         "Content-Type": contentType,
+        "Accept-Ranges": "bytes",
         "Cache-Control": "public, max-age=31536000, immutable",
         "X-Content-Type-Options": "nosniff",
       },

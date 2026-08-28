@@ -1,6 +1,14 @@
+import { Metadata } from "next";
 import { Palette, KeyRound } from "lucide-react";
 import Link from "next/link";
 import { ForgotPasswordForm } from "@/components/auth/ForgotPasswordForm";
+
+export const metadata: Metadata = {
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 
 export default function ForgotPasswordPage() {
   return (

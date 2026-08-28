@@ -1,7 +1,15 @@
+import { Metadata } from "next";
 import { validateInviteToken } from "@/lib/invites";
 import Link from "next/link";
 import { Palette, Sparkles, AlertCircle, Clock } from "lucide-react";
 import { InviteRedeemForm } from "@/components/auth/InviteRedeemForm";
+
+export const metadata: Metadata = {
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 
 interface InvitePageProps {
   params: Promise<{ token: string }>;

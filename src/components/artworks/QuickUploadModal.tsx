@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useModalStore } from "@/stores/useModalStore";
 import { useUploadArtworkMutation } from "@/hooks/useArtworks";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, X, Image as ImageIcon, Loader2, Sparkles, AlertCircle } from "lucide-react";
+import { Upload, X, Image as ImageIcon, Video as VideoIcon, Loader2, Sparkles } from "lucide-react";
 
 export function QuickUploadModal() {
   const { isUploadModalOpen, closeUploadModal } = useModalStore();
@@ -17,15 +17,67 @@ export function QuickUploadModal() {
   const [tagsInput, setTagsInput] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Clean up object URLs to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
+  // Handle Escape key to close modal
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isUploadModalOpen) {
+        closeUploadModal();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isUploadModalOpen, closeUploadModal]);
+
+  const handleFileSelect = (selectedFile: File) => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    setFile(selectedFile);
+    setPreviewUrl(URL.createObjectURL(selectedFile));
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0];
     if (selected) {
-      setFile(selected);
-      setPreviewUrl(URL.createObjectURL(selected));
+      handleFileSelect(selected);
     }
   };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    const droppedFile = e.dataTransfer.files?.[0];
+    if (droppedFile) {
+      handleFileSelect(droppedFile);
+    }
+  };
+
+  const isVideo = file?.type.startsWith("video/") || file?.name.toLowerCase().endsWith(".mp4");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,8 +106,13 @@ export function QuickUploadModal() {
   return (
     <AnimatePresence>
       {isUploadModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-md">
-          <div className="fixed inset-0" onClick={closeUploadModal} />
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="upload-modal-title"
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-md"
+        >
+          <div className="fixed inset-0" onClick={closeUploadModal} aria-hidden="true" />
 
           <motion.div
             initial={{ opacity: 0, y: 40 }}
@@ -71,7 +128,9 @@ export function QuickUploadModal() {
                   <Upload className="h-4 w-4" />
                 </div>
                 <div>
-                  <h3 className="font-display font-bold text-lg text-[#f6f2e9]">Unggah Karya Master</h3>
+                  <h3 id="upload-modal-title" className="font-display font-bold text-lg text-[#f6f2e9]">
+                    Unggah Karya Master
+                  </h3>
                   <p className="text-xs text-zinc-400">
                     File master dilindungi, otomatis diekstrak WebP & watermark publik.
                   </p>
@@ -79,8 +138,10 @@ export function QuickUploadModal() {
               </div>
 
               <button
+                type="button"
                 onClick={closeUploadModal}
-                className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors cursor-pointer"
+                aria-label="Tutup jendela unggah"
+                className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -88,17 +149,23 @@ export function QuickUploadModal() {
 
             {/* Form */}
             <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-              {/* File Dropzone / Preview */}
+              {/* File Dropzone / Dynamic Preview (Image vs Video) */}
               <div
                 onClick={() => fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-3xl p-6 flex flex-col items-center justify-center text-center gap-3 transition-all cursor-pointer ${
-                  previewUrl
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                className={`border-2 border-dashed rounded-3xl p-6 flex flex-col items-center justify-center text-center gap-3 transition-all cursor-pointer min-h-[160px] ${
+                  isDragging
+                    ? "border-amber-400 bg-amber-500/15 scale-[1.01]"
+                    : previewUrl
                     ? "border-amber-500/40 bg-amber-500/5"
                     : "border-white/15 hover:border-amber-500/50 bg-white/[0.02]"
                 }`}
               >
                 <input
                   ref={fileInputRef}
+                  id="artwork-file-input"
                   type="file"
                   accept="image/png,image/jpeg,image/webp,image/gif,video/mp4"
                   onChange={handleFileChange}
@@ -106,15 +173,20 @@ export function QuickUploadModal() {
                 />
 
                 {previewUrl ? (
-                  <div className="relative w-full max-h-56 rounded-2xl overflow-hidden flex items-center justify-center bg-black/40">
-                    <img
-                      src={previewUrl}
-                      alt="Preview"
-                      className="max-h-56 object-contain rounded-xl"
-                    />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 flex items-center justify-center transition-opacity text-xs font-mono text-white">
-                      Klik untuk mengganti file
-                    </div>
+                  <div className="relative w-full max-h-64 rounded-2xl overflow-hidden flex items-center justify-center bg-black/40 p-2">
+                    {isVideo ? (
+                      <video
+                        src={previewUrl}
+                        controls
+                        className="max-h-56 w-full object-contain rounded-xl"
+                      />
+                    ) : (
+                      <img
+                        src={previewUrl}
+                        alt="Pratinjau Karya"
+                        className="max-h-56 object-contain rounded-xl"
+                      />
+                    )}
                   </div>
                 ) : (
                   <div className="py-6 flex flex-col items-center gap-2">
@@ -125,7 +197,7 @@ export function QuickUploadModal() {
                       Pilih atau Seret File Karya (PNG, JPG, WEBP, GIF, MP4)
                     </span>
                     <span className="text-xs font-mono text-zinc-500">
-                      Resolusi master asli tanpa batas kompresi kasar
+                      Resolusi master asli dilindungi tanpa kompresi kasar
                     </span>
                   </div>
                 )}
@@ -134,8 +206,11 @@ export function QuickUploadModal() {
               {/* Title & Tags */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-mono text-zinc-300">JUDUL KARYA</label>
+                  <label htmlFor="artwork-title" className="text-xs font-mono text-zinc-300">
+                    JUDUL KARYA <span className="text-amber-400">*</span>
+                  </label>
                   <input
+                    id="artwork-title"
                     type="text"
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
@@ -146,8 +221,11 @@ export function QuickUploadModal() {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-mono text-zinc-300">TAGS (PISAHKAN KOMA)</label>
+                  <label htmlFor="artwork-tags" className="text-xs font-mono text-zinc-300">
+                    TAGS (PISAHKAN KOMA)
+                  </label>
                   <input
+                    id="artwork-tags"
                     type="text"
                     value={tagsInput}
                     onChange={(e) => setTagsInput(e.target.value)}
@@ -159,12 +237,15 @@ export function QuickUploadModal() {
 
               {/* Description */}
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-mono text-zinc-300">DESKRIPSI & PROSES KREATIF</label>
+                <label htmlFor="artwork-description" className="text-xs font-mono text-zinc-300">
+                  DESKRIPSI & PROSES KREATIF
+                </label>
                 <textarea
+                  id="artwork-description"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   rows={3}
-                  placeholder="Ceritakan latar belakang karya, inspirasi, software yang digunakan (Photoshop, Clip Studio, Blender)..."
+                  placeholder="Ceritakan latar belakang karya, software yang digunakan (Photoshop, Blender, dll)..."
                   className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-base sm:text-sm font-sans resize-none"
                 />
               </div>
@@ -172,8 +253,11 @@ export function QuickUploadModal() {
               {/* Settings Grid: Audience & Critique Mode */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-mono text-zinc-300">VISIBILITAS KARYA</label>
+                  <label htmlFor="artwork-audience" className="text-xs font-mono text-zinc-300">
+                    VISIBILITAS KARYA
+                  </label>
                   <select
+                    id="artwork-audience"
                     value={audience}
                     onChange={(e) => setAudience(e.target.value as any)}
                     className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-[#191c23] border border-white/10 text-white text-base sm:text-xs font-mono focus:outline-none"
@@ -181,12 +265,16 @@ export function QuickUploadModal() {
                     <option value="public">Publik (Tampil di Galeri Utama)</option>
                     <option value="members_only">Khusus Member Atelier</option>
                     <option value="unlisted">Unlisted (Hanya via Tautan Langsung)</option>
+                    <option value="private">Privat (Hanya Anda & Admin)</option>
                   </select>
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-mono text-zinc-300">MODE MASUKAN & KRITIK</label>
+                  <label htmlFor="artwork-critique-mode" className="text-xs font-mono text-zinc-300">
+                    MODE MASUKAN & KRITIK
+                  </label>
                   <select
+                    id="artwork-critique-mode"
                     value={critiqueMode}
                     onChange={(e) => setCritiqueMode(e.target.value as any)}
                     className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-[#191c23] border border-white/10 text-white text-base sm:text-xs font-mono focus:outline-none"

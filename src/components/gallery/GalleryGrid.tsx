@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { useGalleryFilterStore } from "@/stores/useGalleryFilterStore";
 import { useArtworksQuery } from "@/hooks/useArtworks";
 import { ArtworkCard } from "./ArtworkCard";
@@ -21,6 +22,16 @@ export function GalleryGrid({ currentUserRole }: GalleryGridProps) {
     resetFilters,
   } = useGalleryFilterStore();
 
+  const [localSearch, setLocalSearch] = useState(searchQuery);
+
+  // Debounce search query updates by 300ms
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearchQuery(localSearch);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [localSearch, setSearchQuery]);
+
   const { data: artworks = [], isLoading, error } = useArtworksQuery({
     search: searchQuery,
     mediaType,
@@ -36,8 +47,8 @@ export function GalleryGrid({ currentUserRole }: GalleryGridProps) {
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
           <input
             type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            value={localSearch}
+            onChange={(e) => setLocalSearch(e.target.value)}
             placeholder="Cari judul karya..."
             className="w-full pl-10 pr-4 py-2.5 min-h-[44px] rounded-2xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-500 focus:outline-none focus:border-amber-500/60 text-base sm:text-xs font-sans"
           />

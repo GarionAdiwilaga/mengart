@@ -1,8 +1,16 @@
+import { Metadata } from "next";
 import { requireAuth } from "@/lib/rbac";
 import { db } from "@/db";
 import { profiles, artworks, challenges } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import Link from "next/link";
+
+export const metadata: Metadata = {
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 import {
   Palette,
   Sparkles,

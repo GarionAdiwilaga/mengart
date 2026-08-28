@@ -1,0 +1,293 @@
+import { db } from "@/db";
+import {
+  challenges,
+  challengeWinnerSlots,
+  challengeSubmissions,
+  challengeJuryAssignments,
+  artworks,
+  artworkVersions,
+  users,
+  profiles,
+} from "@/db/schema";
+import { eq, and, isNull } from "drizzle-orm";
+import { getEffectiveChallengeStatus } from "@/lib/challenges";
+
+export interface PolicyUser {
+  id: string;
+  role: "member" | "moderator" | "admin";
+  membershipStatus?: "active" | "suspended" | "revoked";
+}
+
+export interface ArtworkEntity {
+  id: string;
+  userId: string;
+  audience: "public" | "members_only" | "unlisted" | "private";
+  publicationStatus: "draft" | "processing" | "ready" | "published" | "hidden" | "processing_failed" | string;
+  deletedAt?: Date | null;
+}
+
+export interface ChallengeEntity {
+  id: string;
+  status: string;
+  submissionStartsAt?: Date | null;
+  submissionDeadline?: Date | null;
+  votingStartsAt?: Date | null;
+  votingDeadline?: Date | null;
+  maxSubmissionsPerArtist?: number;
+}
+
+/**
+ * Validates whether a viewer can view an artwork.
+ */
+export function canViewArtwork(
+  viewer: PolicyUser | null | undefined,
+  artwork: ArtworkEntity,
+  owner?: { id: string }
+): boolean {
+  const isOwner = viewer && viewer.id === (owner?.id || artwork.userId);
+  const isAdmin = viewer && viewer.role === "admin";
+  const isModerator = viewer && viewer.role === "moderator";
+
+  // If artwork is soft-deleted, only owner and admin can view it
+  if (artwork.deletedAt) {
+    return Boolean(isOwner || isAdmin);
+  }
+
+  // If unpublished/draft/hidden/archived, only owner, admin, or moderator can view it
+  if (artwork.publicationStatus !== "published") {
+    return Boolean(isOwner || isAdmin || isModerator);
+  }
+
+  // Private audience: strictly owner and admin only
+  if (artwork.audience === "private") {
+    return Boolean(isOwner || isAdmin);
+  }
+
+  // Unlisted audience: direct link access for authenticated active members or owner
+  if (artwork.audience === "unlisted") {
+    if (!viewer) return false;
+    return Boolean(viewer.membershipStatus === "active" || isOwner || isAdmin || isModerator);
+  }
+
+  // Members only: viewer must be authenticated active member
+  if (artwork.audience === "members_only") {
+    if (!viewer) return false;
+    return Boolean(viewer.membershipStatus === "active" || isOwner || isAdmin || isModerator);
+  }
+
+  // Public audience: allowed for everyone
+  return true;
+}
+
+/**
+ * Validates whether a viewer can access the clean, unwatermarked master media variant.
+ * Exact ACL Matrix:
+ * - Owner: Allowed
+ * - Platform Admin: Allowed
+ * - Active Assigned Jury: Allowed ONLY for submitted entries during jury_selection_open / review
+ * - All others (guests, regular members, unassigned moderators): STRICTLY DENIED (403)
+ */
+export async function canAccessMasterMedia(
+  viewer: PolicyUser | null | undefined,
+  artwork: ArtworkEntity,
+  challengeId?: string | null
+): Promise<boolean> {
+  if (!viewer) return false;
+  if (viewer.membershipStatus && viewer.membershipStatus !== "active") return false;
+
+  const isOwner = viewer.id === artwork.userId;
+  const isAdmin = viewer.role === "admin";
+
+  if (isOwner || isAdmin) return true;
+
+  // Check if caller is an active jury member for the challenge this artwork was submitted to
+  if (challengeId) {
+    const [challenge] = await db
+      .select()
+      .from(challenges)
+      .where(eq(challenges.id, challengeId))
+      .limit(1);
+
+    if (challenge) {
+      const dynamicStatus = getEffectiveChallengeStatus(challenge as any);
+      if (dynamicStatus === "jury_selection_open" || dynamicStatus === "review") {
+        const [juryAssignment] = await db
+          .select()
+          .from(challengeJuryAssignments)
+          .where(
+            and(
+              eq(challengeJuryAssignments.challengeId, challengeId),
+              eq(challengeJuryAssignments.userId, viewer.id)
+            )
+          )
+          .limit(1);
+
+        if (juryAssignment) return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Validates whether a profile is publicly discoverable.
+ */
+export function canViewProfile(
+  viewer: PolicyUser | null | undefined,
+  user: { id: string; membershipStatus: "active" | "suspended" | "revoked"; role: string },
+  profile: { isPublic?: boolean; deletedAt?: Date | null }
+): boolean {
+  const isSelf = viewer && viewer.id === user.id;
+  const isAdmin = viewer && viewer.role === "admin";
+
+  if (profile.deletedAt) {
+    return Boolean(isSelf || isAdmin);
+  }
+
+  if (user.membershipStatus !== "active") {
+    return Boolean(isSelf || isAdmin);
+  }
+
+  if (profile.isPublic === false) {
+    return Boolean(isSelf || isAdmin);
+  }
+
+  return true;
+}
+
+/**
+ * Validates whether a user can submit an entry to a challenge.
+ */
+export function canSubmitChallengeEntry(
+  viewer: PolicyUser | null | undefined,
+  challenge: ChallengeEntity,
+  currentSubmissionCount: number = 0
+): { allowed: boolean; reason?: string } {
+  if (!viewer) {
+    return { allowed: false, reason: "Harus masuk untuk mengirimkan karya ke challenge." };
+  }
+
+  if (viewer.membershipStatus !== "active") {
+    return { allowed: false, reason: "Akun Anda tidak aktif atau ditangguhkan." };
+  }
+
+  const dynamicStatus = getEffectiveChallengeStatus(challenge as any);
+  if (dynamicStatus !== "submission_open") {
+    return { allowed: false, reason: `Periode submisi sedang ditutup (Status: ${dynamicStatus}).` };
+  }
+
+  const maxAllowed = challenge.maxSubmissionsPerArtist || 1;
+  if (currentSubmissionCount >= maxAllowed) {
+    return { allowed: false, reason: `Maksimum submisi tercapai (${maxAllowed} karya per artist).` };
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Validates whether a user can vote in a challenge round.
+ */
+export function canVoteInChallenge(
+  viewer: PolicyUser | null | undefined,
+  challenge: ChallengeEntity,
+  roundType: "main" | "tiebreak" = "main"
+): { allowed: boolean; reason?: string } {
+  if (!viewer) {
+    return { allowed: false, reason: "Harus masuk untuk memberikan suara." };
+  }
+
+  if (viewer.membershipStatus !== "active") {
+    return { allowed: false, reason: "Akun Anda tidak aktif atau ditangguhkan." };
+  }
+
+  const dynamicStatus = getEffectiveChallengeStatus(challenge as any);
+  if (roundType === "main" && dynamicStatus !== "voting_open") {
+    return { allowed: false, reason: "Periode voting komunitas sedang ditutup." };
+  }
+
+  if (roundType === "tiebreak" && dynamicStatus !== "tiebreak_open") {
+    return { allowed: false, reason: "Putaran tiebreak sedang tidak aktif." };
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Validates whether a user can submit jury evaluations for a challenge.
+ */
+export async function canSubmitJuryScore(
+  viewer: PolicyUser | null | undefined,
+  challengeId: string,
+  submissionId: string
+): Promise<{ allowed: boolean; reason?: string }> {
+  if (!viewer) {
+    return { allowed: false, reason: "Harus masuk untuk mengevaluasi sebagai juri." };
+  }
+
+  if (viewer.membershipStatus !== "active") {
+    return { allowed: false, reason: "Akun Anda tidak aktif atau ditangguhkan." };
+  }
+
+  const [challenge] = await db
+    .select()
+    .from(challenges)
+    .where(eq(challenges.id, challengeId))
+    .limit(1);
+
+  if (!challenge) {
+    return { allowed: false, reason: "Challenge tidak ditemukan." };
+  }
+
+  const dynamicStatus = getEffectiveChallengeStatus(challenge as any);
+  if (dynamicStatus !== "jury_selection_open" && dynamicStatus !== "review" && dynamicStatus !== "voting_open") {
+    return { allowed: false, reason: "Periode evaluasi juri sedang tidak aktif." };
+  }
+
+  // Check jury assignment or admin
+  const isAdmin = viewer.role === "admin";
+  let isAssignedJury = false;
+
+  const [assignment] = await db
+    .select()
+    .from(challengeJuryAssignments)
+    .where(
+      and(
+        eq(challengeJuryAssignments.challengeId, challengeId),
+        eq(challengeJuryAssignments.userId, viewer.id)
+      )
+    )
+    .limit(1);
+
+  if (assignment) {
+    isAssignedJury = true;
+  }
+
+  if (!isAdmin && !isAssignedJury) {
+    return { allowed: false, reason: "Anda bukan dewan juri yang ditugaskan untuk challenge ini." };
+  }
+
+  // Check target submission
+  const [submission] = await db
+    .select()
+    .from(challengeSubmissions)
+    .where(
+      and(
+        eq(challengeSubmissions.id, submissionId),
+        eq(challengeSubmissions.challengeId, challengeId),
+        eq(challengeSubmissions.submissionStatus, "submitted")
+      )
+    )
+    .limit(1);
+
+  if (!submission) {
+    return { allowed: false, reason: "Karya submisi tidak valid atau tidak aktif pada challenge ini." };
+  }
+
+  // Anti-self scoring rule
+  if (submission.userId === viewer.id) {
+    return { allowed: false, reason: "Juri dilarang menilai karya milik sendiri." };
+  }
+
+  return { allowed: true };
+}

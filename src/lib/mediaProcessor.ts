@@ -64,8 +64,9 @@ export async function processArtworkMediaJob(jobData: ProcessMediaJobData) {
     let frameCount: number | null = null;
     let durationSeconds: number | null = null;
 
-    const masterStorageKey = generateStorageKey("master", ext);
-    const publicStorageKey = generateStorageKey("public", ext === ".gif" ? "gif" : "webp");
+    const masterStorageKey = generateStorageKey("master", ext.replace(".", "") || "png");
+    const publicExt = jobData.mediaType === "video" ? (ext.replace(".", "") || "mp4") : ext === ".gif" ? "gif" : "webp";
+    const publicStorageKey = generateStorageKey("public", publicExt);
     const thumbStorageKey = generateStorageKey("thumb", "webp");
     let posterStorageKey: string | null = null;
 
@@ -134,13 +135,20 @@ export async function processArtworkMediaJob(jobData: ProcessMediaJobData) {
       // Save master video
       await fs.copyFile(tempFilePath, masterDestPath);
 
-      // For public video, copy or serve
-      await fs.copyFile(tempFilePath, publicDestPath);
+      // Transcode / optimize public video derivative with FFmpeg, stripping metadata and enabling faststart
+      try {
+        await execAsync(
+          `ffmpeg -y -i "${tempFilePath}" -c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p -movflags +faststart -map_metadata -1 "${publicDestPath}"`
+        );
+      } catch (transcodeErr) {
+        console.warn("FFmpeg transcode fallback, copying file:", transcodeErr);
+        await fs.copyFile(tempFilePath, publicDestPath);
+      }
 
       posterStorageKey = generateStorageKey("poster", "webp");
       const posterDestPath = resolveStoragePath("public", posterStorageKey);
 
-      // Extract video poster frame via ffmpeg
+      // Extract video poster frame via ffmpeg at 1s mark
       try {
         await execAsync(
           `ffmpeg -y -ss 00:00:01 -i "${tempFilePath}" -vframes 1 -q:v 2 "${posterDestPath}"`

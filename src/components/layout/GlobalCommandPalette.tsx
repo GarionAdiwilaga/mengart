@@ -59,9 +59,14 @@ export function GlobalCommandPalette() {
   return (
     <AnimatePresence>
       {isCommandPaletteOpen ? (
-        <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 p-4 bg-black/80 backdrop-blur-md">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Pencarian Cepat Navigasi Atelier"
+          className="fixed inset-0 z-50 flex items-start justify-center pt-20 p-4 bg-black/80 backdrop-blur-md"
+        >
           {/* Backdrop click to close */}
-          <div className="fixed inset-0" onClick={closeCommandPalette} />
+          <div className="fixed inset-0" onClick={closeCommandPalette} aria-hidden="true" />
 
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: -10 }}

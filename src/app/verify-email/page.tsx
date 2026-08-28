@@ -1,6 +1,14 @@
+import { Metadata } from "next";
 import { Palette, Mail, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { VerifyEmailClient } from "@/components/auth/VerifyEmailClient";
+
+export const metadata: Metadata = {
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 
 interface VerifyEmailPageProps {
   searchParams: Promise<{

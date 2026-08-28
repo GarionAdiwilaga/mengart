@@ -6,7 +6,7 @@ import {
   commissionServices,
   commissionScopeRules,
 } from "@/db/schema";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, isNull } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
@@ -56,6 +56,7 @@ export default async function ArtistProfilePage({ params }: ArtistProfilePagePro
     .where(
       and(
         eq(artworks.userId, artist.userId),
+        isNull(artworks.deletedAt),
         eq(artworks.audience, "public"),
         eq(artworks.publicationStatus, "published")
       )

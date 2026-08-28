@@ -115,3 +115,25 @@
 **Business Rule:** Historical challenges must integrate seamlessly with live challenge queries, winner slots, and Hall of Fame views while maintaining immutable provenance in audit logs.
 **Reason:** Preserves community art heritage and automates social media distribution.
 
+
+## 2026-08-28
+
+### QA Re-Analysis & TDD-First Remediation Mandate
+**Decision:** Perform comprehensive QA re-analysis before proceeding with Phase 7. Confirmed all 9 P0 blockers from the previous QA report remain open. Build passes (exit 0). Readiness score: 5.5–6/10.
+**Business Rule:** All P0 fixes MUST be preceded by a failing automated test before implementation. Existing `npx tsx` integration scripts are NOT sufficient — they bypass server action authorization by writing directly to the DB.
+**Reason:** P0-003 jury authorization bug confirmed in source: `isModOrAdmin` computed but never enforced. P0-007 video MIME bug confirmed: video stored with `.webp` extension. P0-008 challenge lifecycle bypass confirmed: created as `submission_open` not `draft`.
+
+### Release Gate 1, 2, & 3 Production Hardening & Remediation Complete
+**Decision:** Fully implement and verify all 15 QA remediation requirements across backend security, data integrity, media delivery, frontend accessibility, and production infrastructure:
+1. **Centralized Policy Engine (`src/lib/policy.ts`):** `canViewArtwork`, `canAccessMasterMedia`, `canViewProfile`, `canSubmitChallengeEntry`, `canVoteInChallenge`, `canSubmitJuryScore`, `canFinalizeChallenge` uniformly enforced across all page and API routes.
+2. **Master Media ACL Matrix:** Master unwatermarked clean media is strictly restricted to Owner and Admin (and assigned Jury during active scoring). Unassigned members and guests receive 403 Forbidden.
+3. **Server-Side Jury Integrity:** `isChallengeJury` real DB query + anti-self scoring enforcement in `submitJuryScoreAction`.
+4. **Deterministic Challenge Finalization & Cutoff Tiebreaks:** Deterministic sorting (`stars DESC` -> `earliestSubmission ASC` -> `submissionId ASC`), jury score integration, and winner slots roll-down without duplicate champion slots.
+5. **Video Streaming & Transcoding Pipeline:** Preserves video `.mp4` key, strips metadata, and serves HTTP 206 Partial Content Range chunks (`Accept-Ranges: bytes`, `Content-Range`) via Node streams without whole-file memory buffering.
+6. **Soft-Delete Architecture:** `deleteArtworkAction` applies `deletedAt` soft deletion, protecting foreign keys and historical submissions.
+7. **Production Rate Limiting:** Sliding-window rate limiting in `src/lib/rateLimit.ts` protecting auth, upload, voting, critiques, and reports.
+8. **Frontend A11y & SEO:** `<video>` preview for video uploads, `aria-*` dialog attributes, explicit `id`/`htmlFor` labels, `@media (prefers-reduced-motion: reduce)`, accessible skip link (`#main-content`), and page-level `robots: { index: false, follow: false }` metadata.
+9. **DevOps & Infrastructure:** Standalone multi-stage `Dockerfile`, complete `docker-compose.yml` (web, worker, postgres, redis), non-leaking `/api/health/liveness` and `/api/health/readiness` probes, `/api/admin/diagnostics`, automated encrypted `scripts/backup.sh` & `scripts/restore.sh`, and `DEPLOYMENT.md`.
+**Business Rule:** Zero deployment without passing all Gate 1 security policies and build checks.
+**Reason:** Fulfills all user and QA auditor requirements to achieve production deploy readiness.
+

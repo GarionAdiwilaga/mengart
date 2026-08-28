@@ -24,6 +24,7 @@ import { getEffectiveChallengeStatus, type EffectiveChallengeStatus } from "@/li
 import { resolveStoragePath, ensureStorageDirectories } from "@/lib/storage";
 import { processArtworkMediaJob } from "@/lib/mediaProcessor";
 import { createNotification } from "@/lib/notifications";
+import { canSubmitChallengeEntry } from "@/lib/policy";
 
 function slugify(text: string): string {
   const base = text
@@ -60,7 +61,7 @@ export async function submitArtworkToChallengeAction(formData: FormData) {
     throw new Error("Data submisi tidak lengkap.");
   }
 
-  // 1. Fetch challenge & verify authoritative deadline
+  // 1. Fetch challenge & verify authoritative submission policy
   const [challenge] = await db
     .select()
     .from(challenges)
@@ -71,11 +72,24 @@ export async function submitArtworkToChallengeAction(formData: FormData) {
     throw new Error("Challenge tidak ditemukan.");
   }
 
-  const effectiveStatus = getEffectiveChallengeStatus(challenge);
-  if (effectiveStatus !== "submission_open") {
-    throw new Error(
-      "Periode submisi untuk challenge ini sedang tidak dibuka atau telah melewati batas waktu (deadline)."
+  const existingSubmissions = await db
+    .select()
+    .from(challengeSubmissions)
+    .where(
+      and(
+        eq(challengeSubmissions.challengeId, challengeId),
+        eq(challengeSubmissions.userId, user.id)
+      )
     );
+
+  const isRevision = existingSubmissions.length > 0;
+  if (!isRevision) {
+    const submitPolicy = canSubmitChallengeEntry(user as any, challenge as any, existingSubmissions.length);
+    if (!submitPolicy.allowed) {
+      throw new Error(submitPolicy.reason || "Submisi challenge tidak diizinkan saat ini.");
+    }
+  } else if (!challenge.allowRevisions) {
+    throw new Error("Revisi karya tidak diizinkan untuk challenge ini.");
   }
 
   const now = new Date();
@@ -355,6 +369,10 @@ export async function createOrUpdateChallengeAction(formData: FormData) {
   } else {
     // Create new
     const slug = slugify(title);
+    const now = new Date();
+    const initialStatus =
+      submissionStartsAt && new Date(submissionStartsAt) > now ? "scheduled" : "submission_open";
+
     const [created] = await db
       .insert(challenges)
       .values({
@@ -363,7 +381,7 @@ export async function createOrUpdateChallengeAction(formData: FormData) {
         theme,
         description,
         promptRules,
-        status: "submission_open",
+        status: initialStatus,
         awardMode,
         starsPerMember,
         quorumRequirement,

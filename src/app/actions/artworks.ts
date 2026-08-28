@@ -212,10 +212,28 @@ export async function deleteArtworkAction(artworkId: string) {
     throw new Error("Anda tidak memiliki izin untuk menghapus karya ini.");
   }
 
-  await db.delete(artworks).where(eq(artworks.id, artworkId));
+  // Soft delete to protect historical challenge submissions & results integrity
+  await db
+    .update(artworks)
+    .set({
+      deletedAt: new Date(),
+      publicationStatus: "hidden",
+      updatedAt: new Date(),
+    })
+    .where(eq(artworks.id, artworkId));
+
+  await db.insert(auditLogs).values({
+    actorId: user.id,
+    action: "artwork.soft_deleted",
+    targetType: "artwork",
+    targetId: artworkId,
+    reason: "Karya dihapus oleh pemilik atau administrator.",
+    metadata: { title: artwork.title, slug: artwork.slug },
+  });
 
   revalidatePath("/me/portfolio");
   revalidatePath("/gallery");
+  revalidatePath(`/artworks/${artwork.slug}`);
 
   return { success: true };
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   ZoomIn,
@@ -10,7 +10,6 @@ import {
   ShieldCheck,
   Maximize2,
   Minimize2,
-  Film,
 } from "lucide-react";
 
 interface ArtworkLightboxProps {
@@ -29,8 +28,6 @@ export function ArtworkLightbox({
   isMember,
   title,
   mediaType,
-  width,
-  height,
 }: ArtworkLightboxProps) {
   const [zoomLevel, setZoomLevel] = useState(1);
   const [useMasterQuality, setUseMasterQuality] = useState(false);
@@ -41,6 +38,29 @@ export function ArtworkLightbox({
   const handleZoomIn = () => setZoomLevel((prev) => Math.min(prev + 0.5, 4));
   const handleZoomOut = () => setZoomLevel((prev) => Math.max(prev - 0.5, 0.5));
   const handleResetZoom = () => setZoomLevel(1);
+
+  // Accessible keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (e.key === "+" || e.key === "=") {
+        e.preventDefault();
+        handleZoomIn();
+      } else if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        handleZoomOut();
+      } else if (e.key === "0") {
+        e.preventDefault();
+        handleResetZoom();
+      } else if (e.key === "Escape" && isFullscreen) {
+        setIsFullscreen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isFullscreen]);
 
   return (
     <div
@@ -58,6 +78,7 @@ export function ArtworkLightbox({
             muted
             loop
             playsInline
+            aria-label={`Pemutar video karya: ${title}`}
             className="max-h-[72vh] w-auto max-w-full rounded-2xl object-contain"
           />
         ) : (
@@ -80,8 +101,9 @@ export function ArtworkLightbox({
           {isMember && masterMediaUrl ? (
             <div className="flex items-center gap-1 p-1 rounded-2xl bg-black/80 backdrop-blur-md border border-white/15 text-xs font-mono">
               <button
+                type="button"
                 onClick={() => setUseMasterQuality(false)}
-                className={`px-2.5 sm:px-3 py-1.5 min-h-[36px] rounded-xl transition-all cursor-pointer ${
+                className={`px-3 py-2 min-h-[44px] rounded-xl transition-all cursor-pointer ${
                   !useMasterQuality
                     ? "bg-amber-500 text-black font-bold shadow-sm"
                     : "text-zinc-400 hover:text-white"
@@ -91,21 +113,22 @@ export function ArtworkLightbox({
                 <span className="sm:hidden">Preview</span>
               </button>
               <button
+                type="button"
                 onClick={() => setUseMasterQuality(true)}
-                className={`px-2.5 sm:px-3 py-1.5 min-h-[36px] rounded-xl transition-all flex items-center gap-1 cursor-pointer ${
+                className={`px-3 py-2 min-h-[44px] rounded-xl transition-all flex items-center gap-1.5 cursor-pointer ${
                   useMasterQuality
                     ? "bg-amber-500 text-black font-bold shadow-sm"
                     : "text-zinc-400 hover:text-white"
                 }`}
               >
-                <Sparkles className="h-3 w-3" />
+                <Sparkles className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Master Quality</span>
                 <span className="sm:hidden">Master</span>
               </button>
             </div>
           ) : (
-            <span className="px-3 py-1.5 rounded-2xl bg-black/80 backdrop-blur-md border border-white/15 text-xs font-mono text-zinc-300 flex items-center gap-1.5">
-              <ShieldCheck className="h-3.5 w-3.5 text-amber-400" />
+            <span className="px-3 py-2 min-h-[44px] rounded-2xl bg-black/80 backdrop-blur-md border border-white/15 text-xs font-mono text-zinc-300 flex items-center gap-1.5">
+              <ShieldCheck className="h-4 w-4 text-amber-400" />
               <span className="hidden sm:inline">Versi Publik · Watermarked</span>
               <span className="sm:hidden">Watermarked</span>
             </span>
@@ -116,38 +139,42 @@ export function ArtworkLightbox({
         {mediaType === "image" ? (
           <div className="absolute bottom-3 right-3 sm:bottom-4 sm:right-4 z-10 flex items-center gap-1 p-1 rounded-2xl bg-black/80 backdrop-blur-md border border-white/15 text-xs">
             <button
+              type="button"
               onClick={handleZoomOut}
               disabled={zoomLevel <= 0.5}
-              title="Zoom Out"
-              className="p-2.5 min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40 cursor-pointer"
+              aria-label="Perkecil zoom tampilan (-)"
+              className="p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40 cursor-pointer"
             >
               <ZoomOut className="h-4 w-4" />
             </button>
-            <span className="font-mono text-xs text-zinc-300 px-1.5 tabular-nums">
+            <span className="font-mono text-xs text-zinc-300 px-2 tabular-nums">
               {Math.round(zoomLevel * 100)}%
             </span>
             <button
+              type="button"
               onClick={handleZoomIn}
               disabled={zoomLevel >= 4}
-              title="Zoom In"
-              className="p-2.5 min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40 cursor-pointer"
+              aria-label="Perbesar zoom tampilan (+)"
+              className="p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40 cursor-pointer"
             >
               <ZoomIn className="h-4 w-4" />
             </button>
             <button
+              type="button"
               onClick={handleResetZoom}
-              title="Reset Zoom"
-              className="p-2.5 min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+              aria-label="Reset zoom tampilan (0)"
+              className="p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
             >
               <RotateCcw className="h-4 w-4" />
             </button>
 
-            <div className="h-4 w-px bg-white/20 mx-0.5" />
+            <div className="h-5 w-px bg-white/20 mx-1" />
 
             <button
+              type="button"
               onClick={() => setIsFullscreen(!isFullscreen)}
-              title={isFullscreen ? "Keluar Fullscreen" : "Mode Fullscreen"}
-              className="p-2.5 min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+              aria-label={isFullscreen ? "Keluar layar penuh" : "Masuk mode layar penuh"}
+              className="p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
             >
               {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
             </button>

@@ -1,6 +1,14 @@
+import { Metadata } from "next";
 import { Palette, KeyRound } from "lucide-react";
 import Link from "next/link";
 import { ResetPasswordForm } from "@/components/auth/ResetPasswordForm";
+
+export const metadata: Metadata = {
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 
 interface ResetPasswordPageProps {
   params: Promise<{ token: string }>;

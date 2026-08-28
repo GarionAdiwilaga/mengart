@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { resolveStoragePath } from "@/lib/storage";
+import { db } from "@/db";
+import { artworkVersions, artworks, challengeSubmissionVersions, challengeSubmissions } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { canAccessMasterMedia } from "@/lib/policy";
 import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
@@ -11,25 +15,75 @@ export async function GET(
 ) {
   const session = await auth();
   
-  // 1. Authorization Guard
+  // 1. Authentication Guard
   if (!session?.user || !session.user.id) {
-    return new NextResponse("Unauthorized: Authentication required to view full-quality master media.", {
+    return new NextResponse("Unauthorized: Autentikasi diperlukan untuk mengakses master media orisinal.", {
       status: 401,
     });
   }
 
   if (session.user.membershipStatus !== "active") {
-    return new NextResponse("Forbidden: Account is not in active standing.", {
+    return new NextResponse("Forbidden: Akun Anda ditangguhkan atau tidak aktif.", {
       status: 403,
     });
   }
 
   const { key } = await params;
   if (!key) {
-    return new NextResponse("Missing media key", { status: 400 });
+    return new NextResponse("Kunci media tidak valid", { status: 400 });
   }
 
-  // 2. Resolve Path with Path Traversal Protection
+  // 2. Database Key Resolution & Authorization Check
+  const [version] = await db
+    .select({
+      versionId: artworkVersions.id,
+      artworkId: artworkVersions.artworkId,
+      mimeType: artworkVersions.mimeType,
+      artworkUserId: artworks.userId,
+      artworkAudience: artworks.audience,
+      artworkPublicationStatus: artworks.publicationStatus,
+      artworkDeletedAt: artworks.deletedAt,
+    })
+    .from(artworkVersions)
+    .innerJoin(artworks, eq(artworks.id, artworkVersions.artworkId))
+    .where(eq(artworkVersions.masterStorageKey, key))
+    .limit(1);
+
+  if (!version) {
+    return new NextResponse("Master Media Tidak Ditemukan", { status: 404 });
+  }
+
+  // Check if artwork was submitted to a challenge
+  let challengeId: string | null = null;
+  const [subVersion] = await db
+    .select({
+      challengeId: challengeSubmissions.challengeId,
+    })
+    .from(challengeSubmissionVersions)
+    .innerJoin(challengeSubmissions, eq(challengeSubmissions.id, challengeSubmissionVersions.submissionId))
+    .where(eq(challengeSubmissionVersions.artworkVersionId, version.versionId))
+    .limit(1);
+
+  if (subVersion) {
+    challengeId = subVersion.challengeId;
+  }
+
+  const artworkEntity = {
+    id: version.artworkId,
+    userId: version.artworkUserId,
+    audience: version.artworkAudience as any,
+    publicationStatus: version.artworkPublicationStatus as any,
+    deletedAt: version.artworkDeletedAt,
+  };
+
+  const hasAccess = await canAccessMasterMedia(session.user as any, artworkEntity, challengeId);
+  if (!hasAccess) {
+    return new NextResponse("Forbidden: Anda tidak memiliki izin akses untuk mengunduh master media karya ini.", {
+      status: 403,
+    });
+  }
+
+  // 3. Resolve Path with Path Traversal Protection
   const filePath = resolveStoragePath("master", key);
 
   try {
@@ -38,9 +92,9 @@ export async function GET(
       return new NextResponse("Not Found", { status: 404 });
     }
 
-    // Determine MIME type based on extension
+    // Determine MIME type
     const ext = path.extname(filePath).toLowerCase();
-    let contentType = "application/octet-stream";
+    let contentType = version.mimeType || "application/octet-stream";
     if (ext === ".jpg" || ext === ".jpeg") contentType = "image/jpeg";
     else if (ext === ".png") contentType = "image/png";
     else if (ext === ".webp") contentType = "image/webp";
@@ -69,6 +123,6 @@ export async function GET(
       },
     });
   } catch (err) {
-    return new NextResponse("Media Not Found", { status: 404 });
+    return new NextResponse("Media File Not Found on Disk", { status: 404 });
   }
 }

@@ -1,7 +1,15 @@
+import { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { extractInviteToken, validateInviteToken } from "@/lib/invites";
 import Link from "next/link";
 import { Palette, Key, Sparkles, ArrowRight, ShieldCheck } from "lucide-react";
+
+export const metadata: Metadata = {
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 
 interface InviteEntryPageProps {
   searchParams: Promise<{
