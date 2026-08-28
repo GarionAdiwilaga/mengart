@@ -494,201 +494,85 @@ export async function submitJuryScoreAction(
   });
 }
 
+import {
+  computeChallengeResultsService,
+  publishChallengeResultsService,
+} from "@/lib/services/challengeService";
+
 /**
- * Deterministic Challenge Finalization with Parent Row Lock & Slot Completion Check
+ * Stage 1: Compute Challenge Results & Detect Ties (Transitions -> REVIEW or TIEBREAK_OPEN)
  */
-export async function finalizeChallengeResultsAction(challengeId: string) {
+export async function computeChallengeResultsAction(challengeId: string) {
   const user = await requireModerator("/dashboard");
 
-  return db.transaction(async (tx) => {
-    // 1. Lock challenge parent row
-    const [challenge] = await tx
-      .select()
-      .from(challenges)
-      .where(eq(challenges.id, challengeId))
-      .for("update")
-      .limit(1);
+  const result = await db.transaction(async (tx) => {
+    return computeChallengeResultsService(
+      tx,
+      { userId: user.id, role: user.role },
+      challengeId
+    );
+  });
 
-    if (!challenge) throw new Error("Challenge tidak ditemukan.");
+  const [challenge] = await db
+    .select({ slug: challenges.slug })
+    .from(challenges)
+    .where(eq(challenges.id, challengeId))
+    .limit(1);
 
-    const dynamicStatus = getEffectiveChallengeStatus(challenge);
-    if (dynamicStatus === "voting_open" || dynamicStatus === "tiebreak_open") {
-      throw new Error(
-        `Finalisasi ditolak: Sesi pemungutan suara ("${dynamicStatus}") masih aktif. Finalisasi hanya dapat dilakukan setelah pemungutan suara ditutup.`
-      );
-    }
+  if (challenge) {
+    revalidatePath(`/challenges/${challenge.slug}`);
+    revalidatePath(`/challenges/${challenge.slug}/results`);
+    revalidatePath(`/challenges/${challenge.slug}/jury`);
+  }
+  revalidatePath("/admin/challenges");
+  revalidatePath("/challenges");
 
-    if (dynamicStatus !== "review" && dynamicStatus !== "jury_selection_open" && challenge.status !== "finished") {
-      throw new Error(`Challenge tidak dapat difinalisasi pada status "${dynamicStatus}".`);
-    }
+  return result;
+}
 
-    // 2. Fetch Configured Winner Slots
-    const winnerSlots = await tx
-      .select()
-      .from(challengeWinnerSlots)
-      .where(eq(challengeWinnerSlots.challengeId, challengeId))
-      .orderBy(asc(challengeWinnerSlots.displayOrder), asc(challengeWinnerSlots.rank));
+/**
+ * Stage 2: Explicitly Review and Publish Results (Transitions REVIEW -> FINISHED)
+ */
+export async function publishChallengeResultsAction(challengeId: string) {
+  const user = await requireModerator("/dashboard");
 
-    const communitySlots = winnerSlots.filter((s) => s.slotType === "community_vote");
-    const jurySlots = winnerSlots.filter((s) => s.slotType === "jury_award");
+  const result = await db.transaction(async (tx) => {
+    return publishChallengeResultsService(
+      tx,
+      { userId: user.id, role: user.role },
+      challengeId
+    );
+  });
 
-    // 3. Required Jury Slots Completion Check
-    const juryAssignments = await tx
-      .select()
-      .from(challengeJurySlotAssignments)
-      .where(eq(challengeJurySlotAssignments.challengeId, challengeId));
+  const [challenge] = await db
+    .select({ slug: challenges.slug })
+    .from(challenges)
+    .where(eq(challenges.id, challengeId))
+    .limit(1);
 
-    if (challenge.awardMode === "jury_only" || challenge.awardMode === "vote_and_jury") {
-      if (jurySlots.length > 0) {
-        const assignedSlotIds = new Set(juryAssignments.map((a) => a.winnerSlotId));
-        const unassignedSlots = jurySlots.filter((slot) => !assignedSlotIds.has(slot.id));
-        if (unassignedSlots.length > 0) {
-          throw new Error(
-            `Finalisasi diblokir: Terdapat ${unassignedSlots.length} slot penghargaan dewan juri yang belum ditetapkan (${unassignedSlots.map((s) => s.title).join(", ")}).`
-          );
-        }
-      }
-    }
-
-    // 4. Tabulate Main Round Stars Deterministically
-    const mainRoundStars = await tx
-      .select({
-        submissionId: challengeSubmissions.id,
-        artistUserId: challengeSubmissions.userId,
-        createdAt: challengeSubmissions.createdAt,
-        totalStars: sql<number>`COALESCE(SUM(CASE WHEN ${challengeBallots.roundType} = 'main' THEN ${challengeBallotStars.starsCount} ELSE 0 END), 0)::int`,
-        tiebreakStars: sql<number>`COALESCE(SUM(CASE WHEN ${challengeBallots.roundType} = 'tiebreak' THEN ${challengeBallotStars.starsCount} ELSE 0 END), 0)::int`,
-      })
-      .from(challengeSubmissions)
-      .leftJoin(challengeBallotStars, eq(challengeBallotStars.submissionId, challengeSubmissions.id))
-      .leftJoin(challengeBallots, eq(challengeBallots.id, challengeBallotStars.ballotId))
-      .where(
-        and(
-          eq(challengeSubmissions.challengeId, challengeId),
-          eq(challengeSubmissions.submissionStatus, "submitted")
-        )
-      )
-      .groupBy(challengeSubmissions.id, challengeSubmissions.userId, challengeSubmissions.createdAt)
-      .orderBy(
-        desc(sql`COALESCE(SUM(CASE WHEN ${challengeBallots.roundType} = 'main' THEN ${challengeBallotStars.starsCount} ELSE 0 END), 0)::int`),
-        desc(sql`COALESCE(SUM(CASE WHEN ${challengeBallots.roundType} = 'tiebreak' THEN ${challengeBallotStars.starsCount} ELSE 0 END), 0)::int`),
-        asc(challengeSubmissions.createdAt),
-        asc(challengeSubmissions.id)
-      );
-
-    // 5. Detect Cutoff Ties BEFORE Concluding Finalization
-    const communityCutoffCount = communitySlots.length;
-    if (
-      communityCutoffCount > 0 &&
-      mainRoundStars.length > communityCutoffCount &&
-      challenge.tieStrategy === "tiebreak_round" &&
-      challenge.status !== "finished" &&
-      challenge.status !== "tiebreak_open"
-    ) {
-      const cutoffSub = mainRoundStars[communityCutoffCount - 1];
-      const nextSub = mainRoundStars[communityCutoffCount];
-
-      if (cutoffSub.totalStars === nextSub.totalStars && cutoffSub.totalStars > 0) {
-        // Collect all tied candidates at this exact score
-        const tiedScore = cutoffSub.totalStars;
-        const tiedCandidates = mainRoundStars.filter((s) => s.totalStars === tiedScore);
-
-        // Create and Freeze Tiebreak Round
-        const [tiebreakRound] = await tx
-          .insert(challengeVotingRounds)
-          .values({
-            challengeId,
-            roundType: "tiebreak",
-            roundSequence: 2,
-            status: "open",
-            startsAt: new Date(),
-            starsPerMember: 1,
-          })
-          .returning();
-
-        await tx.insert(challengeVotingRoundCandidates).values(
-          tiedCandidates.map((tc) => ({
-            votingRoundId: tiebreakRound.id,
-            submissionId: tc.submissionId,
-          }))
-        );
-
-        // Transition challenge to tiebreak_open
-        await tx
-          .update(challenges)
-          .set({ status: "tiebreak_open", updatedAt: new Date() })
-          .where(eq(challenges.id, challengeId));
-
-        revalidatePath(`/challenges/${challenge.slug}`);
-        throw new Error(
-          `Tiebreak terdeteksi pada batas kuota juara (${tiedCandidates.length} karya memiliki ${tiedScore} Stars). Putaran tiebreak telah diaktifkan.`
-        );
-      }
-    }
-
-    // 6. Persist Final Results
-    await tx.delete(challengeResults).where(eq(challengeResults.challengeId, challengeId));
-
-    // Map Community Podium Winners
-    const championSubmissionId = mainRoundStars[0]?.submissionId;
-    const assignedJurySlotMap = new Map(juryAssignments.map((ja) => [ja.submissionId, ja.winnerSlotId]));
-
-    for (let i = 0; i < mainRoundStars.length; i++) {
-      const sub = mainRoundStars[i];
-      const rank = i + 1;
-      const matchingCommunitySlot = communitySlots.find((s) => s.rank === rank);
-      const assignedJurySlotId = assignedJurySlotMap.get(sub.submissionId);
-
-      // Community Champion cannot receive a Jury Award Slot per Blueprint
-      let winnerSlotId: string | null = null;
-      let awardType = "community_rank";
-
-      if (matchingCommunitySlot) {
-        winnerSlotId = matchingCommunitySlot.id;
-      } else if (assignedJurySlotId && sub.submissionId !== championSubmissionId) {
-        winnerSlotId = assignedJurySlotId;
-        awardType = "jury_award";
-      }
-
-      await tx.insert(challengeResults).values({
-        challengeId,
-        submissionId: sub.submissionId,
-        winnerSlotId,
-        finalRank: matchingCommunitySlot ? rank : null,
-        awardType,
-        totalCommunityStars: sub.totalStars,
-        isPublished: true,
-      });
-
-      if (rank <= 3) {
-        await createNotification({
-          userId: sub.artistUserId,
-          type: "challenge_winner",
-          title: `Selamat! Juara #${rank} di ${challenge.title}`,
-          body: `Karya Anda meraih peringkat #${rank} dengan total ${sub.totalStars} Stars komunitas.`,
-          actionUrl: `/challenges/${challenge.slug}/results`,
-        });
-      }
-    }
-
-    // 7. Authoritatively Finish Challenge
-    await tx
-      .update(challenges)
-      .set({ status: "finished", updatedAt: new Date() })
-      .where(eq(challenges.id, challengeId));
-
-    await tx.insert(auditLogs).values({
-      actorId: user.id,
-      action: "challenge.finalize",
-      targetType: "challenge",
-      targetId: challengeId,
-      reason: "Hasil resmi challenge berhasil difinalisasi.",
-    });
-
+  if (challenge) {
     revalidatePath(`/challenges/${challenge.slug}/results`);
     revalidatePath(`/challenges/${challenge.slug}`);
-    revalidatePath("/challenges");
+  }
+  revalidatePath("/admin/challenges");
+  revalidatePath("/challenges");
 
-    return { success: true };
-  });
+  return result;
+}
+
+/**
+ * Deterministic Challenge Finalization Wrapper (Executes Compute -> Publish)
+ */
+export async function finalizeChallengeResultsAction(challengeId: string) {
+  const computeResult = await computeChallengeResultsAction(challengeId);
+  
+  if (computeResult.outcome === "tiebreak_created") {
+    return { success: true, outcome: "tiebreak_created", votingRoundId: computeResult.votingRoundId };
+  }
+
+  if (computeResult.outcome === "review_ready") {
+    return await publishChallengeResultsAction(challengeId);
+  }
+
+  return computeResult;
 }

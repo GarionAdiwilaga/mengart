@@ -14,7 +14,9 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed:accounts": "tsx src/db/seedTestAccounts.ts",
-    "worker:media": "node dist/worker.mjs"
+    "worker:media": "node dist/worker.mjs",
+    "test:migrate": "tsx scripts/verifyMigrations.ts",
+    "test:all": "tsx scripts/verifyMigrations.ts && tsx src/lib/__tests__/testGate1SecurityAndIntegrity.ts && tsx src/lib/__tests__/testConcurrency.ts && tsx src/lib/__tests__/testPhase2Pipeline.ts && tsx src/lib/__tests__/testPhase3Challenges.ts && tsx src/lib/__tests__/testPhase4Voting.ts && tsx src/lib/__tests__/testPhase5Community.ts && tsx src/lib/__tests__/testPhase6HistoricalAndMedia.ts && tsx src/lib/__tests__/testAuthAndMerging.ts && tsx src/lib/__tests__/testInvites.ts && tsx src/lib/__tests__/testModernizedArchitecture.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.23",

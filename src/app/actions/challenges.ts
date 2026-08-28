@@ -332,210 +332,111 @@ export async function createOrUpdateChallengeAction(formData: FormData) {
   }
 }
 
-/**
- * Blueprint 2.1 Strict Legal Transition Matrix
- */
-const LEGAL_TRANSITIONS: Record<string, string[]> = {
-  draft: ["scheduled", "cancelled"],
-  scheduled: ["submission_open", "cancelled", "paused"],
-  submission_open: ["submission_locked", "cancelled", "paused"],
-  submission_locked: ["voting_open", "cancelled", "paused"],
-  voting_open: ["tiebreak_open", "jury_selection_open", "review", "cancelled", "paused"],
-  tiebreak_open: ["jury_selection_open", "review", "cancelled", "paused"],
-  jury_selection_open: ["review", "cancelled", "paused"],
-  review: ["finished", "cancelled", "paused"],
-  paused: [], // Resolved dynamically from pausedPreviousStatus
-  finished: [],
-  cancelled: [],
-};
+import {
+  transitionChallengeStatusService,
+  revokeChallengeResultsService,
+} from "@/lib/services/challengeService";
 
 export async function transitionChallengeStatusAction(
   challengeId: string,
   newStatus: EffectiveChallengeStatus,
-  reason?: string
+  reason?: string,
+  options?: {
+    submissionDeadline?: Date | string | null;
+    votingDeadline?: Date | string | null;
+  }
 ) {
   const user = await requireAuth("/login");
   if (user.role !== "admin" && user.role !== "moderator") {
     throw new Error("Tidak memiliki izin mengubah status challenge.");
   }
 
-  return db.transaction(async (tx) => {
-    const [challenge] = await tx
-      .select()
-      .from(challenges)
-      .where(eq(challenges.id, challengeId))
-      .for("update")
-      .limit(1);
-
-    if (!challenge) throw new Error("Challenge tidak ditemukan.");
-
-    const currentStatus = challenge.status;
-    let allowedTransitions = LEGAL_TRANSITIONS[currentStatus] || [];
-
-    if (currentStatus === "paused") {
-      allowedTransitions = challenge.pausedPreviousStatus
-        ? [challenge.pausedPreviousStatus, "cancelled"]
-        : ["cancelled"];
-    }
-
-    if (!allowedTransitions.includes(newStatus)) {
-      throw new Error(
-        `Transisi status ilegal: dari "${currentStatus}" ke "${newStatus}". Transisi yang diizinkan: ${
-          allowedTransitions.length > 0 ? allowedTransitions.join(", ") : "Tidak ada (status terminal)"
-        }.`
-      );
-    }
-
-    // 1. Entering VOTING_OPEN: Create and Freeze Main Voting Round Candidates
-    if (newStatus === "voting_open") {
-      const activeSubmissions = await tx
-        .select({ id: challengeSubmissions.id })
-        .from(challengeSubmissions)
-        .where(
-          and(
-            eq(challengeSubmissions.challengeId, challengeId),
-            eq(challengeSubmissions.submissionStatus, "submitted")
-          )
-        );
-
-      const [round] = await tx
-        .insert(challengeVotingRounds)
-        .values({
-          challengeId,
-          roundType: "main",
-          roundSequence: 1,
-          status: "open",
-          startsAt: new Date(),
-          deadline: challenge.votingDeadline,
-          starsPerMember: challenge.starsPerMember,
-        })
-        .returning();
-
-      if (activeSubmissions.length > 0) {
-        await tx.insert(challengeVotingRoundCandidates).values(
-          activeSubmissions.map((sub) => ({
-            votingRoundId: round.id,
-            submissionId: sub.id,
-          }))
-        );
-      }
-    }
-
-    // 2. Update status
-    await tx
-      .update(challenges)
-      .set({
-        status: newStatus as any,
-        cancellationReason: newStatus === "cancelled" ? reason || "Dibatalkan oleh moderator/admin" : null,
-        updatedAt: new Date(),
-      })
-      .where(eq(challenges.id, challengeId));
-
-    // 3. Write Audit Log
-    await tx.insert(auditLogs).values({
-      actorId: user.id,
-      action: `challenge.transition_${newStatus}`,
-      targetType: "challenge",
-      targetId: challengeId,
-      reason: reason || `Status transisi dari ${currentStatus} ke ${newStatus}`,
-    });
-
-    revalidatePath(`/challenges/${challenge.slug}`);
-    revalidatePath("/admin/challenges");
-    revalidatePath("/challenges");
-
-    return { success: true };
+  const result = await db.transaction(async (tx) => {
+    return transitionChallengeStatusService(
+      tx,
+      { userId: user.id, role: user.role },
+      challengeId,
+      newStatus,
+      { reason, ...options }
+    );
   });
+
+  const [challenge] = await db
+    .select({ slug: challenges.slug })
+    .from(challenges)
+    .where(eq(challenges.id, challengeId))
+    .limit(1);
+
+  if (challenge) {
+    revalidatePath(`/challenges/${challenge.slug}`);
+  }
+  revalidatePath("/admin/challenges");
+  revalidatePath("/challenges");
+
+  return result;
 }
 
 export async function pauseChallengeAction(challengeId: string, reason: string) {
-  const user = await requireAuth("/login");
-  if (user.role !== "admin" && user.role !== "moderator") {
-    throw new Error("Tidak memiliki izin.");
-  }
-
-  if (!reason?.trim()) {
-    throw new Error("Alasan penangguhan (pause) wajib diisi.");
-  }
-
-  return db.transaction(async (tx) => {
-    const [challenge] = await tx
-      .select()
-      .from(challenges)
-      .where(eq(challenges.id, challengeId))
-      .for("update")
-      .limit(1);
-
-    if (!challenge) throw new Error("Challenge tidak ditemukan.");
-    if (challenge.status === "finished" || challenge.status === "cancelled" || challenge.status === "paused") {
-      throw new Error(`Challenge tidak dapat dijeda dari status "${challenge.status}".`);
-    }
-
-    await tx
-      .update(challenges)
-      .set({
-        pausedPreviousStatus: challenge.status,
-        status: "paused",
-        cancellationReason: reason.trim(),
-        updatedAt: new Date(),
-      })
-      .where(eq(challenges.id, challengeId));
-
-    await tx.insert(auditLogs).values({
-      actorId: user.id,
-      action: "challenge.pause",
-      targetType: "challenge",
-      targetId: challengeId,
-      reason: `Dijeda dari ${challenge.status}: ${reason}`,
-    });
-
-    revalidatePath(`/challenges/${challenge.slug}`);
-    revalidatePath("/admin/challenges");
-    return { success: true };
-  });
+  return transitionChallengeStatusAction(challengeId, "paused", reason);
 }
 
-export async function resumeChallengeAction(challengeId: string) {
+export async function resumeChallengeAction(
+  challengeId: string,
+  options?: {
+    submissionDeadline?: Date | string | null;
+    votingDeadline?: Date | string | null;
+  }
+) {
   const user = await requireAuth("/login");
   if (user.role !== "admin" && user.role !== "moderator") {
     throw new Error("Tidak memiliki izin.");
   }
 
-  return db.transaction(async (tx) => {
-    const [challenge] = await tx
-      .select()
-      .from(challenges)
-      .where(eq(challenges.id, challengeId))
-      .for("update")
-      .limit(1);
+  const [challenge] = await db
+    .select()
+    .from(challenges)
+    .where(eq(challenges.id, challengeId))
+    .limit(1);
 
-    if (!challenge) throw new Error("Challenge tidak ditemukan.");
-    if (challenge.status !== "paused" || !challenge.pausedPreviousStatus) {
-      throw new Error("Challenge tidak dalam status jeda (paused).");
-    }
+  if (!challenge || challenge.status !== "paused" || !challenge.pausedPreviousStatus) {
+    throw new Error("Challenge tidak dalam status jeda (paused).");
+  }
 
-    const resumeStatus = challenge.pausedPreviousStatus;
+  return transitionChallengeStatusAction(
+    challengeId,
+    challenge.pausedPreviousStatus,
+    "Melanjutkan challenge dari status jeda",
+    options
+  );
+}
 
-    await tx
-      .update(challenges)
-      .set({
-        status: resumeStatus,
-        pausedPreviousStatus: null,
-        cancellationReason: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(challenges.id, challengeId));
+export async function revokeChallengeResultsAction(challengeId: string, reason: string) {
+  const user = await requireAuth("/login");
+  if (user.role !== "admin" && user.role !== "moderator") {
+    throw new Error("Hanya administrator atau moderator yang dapat mencabut hasil challenge.");
+  }
 
-    await tx.insert(auditLogs).values({
-      actorId: user.id,
-      action: "challenge.resume",
-      targetType: "challenge",
-      targetId: challengeId,
-      reason: `Melanjutkan challenge kembali ke status ${resumeStatus}`,
-    });
-
-    revalidatePath(`/challenges/${challenge.slug}`);
-    revalidatePath("/admin/challenges");
-    return { success: true, status: resumeStatus };
+  const result = await db.transaction(async (tx) => {
+    return revokeChallengeResultsService(
+      tx,
+      { userId: user.id, role: user.role },
+      challengeId,
+      reason
+    );
   });
+
+  const [challenge] = await db
+    .select({ slug: challenges.slug })
+    .from(challenges)
+    .where(eq(challenges.id, challengeId))
+    .limit(1);
+
+  if (challenge) {
+    revalidatePath(`/challenges/${challenge.slug}/results`);
+    revalidatePath(`/challenges/${challenge.slug}`);
+  }
+  revalidatePath("/admin/challenges");
+  revalidatePath("/challenges");
+
+  return result;
 }

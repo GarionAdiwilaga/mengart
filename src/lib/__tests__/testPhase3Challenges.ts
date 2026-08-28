@@ -13,7 +13,8 @@ import { eq, and } from "drizzle-orm";
 import sharp from "sharp";
 import fs from "fs/promises";
 import crypto from "crypto";
-import { getEffectiveChallengeStatus, getChallengeCandidates } from "@/lib/challenges";
+import { getEffectiveChallengeStatus, getChallengeCandidates, isChallengePhaseDeadlinePassed } from "@/lib/challenges";
+import { transitionChallengeStatusService } from "@/lib/services/challengeService";
 import { resolveStoragePath, ensureStorageDirectories } from "@/lib/storage";
 
 async function runPhase3Tests() {
@@ -81,12 +82,19 @@ async function runPhase3Tests() {
     })
     .returning();
 
-  // Check dynamic state calculator
-  const dynamicStatus = getEffectiveChallengeStatus(challenge);
-  console.log(`✓ Challenge created: ID=${challenge.id}, Static Status=${challenge.status}, Dynamic Effective Status=${dynamicStatus}`);
+  // Transition to submission_open via challengeService
+  await transitionChallengeStatusService(
+    db,
+    { userId: adminUser.id, role: "admin" },
+    challenge.id,
+    "submission_open"
+  );
+  const [updatedChallenge] = await db.select().from(challenges).where(eq(challenges.id, challenge.id));
+  const effectiveStatus = getEffectiveChallengeStatus(updatedChallenge);
+  console.log(`✓ Challenge transitioned: ID=${challenge.id}, Status=${effectiveStatus}`);
 
-  if (dynamicStatus !== "submission_open") {
-    throw new Error(`Dynamic status should be submission_open, got ${dynamicStatus}`);
+  if (effectiveStatus !== "submission_open") {
+    throw new Error(`Status should be submission_open, got ${effectiveStatus}`);
   }
 
   // Test 3: Member Uploads Artwork Version & Submits to Challenge
@@ -213,17 +221,14 @@ async function runPhase3Tests() {
   // Test 6: Authoritative Deadline Lock
   console.log("\n[Test 6] Testing deadline lock behavior...");
   const pastDeadline = new Date(now.getTime() - 1000);
-  const lockedDynamicStatus = getEffectiveChallengeStatus({
-    status: "submission_open",
-    submissionStartsAt: subStart,
-    submissionDeadline: pastDeadline,
-    votingStartsAt: null,
-    votingDeadline: null,
-  });
+  const isPassed = isChallengePhaseDeadlinePassed(
+    { submissionDeadline: pastDeadline },
+    "submission"
+  );
 
-  console.log(`✓ Past deadline dynamic status: ${lockedDynamicStatus}`);
-  if (lockedDynamicStatus !== "submission_locked") {
-    throw new Error("Dynamic status after deadline should be submission_locked");
+  console.log(`✓ Past deadline detection: ${isPassed}`);
+  if (!isPassed) {
+    throw new Error("isChallengePhaseDeadlinePassed should return true for past deadline");
   }
 
   console.log("\n--- All Phase 3 Challenge Submission Engine Tests Passed Successfully! ---");

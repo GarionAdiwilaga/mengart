@@ -23,69 +23,40 @@ export type EffectiveChallengeStatus =
   | "review"
   | "finished"
   | "paused"
-  | "cancelled";
+  | "cancelled"
+  | "results_revoked";
 
 /**
- * Authoritative lifecycle calculator based on server clock (WITA / UTC)
+ * Authoritative lifecycle status: Persisted database status is single source of truth.
  */
 export function getEffectiveChallengeStatus(challenge: {
   status: EffectiveChallengeStatus;
-  submissionStartsAt: Date | null;
-  submissionDeadline: Date | null;
-  votingStartsAt: Date | null;
-  votingDeadline: Date | null;
+  submissionStartsAt?: Date | null;
+  submissionDeadline?: Date | null;
+  votingStartsAt?: Date | null;
+  votingDeadline?: Date | null;
 }): EffectiveChallengeStatus {
-  if (challenge.status === "draft" || challenge.status === "paused" || challenge.status === "cancelled" || challenge.status === "finished" || challenge.status === "review" || challenge.status === "tiebreak_open" || challenge.status === "jury_selection_open") {
-    return challenge.status;
-  }
-
-  const now = new Date();
-
-  // If scheduled, check if submission window has opened
-  if (challenge.status === "scheduled") {
-    if (challenge.submissionStartsAt && now >= new Date(challenge.submissionStartsAt)) {
-      if (challenge.submissionDeadline && now >= new Date(challenge.submissionDeadline)) {
-        return "submission_locked";
-      }
-      return "submission_open";
-    }
-    return "scheduled";
-  }
-
-  // If submission_open, check if deadline has passed
-  if (challenge.status === "submission_open") {
-    if (challenge.submissionDeadline && now >= new Date(challenge.submissionDeadline)) {
-      if (challenge.votingStartsAt && now >= new Date(challenge.votingStartsAt)) {
-        if (challenge.votingDeadline && now >= new Date(challenge.votingDeadline)) {
-          return "review";
-        }
-        return "voting_open";
-      }
-      return "submission_locked";
-    }
-    return "submission_open";
-  }
-
-  // If submission_locked, check if voting window opened
-  if (challenge.status === "submission_locked") {
-    if (challenge.votingStartsAt && now >= new Date(challenge.votingStartsAt)) {
-      if (challenge.votingDeadline && now >= new Date(challenge.votingDeadline)) {
-        return "review";
-      }
-      return "voting_open";
-    }
-    return "submission_locked";
-  }
-
-  // If voting_open, check if voting deadline passed
-  if (challenge.status === "voting_open") {
-    if (challenge.votingDeadline && now >= new Date(challenge.votingDeadline)) {
-      return "review";
-    }
-    return "voting_open";
-  }
-
   return challenge.status;
+}
+
+/**
+ * Helper to inspect whether scheduled transitions or phase deadlines have passed
+ */
+export function isChallengePhaseDeadlinePassed(
+  challenge: {
+    submissionDeadline?: Date | null;
+    votingDeadline?: Date | null;
+  },
+  phase: "submission" | "voting"
+): boolean {
+  const now = new Date();
+  if (phase === "submission" && challenge.submissionDeadline) {
+    return now >= new Date(challenge.submissionDeadline);
+  }
+  if (phase === "voting" && challenge.votingDeadline) {
+    return now >= new Date(challenge.votingDeadline);
+  }
+  return false;
 }
 
 /**

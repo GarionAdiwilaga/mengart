@@ -147,7 +147,15 @@
 6. **Authenticated AES-256 + HMAC-SHA256 Encrypted Backups:** `scripts/backup.sh` and `scripts/restore.sh` authenticate integrity with HMAC-SHA256 signatures, decrypt AES-256-CBC archives, and perform post-restoration database table record counts and storage file checks.
 7. **Fail-Closed Public Media Route:** `/api/media/public/[key]` strictly checks artwork ACL and returns 404 for unknown/unregistered keys.
 8. **Independent Worker Bundle:** Bundled via `esbuild` to `dist/worker.mjs` with runtime external dependencies and dynamic concurrency control.
-**Business Rule:** Preserves strict deterministic execution, zero race conditions, and complete data integrity across voting, jury awards, and media distribution.
-**Reason:** Addressed all 17 refined architectural requirements for production deployment approval.
+### Blueprint 2.1 Release Gate A: Database Migration Reproducibility, Lifecycle Authority & Two-Stage Finalization
+**Decision:** 
+1. Codify all Blueprint 2.1 schemas into explicit committed Drizzle migration `drizzle/0007_perfect_sunspot.sql`, and verify with automated two-way migration tests (`scripts/verifyMigrations.ts`) testing fresh empty database migration and legacy upgrade with data backfill.
+2. Establish persisted database status as the single authoritative source of truth (`getEffectiveChallengeStatus`). Remove clock-only status synthesizing to prevent unmaterialized operational states.
+3. Implement configuration-aware state machine matrix supporting `vote_and_jury`, `vote_only`, `jury_only`, and `showcase_only` modes.
+4. Require comprehensive deadline viability validations upon resuming paused challenges, rejecting resumes where deadlines elapsed without explicit extensions.
+5. Add `results_revoked` status to `challenge_status` enum, with legal transition `finished -> results_revoked -> review -> finished`, results visibility suppression, and audit logging.
+6. Decouple finalization into two distinct production services: `computeChallengeResultsService` (computes tallies and transitions to `review`) and `publishChallengeResultsService` (reviews, triggers notifications, and transitions `review -> finished`).
+**Business Rule:** Production deployments must never use `db:push`. State transitions must enforce mode-aware paths, viable deadlines, and explicit moderator review before final publication.
+**Reason:** Resolves QA findings QA-P0-001, QA-P0-006, QA-P0-007, QA-P0-008, QA-P1-007, and QA-P1-008.
 
 

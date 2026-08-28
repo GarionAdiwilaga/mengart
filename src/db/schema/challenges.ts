@@ -27,6 +27,7 @@ export const challengeStatusEnum = pgEnum("challenge_status", [
   "finished",
   "paused",
   "cancelled",
+  "results_revoked",
 ]);
 
 export const awardModeEnum = pgEnum("award_mode", [
