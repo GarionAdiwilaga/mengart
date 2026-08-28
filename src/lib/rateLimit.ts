@@ -87,9 +87,13 @@ export async function checkRateLimit(
         throw err;
       }
     }
+  } else if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "Production environment requires an active Redis instance. Process-memory fallback is strictly prohibited in production."
+    );
   }
 
-  // Memory fallback for dev and tests
+  // Memory fallback for dev and tests only
   let record = memoryStore.get(key);
   if (!record) {
     record = { timestamps: [] };

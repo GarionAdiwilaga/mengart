@@ -25,10 +25,10 @@ echo "================================================================="
 DB_DUMP_FILE="${BACKUP_DIR}/mengart_db_${TIMESTAMP}.sql.gz"
 echo "-> Dumping PostgreSQL database from ${DB_CONTAINER}..."
 if docker ps --format '{{.Names}}' | grep -q "^${DB_CONTAINER}$"; then
-  docker exec -t "${DB_CONTAINER}" pg_dump -U "${POSTGRES_USER}" "${POSTGRES_DB}" | gzip > "${DB_DUMP_FILE}"
+  docker exec -t "${DB_CONTAINER}" pg_dump -U "${POSTGRES_USER}" --clean --if-exists "${POSTGRES_DB}" | gzip > "${DB_DUMP_FILE}"
 else
   echo "⚠️ Container ${DB_CONTAINER} not found, attempting local pg_dump..."
-  pg_dump -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" | gzip > "${DB_DUMP_FILE}"
+  pg_dump -U "${POSTGRES_USER}" --clean --if-exists -d "${POSTGRES_DB}" | gzip > "${DB_DUMP_FILE}"
 fi
 echo "✓ Database dumped: ${DB_DUMP_FILE} ($(du -h "${DB_DUMP_FILE}" | cut -f1))"
 
@@ -46,18 +46,33 @@ fi
 MANIFEST_FILE="${BACKUP_DIR}/manifest_${TIMESTAMP}.sha256"
 echo "-> Generating SHA-256 integrity manifest..."
 cd "${BACKUP_DIR}"
-sha256sum "$(basename "${DB_DUMP_FILE}")" > "${MANIFEST_FILE}"
-if [ -f "${MEDIA_TAR_FILE}" ]; then
-  sha256sum "$(basename "${MEDIA_TAR_FILE}")" >> "${MANIFEST_FILE}"
+sha256sum "$(basename "${DB_DUMP_FILE}")" > "$(basename "${MANIFEST_FILE}")"
+if [ -f "$(basename "${MEDIA_TAR_FILE}")" ]; then
+  sha256sum "$(basename "${MEDIA_TAR_FILE}")" >> "$(basename "${MANIFEST_FILE}")"
 fi
 cd - > /dev/null
 echo "✓ Integrity checksums written to ${MANIFEST_FILE}"
 
-# 4. Retention Policy: Prune backups older than RETENTION_DAYS
-echo "-> Pruning backups older than ${RETENTION_DAYS} days..."
-find "${BACKUP_DIR}" -type f -name "mengart_*" -mtime "+${RETENTION_DAYS}" -delete
-find "${BACKUP_DIR}" -type f -name "manifest_*" -mtime "+${RETENTION_DAYS}" -delete
-echo "✓ Retention cleanup complete."
+# 5. Off-host / Remote Replication (Optional)
+if [ -n "${REMOTE_BACKUP_DEST:-}" ]; then
+  echo "-> Replicating backup to off-host destination: ${REMOTE_BACKUP_DEST}..."
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -avz "${DB_DUMP_FILE}" "${MANIFEST_FILE}" ${MEDIA_TAR_FILE:+"${MEDIA_TAR_FILE}"} "${REMOTE_BACKUP_DEST}/"
+    echo "✓ Off-host rsync replication complete."
+  else
+    echo "⚠️ rsync not found, skipping remote sync."
+  fi
+elif [ -n "${AWS_S3_BUCKET:-}" ]; then
+  echo "-> Replicating backup to AWS S3: ${AWS_S3_BUCKET}..."
+  if command -v aws >/dev/null 2>&1; then
+    aws s3 cp "${DB_DUMP_FILE}" "s3://${AWS_S3_BUCKET}/backups/"
+    aws s3 cp "${MANIFEST_FILE}" "s3://${AWS_S3_BUCKET}/backups/"
+    if [ -f "${MEDIA_TAR_FILE}" ]; then
+      aws s3 cp "${MEDIA_TAR_FILE}" "s3://${AWS_S3_BUCKET}/backups/"
+    fi
+    echo "✓ Off-host AWS S3 upload complete."
+  fi
+fi
 
 echo "================================================================="
 echo "🎉 Mengart Backup Finished Successfully: ${TIMESTAMP}"

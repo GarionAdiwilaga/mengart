@@ -76,7 +76,7 @@ export function extractInviteToken(input: string): string {
   return trimmed
     .split("?")[0]
     .split("#")[0]
-    .replace(/^https?:\/\/[^\/]+\//, "")
+    .replace(/^https?:\/\/[^/]+\//, "")
     .replace(/^invite\//, "")
     .trim();
 }

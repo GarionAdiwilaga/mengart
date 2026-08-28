@@ -54,7 +54,7 @@ export function VotingWorkspace({
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   // Recalculate remaining stars whenever allocations change
-  const updateStars = (submissionId: string, delta: number) => {
+  const updateStars = useCallback((submissionId: string, delta: number) => {
     if (!isLoggedIn) {
       setFeedback({ type: "error", text: "Silakan masuk terlebih dahulu untuk menggunakan hak suara Stars." });
       return;
@@ -83,7 +83,7 @@ export function VotingWorkspace({
     setAllocations(newAllocations);
     setRemainingStars(maxStars - newTotalAllocated);
     setFeedback(null);
-  };
+  }, [isLoggedIn, candidates, allocations, remainingStars, maxStars]);
 
   const handleReset = async () => {
     if (!confirm("Reset seluruh alokasi Stars Anda untuk challenge ini?")) return;
@@ -137,7 +137,7 @@ export function VotingWorkspace({
         }
       }
     },
-    [viewMode, candidates, focusIndex, remainingStars, allocations]
+    [viewMode, candidates, focusIndex, updateStars]
   );
 
   useEffect(() => {

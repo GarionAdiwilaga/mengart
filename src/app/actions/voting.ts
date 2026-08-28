@@ -225,14 +225,33 @@ export async function submitJuryScoreAction(
     throw new Error(juryPolicy.reason || "Anda tidak diizinkan memberikan nilai juri untuk karya ini.");
   }
 
-  // 2. Validate Score bounds if provided
+  // 2. Validate WinnerSlotId if provided
+  if (winnerSlotId) {
+    const [slot] = await db
+      .select()
+      .from(challengeWinnerSlots)
+      .where(
+        and(
+          eq(challengeWinnerSlots.id, winnerSlotId),
+          eq(challengeWinnerSlots.challengeId, challengeId),
+          eq(challengeWinnerSlots.slotType, "jury_award")
+        )
+      )
+      .limit(1);
+
+    if (!slot) {
+      throw new Error("Penetapan slot juara dewan juri tidak valid untuk challenge ini.");
+    }
+  }
+
+  // 3. Validate Score bounds if provided
   if (score !== undefined && score !== null) {
     if (score < 1 || score > 100) {
       throw new Error("Skor juri harus berada di antara 1 dan 100.");
     }
   }
 
-  // 3. Upsert Jury Score
+  // 4. Upsert Jury Score
   const [existingScore] = await db
     .select()
     .from(challengeJuryScores)
@@ -317,7 +336,7 @@ export async function finalizeChallengeResultsAction(challengeId: string) {
     }
   }
 
-  // 3. Tabulate total community stars for all active submissions deterministically
+  // 3. Tabulate total community stars for all active submissions
   const submissionStars = await db
     .select({
       submissionId: challengeSubmissions.id,
@@ -343,7 +362,7 @@ export async function finalizeChallengeResultsAction(challengeId: string) {
       asc(challengeSubmissions.id)
     );
 
-  // 4. Map Jury Scores per submission (average score and designated winner slots)
+  // 4. Map Jury Scores per submission
   const juryScoresBySubmission = new Map<string, { avgScore: number; count: number; designatedSlotId?: string }>();
   for (const js of juryScores) {
     const prev = juryScoresBySubmission.get(js.submissionId) || { avgScore: 0, count: 0 };
@@ -357,19 +376,29 @@ export async function finalizeChallengeResultsAction(challengeId: string) {
     });
   }
 
-  // 5. Detect Cutoff Ties
+  // 5. Detect Cutoff Ties BEFORE concluding finalization
   const communityCutoffCount = communitySlots.length;
   if (
     communityCutoffCount > 0 &&
     submissionStars.length > communityCutoffCount &&
-    challenge.tieStrategy === "tiebreak_round"
+    challenge.tieStrategy === "tiebreak_round" &&
+    challenge.status !== "finished"
   ) {
     const cutoffSubmission = submissionStars[communityCutoffCount - 1];
     const nextSubmission = submissionStars[communityCutoffCount];
 
     if (cutoffSubmission.totalStars === nextSubmission.totalStars && cutoffSubmission.totalStars > 0) {
-      // Automatic Tiebreak Detected across boundary
-      console.log(`Tiebreak detected across slot boundary at rank ${communityCutoffCount}`);
+      // Transition challenge to tiebreak_open so community can vote in tiebreak round
+      await db
+        .update(challenges)
+        .set({ status: "tiebreak_open", updatedAt: new Date() })
+        .where(eq(challenges.id, challengeId));
+
+      revalidatePath(`/challenges/${challenge.slug}`);
+      revalidatePath("/challenges");
+      throw new Error(
+        `Tiebreak terdeteksi pada batas kuota juara (Peringkat #${communityCutoffCount} dan #${communityCutoffCount + 1} sama-sama meraih ${cutoffSubmission.totalStars} Stars). Status challenge dialihkan ke putaran tiebreak.`
+      );
     }
   }
 

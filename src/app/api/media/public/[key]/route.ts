@@ -3,6 +3,11 @@ import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
 import { resolveStoragePath } from "@/lib/storage";
+import { auth } from "@/auth";
+import { db } from "@/db";
+import { artworkVersions, artworks } from "@/db/schema";
+import { eq, or } from "drizzle-orm";
+import { canViewArtwork } from "@/lib/policy";
 
 export async function GET(
   request: NextRequest,
@@ -21,6 +26,49 @@ export async function GET(
       }
     } catch {
       return new NextResponse("Media derivative not found", { status: 404 });
+    }
+
+    // 1. Artwork Visibility ACL Resolution
+    // Resolve key if it corresponds to a public, thumbnail, or poster derivative
+    const [versionRow] = await db
+      .select({
+        artworkId: artworks.id,
+        userId: artworks.userId,
+        audience: artworks.audience,
+        publicationStatus: artworks.publicationStatus,
+        deletedAt: artworks.deletedAt,
+      })
+      .from(artworkVersions)
+      .innerJoin(artworks, eq(artworks.id, artworkVersions.artworkId))
+      .where(
+        or(
+          eq(artworkVersions.publicStorageKey, safeKey),
+          eq(artworkVersions.thumbnailStorageKey, safeKey),
+          eq(artworkVersions.posterStorageKey, safeKey)
+        )
+      )
+      .limit(1);
+
+    if (versionRow) {
+      const session = await auth();
+      const isAllowed = canViewArtwork(session?.user as any, {
+        id: versionRow.artworkId,
+        userId: versionRow.userId,
+        audience: versionRow.audience as any,
+        publicationStatus: versionRow.publicationStatus as any,
+        deletedAt: versionRow.deletedAt,
+      });
+
+      if (!isAllowed) {
+        if (!session?.user) {
+          return new NextResponse("Unauthorized: Akses ke media ini memerlukan autentikasi member.", {
+            status: 401,
+          });
+        }
+        return new NextResponse("Forbidden: Anda tidak memiliki hak akses untuk melihat karya ini.", {
+          status: 403,
+        });
+      }
     }
 
     const ext = path.extname(safeKey).toLowerCase();
@@ -72,7 +120,7 @@ export async function GET(
           "Accept-Ranges": "bytes",
           "Content-Length": chunkSize.toString(),
           "Content-Type": contentType,
-          "Cache-Control": "public, max-age=31536000, immutable",
+          "Cache-Control": versionRow?.audience === "public" ? "public, max-age=31536000, immutable" : "private, no-cache",
           "X-Content-Type-Options": "nosniff",
         },
       });
@@ -97,7 +145,7 @@ export async function GET(
         "Content-Length": fileSize.toString(),
         "Content-Type": contentType,
         "Accept-Ranges": "bytes",
-        "Cache-Control": "public, max-age=31536000, immutable",
+        "Cache-Control": versionRow?.audience === "public" ? "public, max-age=31536000, immutable" : "private, no-cache",
         "X-Content-Type-Options": "nosniff",
       },
     });

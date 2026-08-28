@@ -5,13 +5,14 @@ import {
   challengeSubmissions,
   challengeBallots,
   challengeBallotStars,
+  challengeJuryAssignments,
   challengeJuryScores,
   challengeResults,
   users,
   profiles,
 } from "@/db/schema";
 import { eq, and, sql } from "drizzle-orm";
-import { castOrUpdateBallotAction } from "@/app/actions/voting";
+import { finalizeChallengeResultsAction } from "@/app/actions/voting";
 
 async function runConcurrencyTests() {
   console.log("\n=================================================================");
@@ -109,11 +110,9 @@ async function runConcurrencyTests() {
   console.log("\n[Test 2] Simulating 20 Concurrent Ballot Writes against same ballot...");
   
   const concurrentWrites = Array.from({ length: 20 }, async (_, i) => {
-    // Alternate allocations: either [sub1: 2, sub2: 1] or [sub1: 1, sub2: 2] (total 3 stars)
     const starsForSub1 = (i % 2 === 0) ? 2 : 1;
     const starsForSub2 = 3 - starsForSub1;
 
-    // Transactional Update matching castOrUpdateBallotAction atomic block with row locking
     return db.transaction(async (tx) => {
       const [existingBallot] = await tx
         .select()
@@ -125,7 +124,7 @@ async function runConcurrencyTests() {
             eq(challengeBallots.roundType, "main")
           )
         )
-        .for("update") // Row-level lock against dirty concurrent writes
+        .for("update")
         .limit(1);
 
       const ballotId = existingBallot.id;
@@ -179,11 +178,86 @@ async function runConcurrencyTests() {
 
   console.log(`✓ Invariant preserved: Exactly 1 ballot exists with total ${totalFinalStars} stars allocated.`);
 
-  // 3. Concurrency Test: Simultaneous Challenge Finalization Idempotence
-  console.log("\n[Test 3] Simulating Simultaneous Challenge Finalizations...");
+  // 3. Concurrency Test: Concurrent Jury Writes with Row-Level Locks
+  console.log("\n[Test 3] Simulating 10 Concurrent Jury Writes for same submission...");
+  const [juryUser] = await db
+    .insert(users)
+    .values({ email: `jury_conc_${suffix}@mengart.local`, role: "member", membershipStatus: "active" })
+    .returning();
+
+  const [juryProf] = await db
+    .insert(profiles)
+    .values({ userId: juryUser.id, displayName: "Jury Conc", slug: `jury-conc-${suffix}` })
+    .returning();
+
+  await db.insert(challengeJuryAssignments).values({
+    challengeId: challenge.id,
+    userId: juryUser.id,
+    profileId: juryProf.id,
+  });
+
+  // Pre-insert initial jury score
+  const [initialJuryScore] = await db
+    .insert(challengeJuryScores)
+    .values({
+      challengeId: challenge.id,
+      juryUserId: juryUser.id,
+      submissionId: sub1.id,
+      score: 50,
+      critiqueNotes: "Initial evaluation",
+    })
+    .returning();
+
+  const concurrentJuryWrites = Array.from({ length: 10 }, async (_, idx) => {
+    const assignedScore = 80 + idx; // e.g. 80..89
+    return db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select()
+        .from(challengeJuryScores)
+        .where(
+          and(
+            eq(challengeJuryScores.challengeId, challenge.id),
+            eq(challengeJuryScores.juryUserId, juryUser.id),
+            eq(challengeJuryScores.submissionId, sub1.id)
+          )
+        )
+        .for("update")
+        .limit(1);
+
+      await tx
+        .update(challengeJuryScores)
+        .set({
+          score: assignedScore,
+          critiqueNotes: `Updated evaluation iteration ${idx}`,
+          updatedAt: new Date(),
+        })
+        .where(eq(challengeJuryScores.id, existing.id));
+    });
+  });
+
+  await Promise.all(concurrentJuryWrites);
+  console.log("✓ 10 concurrent jury writes completed cleanly under row-level locking.");
+
+  const finalJuryScores = await db
+    .select()
+    .from(challengeJuryScores)
+    .where(
+      and(
+        eq(challengeJuryScores.challengeId, challenge.id),
+        eq(challengeJuryScores.juryUserId, juryUser.id),
+        eq(challengeJuryScores.submissionId, sub1.id)
+      )
+    );
+
+  if (finalJuryScores.length !== 1) {
+    throw new Error(`Duplicate jury scores detected! Expected 1, found ${finalJuryScores.length}`);
+  }
+  console.log(`✓ Invariant preserved: Exactly 1 jury score record maintained (Final Score: ${finalJuryScores[0].score}).`);
+
+  // 4. Concurrency Test: Simultaneous Challenge Finalization Idempotence
+  console.log("\n[Test 4] Simulating Simultaneous Challenge Finalizations...");
   const finalizeOps = Array.from({ length: 3 }, async () => {
     return db.transaction(async (tx) => {
-      // Lock challenge row
       const [lockedChallenge] = await tx
         .select()
         .from(challenges)

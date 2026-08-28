@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { profiles, users } from "@/db/schema";
-import { eq, desc, and, or, ilike } from "drizzle-orm";
+import { eq, desc, and, or, ilike, isNull } from "drizzle-orm";
 import Link from "next/link";
 import { Palette, Sparkles, Search, User, Briefcase, MapPin, ArrowRight } from "lucide-react";
 
@@ -14,7 +14,11 @@ interface ArtistsPageProps {
 export default async function ArtistsDirectoryPage({ searchParams }: ArtistsPageProps) {
   const { q, status } = await searchParams;
 
-  const queryFilters = [eq(profiles.profileStatus, "active_public")];
+  const queryFilters = [
+    eq(profiles.profileStatus, "active_public"),
+    isNull(profiles.deletedAt),
+    eq(users.membershipStatus, "active"),
+  ];
 
   if (status && ["open", "waitlist", "closed"].includes(status.toLowerCase())) {
     queryFilters.push(eq(profiles.commissionStatus, status.toLowerCase() as any));
@@ -41,6 +45,7 @@ export default async function ArtistsDirectoryPage({ searchParams }: ArtistsPage
       waitlistMaxSlots: profiles.waitlistMaxSlots,
     })
     .from(profiles)
+    .innerJoin(users, eq(users.id, profiles.userId))
     .where(and(...queryFilters))
     .orderBy(desc(profiles.createdAt));
 

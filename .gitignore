@@ -37,3 +37,4 @@ next-env.d.ts
 # uploads / local media storage (protected)
 /storage
 /uploads
+/backups
