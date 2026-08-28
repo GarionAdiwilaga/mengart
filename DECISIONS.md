@@ -202,14 +202,31 @@
 
 ## 2026-08-29
 
-### Phase 1 Tiebreak Candidate Reconstruction & Migration Hardening
+### Authoritative Winner & Tiebreak Rules (Phase 1 Alignment & Phase 2/3 Mandates)
 **Decision:**
-1. **Unconditional Tiebreak Candidate Reconstruction at Community Cutoff:** Removed the `< 2` candidate count condition in `drizzle/0007_perfect_sunspot.sql`. Migration authoritatively unions candidates referenced in legacy tiebreak ballots with all candidates tied at the exact $K$-th `community_vote` cutoff rank from main round ballots.
-2. **Removed Arbitrary Fallbacks:** Completely removed the unsafe fallback that froze all submitted submissions. If an active historical tiebreak candidate set cannot be reconstructed, the migration fails closed rather than inventing a candidate set.
-3. **Active Legacy Tiebreak Timing Validation:** For active `tiebreak_open` rounds, set `starts_at <= now()` and `deadline = GREATEST(voting_deadline, now()) + interval '24 hours'` to guarantee `starts_at < deadline` and a viable future operational window.
-4. **Pre-Migration Malformed Result Cleanup Verification:** Verified in `scripts/verifyMigrations.ts` that known schema drift (a malformed stub row with both `winner_slot_id IS NULL AND final_rank IS NULL` inserted before migration) is purged by migration 0007 itself during execution.
-**Business Rule:** Tiebreak candidate reconstruction must match the live cutoff algorithm and never expand eligibility to untied candidates.
-**Reason:** Addressed independent QA audit requirements for Phase 1 tiebreak integrity.
+1. **Community Tiebreak Scope (Rank #1 Only):**
+   - For `vote_only` and `vote_and_jury` challenges, a tiebreak round is created **ONLY when first place (Rank #1) is tied**.
+   - Ties for #2, #3, or lower Community ranks do **NOT** trigger a tiebreak. Normal lower ranks are preserved.
+   - For `jury_only`, there is no Community voting winner; judges select one winner per configured judge category/slot.
+2. **Phase 1 Migration Alignment (`drizzle/0007_perfect_sunspot.sql`):**
+   - The candidate set for an active legacy `tiebreak_open` challenge is reconstructed strictly from the submissions tied for **Community rank #1** (maximum Star total from main ballots).
+   - If candidate count $\le 1$ (e.g. unique #1 like $A=30, B=20, C=20$, or no main ballots), the migration fails closed and raises an exception requiring explicit manual reconciliation.
+   - Submissions referenced in historical tiebreak ballots are validated as a strict subset of the authoritative first-place tied set ($A, B, C$). If a historical ballot references an untied/non-first-place submission ($D$), migration fails closed and raises a reconciliation exception.
+   - Active tiebreak timing is strictly validated (`starts_at < deadline` and `deadline > now()`); missing or expired deadlines fail closed.
+   - Verified in `scripts/verifyMigrations.ts` across Scenarios 1 to 4 (including fresh database, 7 invariant upgrades, and fail-closed reconciliation tests).
+3. **Phase 2 & Phase 3 Architecture Mandates:**
+   - **Phase 2 Mandates:**
+     - Live Community tiebreak generation applies only to ties for rank #1.
+     - Lower-rank ties never trigger another round. Normal ranking is preserved.
+     - Multiple sequential tiebreak rounds occur only if first place remains tied after a tiebreak round.
+     - Per-round ballot uniqueness `(voting_round_id, user_id)` must replace the legacy `(challenge_id, user_id, round_type)` constraint on `challenge_ballots`.
+   - **Phase 3 Mandates:**
+     - In `vote_and_jury`, the resolved Community/Vote Winner is excluded from all judge winner categories.
+     - `jury_only` uses only configured judge winner categories.
+     - Judge winners do not receive synthetic Community numeric ranks.
+**Business Rule:** Only first-place ties trigger tiebreak rounds. Migration must never promote untied candidates or fabricate deadlines.
+**Reason:** Authoritative product-rule alignment across all challenge award modes.
+
 
 
 

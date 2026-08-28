@@ -1,18 +1,25 @@
-# Handoff Context — Phase 1 Tiebreak Integrity & Final Migration Corrections Complete
+# Handoff Context — Phase 1 Tiebreak Reconciliation & Authoritative Rules Complete
 
 **Date:** 2026-08-29
 
 ## Session Summary
-- **Targeted Tiebreak & Migration Corrections Completed:**
-  1. **Unconditional Tiebreak Candidate Reconstruction at Community Cutoff:** Removed candidate count `< 2` guard in `drizzle/0007_perfect_sunspot.sql`. Authoritatively unions candidates referenced in legacy tiebreak ballots with all candidates tied at the exact $K$-th `community_vote` cutoff rank from main round ballots.
-  2. **Removed Arbitrary Fallbacks:** Completely removed the unsafe fallback that froze all submitted submissions.
-  3. **3+ Tied Candidate Regression Fixture:** Added migration fixture in `scripts/verifyMigrations.ts` with 3 candidates tied at the 1st place cutoff and partial tiebreak ballots referencing only 1 candidate, verifying that all 3 candidates are frozen in the tiebreak candidate snapshot.
-  4. **Active Legacy Tiebreak Timing Validation:** Set `starts_at <= now()` and `deadline = GREATEST(voting_deadline, now()) + interval '24 hours'` to guarantee `starts_at < deadline` and a viable future operational window for active `tiebreak_open` challenges.
-  5. **Pre-Migration Malformed Result Cleanup Test:** Simulated pre-remediation schema drift by inserting a malformed row (`winner_slot_id IS NULL AND final_rank IS NULL`) before migration, and verified that migration 0007 purged the row during execution.
-  6. **Phase 2 Ballot Index Mandate:** Reconfirmed that Phase 2 must explicitly drop/reconcile the legacy unique constraint `(challenge_id, user_id, round_type)` on `challenge_ballots` and replace it with per-round uniqueness `(voting_round_id, user_id)`.
+- **Authoritative Winner & Tiebreak Rules Implemented:**
+  1. **Rank #1 Tiebreak Scope in Migration 0007 (`drizzle/0007_perfect_sunspot.sql`):**
+     - Active tiebreak candidate set is reconstructed strictly from submissions tied for **Community rank #1** (maximum Star total from main ballots).
+     - Ties below #1 (e.g. $A=30, B=20, C=20$) in `tiebreak_open` fail closed with `RAISE EXCEPTION 'Legacy tiebreak reconciliation required...'`.
+     - Submissions referenced in historical tiebreak ballots are validated as a subset of first-place tied candidates ($A, B, C$); referencing an untied submission ($D$) fails closed.
+     - Active tiebreak timing is strictly validated (`starts_at < deadline` and `deadline > now()`); missing/expired deadlines fail closed.
+  2. **Migration Regression Fixtures (`scripts/verifyMigrations.ts`):**
+     - **Scenario 1:** Fresh DB 0000 -> 0007.
+     - **Scenario 2:** 7 Invariants on 0006 -> 0007 upgrade (A/B/C tied at 20 stars frozen, D at 15 stars excluded, timing valid, pre-migration malformed row purged).
+     - **Scenario 3:** Fail-closed reconciliation test when a tiebreak ballot references non-first-place submission D.
+     - **Scenario 4:** Fail-closed reconciliation test when tie is below first place (A=30, B=20, C=20) in `tiebreak_open`.
+  3. **Architectural Rules Recorded in `DECISIONS.md`:**
+     - **Phase 2:** Community tiebreak applies only to rank #1 ties; lower-rank ties preserved without rounds; replace composite unique index with `(voting_round_id, user_id)`.
+     - **Phase 3:** Community/Vote Winner excluded from judge winner categories in `vote_and_jury`; `jury_only` uses only configured judge categories without synthetic community ranks.
 
 ## Build & Verification Status
-- `npm run test:migrate`: 100% Passed (7 Invariants including 3-way tiebreak candidate reconstruction, active tiebreak timing, and pre-migration malformed row purge).
+- `npm run test:migrate`: 100% Passed (Scenarios 1 to 4 clean).
 - `npx tsx src/lib/__tests__/testPhase1LifecycleAndState.ts`: 100% Passed (11 test suites).
 - `npm run test:all`: 100% Passed (all 13 test suites).
 - `npm run lint`: 100% Clean (0 errors, 0 warnings).
@@ -26,5 +33,5 @@
 - `HANDOFF.md`
 
 ## Next Steps
-- Generate `phase1_tiebreak_migration_final.patch` from `8d769520ff4b76ddd2824258cf66666df8f1d2d2..NEW_COMMIT_SHA`.
+- Generate `phase1_migration_reconciliation_final.patch` from `d6f1a1d2679a9459bda2755e881d14c035c41326..NEW_COMMIT_SHA`.
 - Awaiting independent QA review and approval for Phase 1. Do not begin Phase 2 until this final Phase 1 patch is approved.

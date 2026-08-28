@@ -1,23 +1,26 @@
 # Current Status
 
 ## Active Remediation Roadmap (Independent QA Audit 28-Aug-2026)
-- **Phase 1: Release Gate A (Database Migrations & Lifecycle State Engine):** **TIEBREAK INTEGRITY CORRECTIONS COMPLETED & FULLY VERIFIED**
+- **Phase 1: Release Gate A (Database Migrations & Lifecycle State Engine):** **RANK #1 TIEBREAK INTEGRITY & MIGRATION RECONCILIATION COMPLETE**
   - Migration 0007 (`drizzle/0007_perfect_sunspot.sql`):
-    - Unconditional reconstruction of tied candidate sets at the Community winner cutoff rank.
-    - Full support for 3+ tied candidate sets with partial tiebreak ballots.
+    - Reconstructs active legacy tiebreak candidates strictly from submissions tied for **Community rank #1** (maximum Star score).
+    - Fails closed if candidate count $\le 1$ (e.g. unique #1 with tie below #1, or inconsistent status).
+    - Validates that historical tiebreak ballot submissions are a strict subset of the first-place tied set ($A, B, C$); fails closed if referencing non-first-place submission ($D$).
+    - Validates active tiebreak timing window (`starts_at < deadline` and `deadline > now()`); fails closed on missing/expired deadlines.
     - Zero unsafe fallbacks (no arbitrary freezing of all submissions).
-    - Valid active tiebreak timing window (`starts_at < deadline`, `deadline > now()`).
     - Authoritative award-mode scoping (zero voting rounds for finished `jury_only` and `showcase_only` with results).
     - Deterministic `award_type` backfill and purge of malformed orphan results.
   - Comprehensive Migration Test Suite (`scripts/verifyMigrations.ts`):
-    - Tested 7 strict invariants on fresh database and upgrade database from 0006 journal.
-    - Validated 3-way tiebreak candidate set reconstruction with partial voting.
+    - Tested Scenarios 1 to 4 (Fresh DB, 7-Invariant Upgrade, Fail-closed non-first-place tiebreak ballot, Fail-closed tie below #1 in tiebreak_open).
+    - Validated 3-way tiebreak candidate set reconstruction with partial voting (A, B, C frozen; D excluded).
     - Validated pre-migration malformed row purge by migration 0007 itself.
     - Validated production `transitionChallengeStatusService` for post-migration round creation and candidate freeze.
   - Protected Lifecycle & Scheduler:
     - Fail-closed `/api/cron/materialize-challenges` (503 when unset, 401 when invalid, 200 when valid).
     - Concurrency-idempotent and transactional scheduler state mutations and audit logging.
-  - Architectural mandate recorded for Phase 2: replace `(challenge_id, user_id, round_type)` unique constraint on `challenge_ballots` with `(voting_round_id, user_id)` for sequential tiebreak rounds.
+  - Architectural mandates recorded for Phase 2 and Phase 3:
+    - Phase 2: Community tiebreak for rank #1 only, lower-rank ties preserved without rounds, replace ballot unique constraint with `(voting_round_id, user_id)`.
+    - Phase 3: Winner of community vote excluded from jury categories, judge categories independent, no synthetic community ranks for jury winners.
 - **Phase 2: Release Gate B (Voting & Tiebreak Architecture):** PENDING APPROVAL
 - **Phase 3: Release Gate C (Shared Jury Slots & Result Integrity):** PENDING REVIEW
 - **Phase 4: Release Gate D (Media Processing, Watermarking & Rate Limiting):** PENDING REVIEW

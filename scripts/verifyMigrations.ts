@@ -25,6 +25,8 @@ async function runMigrationVerification() {
 
   const freshDbName = `mengart_test_fresh_${Date.now()}`;
   const upgradeDbName = `mengart_test_upgrade_${Date.now()}`;
+  const failDbName1 = `mengart_test_fail1_${Date.now()}`;
+  const failDbName2 = `mengart_test_fail2_${Date.now()}`;
   const temp0006Dir = path.resolve("./.tmp_drizzle_0006");
 
   try {
@@ -121,6 +123,11 @@ async function runMigrationVerification() {
       VALUES ('artist_c@mengart.local', 'member', now()) 
       RETURNING id;
     `;
+    const [userD] = await upgradeClient`
+      INSERT INTO users (email, role, email_verified) 
+      VALUES ('artist_d@mengart.local', 'member', now()) 
+      RETURNING id;
+    `;
 
     const [profA] = await upgradeClient`
       INSERT INTO profiles (user_id, display_name, slug)
@@ -135,6 +142,11 @@ async function runMigrationVerification() {
     const [profC] = await upgradeClient`
       INSERT INTO profiles (user_id, display_name, slug)
       VALUES (${userC.id}, 'Legacy Artist C', 'legacy-artist-c')
+      RETURNING id;
+    `;
+    const [profD] = await upgradeClient`
+      INSERT INTO profiles (user_id, display_name, slug)
+      VALUES (${userD.id}, 'Legacy Artist D', 'legacy-artist-d')
       RETURNING id;
     `;
 
@@ -172,7 +184,7 @@ async function runMigrationVerification() {
       RETURNING id;
     `;
 
-    // Legacy MAIN ballot
+    // Legacy MAIN ballot (2 stars to subA, 2 stars to subB -> 2-way first place tie)
     const [legacyMainBallot] = await upgradeClient`
       INSERT INTO challenge_ballots (challenge_id, user_id, round_type, stars_allocated, is_finalized)
       VALUES (${challenge.id}, ${userA.id}, 'main', 2, true)
@@ -180,10 +192,10 @@ async function runMigrationVerification() {
     `;
     await upgradeClient`
       INSERT INTO challenge_ballot_stars (ballot_id, submission_id, stars_count)
-      VALUES (${legacyMainBallot.id}, ${subB.id}, 2);
+      VALUES (${legacyMainBallot.id}, ${subA.id}, 1), (${legacyMainBallot.id}, ${subB.id}, 1);
     `;
 
-    // Legacy TIEBREAK ballot
+    // Legacy TIEBREAK ballot voting for subA (subset of {subA, subB})
     const [legacyTiebreakBallot] = await upgradeClient`
       INSERT INTO challenge_ballots (challenge_id, user_id, round_type, stars_allocated, is_finalized)
       VALUES (${challenge.id}, ${userB.id}, 'tiebreak', 1, true)
@@ -245,37 +257,10 @@ async function runMigrationVerification() {
       VALUES (${showcaseFinishedChallenge.id}, ${showcaseFinishedSub.id}, null, 1, 0, true);
     `;
 
-    // 4. Active TIEBREAK-OPEN Challenge with ZERO tiebreak ballots
-    const [tbZeroChallenge] = await upgradeClient`
-      INSERT INTO challenges (title, slug, theme, description, prompt_rules, status, award_mode, stars_per_member, created_by_user_id)
-      VALUES ('Legacy Tiebreak Open Zero Ballots', 'legacy-tb-zero-2026', 'Tiebreak', 'Testing tb zero', 'Rules', 'tiebreak_open', 'vote_and_jury', 3, ${userA.id})
-      RETURNING id;
-    `;
-    const [tbZeroSubA] = await upgradeClient`
-      INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status)
-      VALUES (${tbZeroChallenge.id}, ${userA.id}, ${profA.id}, 'submitted')
-      RETURNING id;
-    `;
-    const [tbZeroSubB] = await upgradeClient`
-      INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status)
-      VALUES (${tbZeroChallenge.id}, ${userB.id}, ${profB.id}, 'submitted')
-      RETURNING id;
-    `;
-    // Main ballots producing a tie (2 stars to A, 2 stars to B)
-    const [tbZeroMainBallot] = await upgradeClient`
-      INSERT INTO challenge_ballots (challenge_id, user_id, round_type, stars_allocated, is_finalized)
-      VALUES (${tbZeroChallenge.id}, ${userC.id}, 'main', 2, true)
-      RETURNING id;
-    `;
-    await upgradeClient`
-      INSERT INTO challenge_ballot_stars (ballot_id, submission_id, stars_count)
-      VALUES (${tbZeroMainBallot.id}, ${tbZeroSubA.id}, 1), (${tbZeroMainBallot.id}, ${tbZeroSubB.id}, 1);
-    `;
-
-    // 5. Active TIEBREAK-OPEN Challenge with 3+ TIED CANDIDATES and PARTIALLY CAST ballots
+    // 4. Active TIEBREAK-OPEN Challenge with 3+ TIED CANDIDATES and PARTIALLY CAST ballots (A=20, B=20, C=20 tied for #1, D=15 below #1)
     const [tb3TiedChallenge] = await upgradeClient`
-      INSERT INTO challenges (title, slug, theme, description, prompt_rules, status, award_mode, stars_per_member, created_by_user_id)
-      VALUES ('Legacy 3-Way Tiebreak Open', 'legacy-tb-3way-2026', 'Tiebreak 3Way', 'Testing 3-way tie', 'Rules', 'tiebreak_open', 'vote_and_jury', 3, ${userA.id})
+      INSERT INTO challenges (title, slug, theme, description, prompt_rules, status, award_mode, stars_per_member, voting_starts_at, voting_deadline, created_by_user_id)
+      VALUES ('Legacy 3-Way Tiebreak Open', 'legacy-tb-3way-2026', 'Tiebreak 3Way', 'Testing 3-way tie', 'Rules', 'tiebreak_open', 'vote_and_jury', 3, now() - interval '48 hours', now() + interval '24 hours', ${userA.id})
       RETURNING id;
     `;
     const [tb3Slot] = await upgradeClient`
@@ -298,20 +283,35 @@ async function runMigrationVerification() {
       VALUES (${tb3TiedChallenge.id}, ${userC.id}, ${profC.id}, 'submitted')
       RETURNING id;
     `;
-    // Main ballot producing a 3-way tie at 1st place cutoff (1 star to A, 1 star to B, 1 star to C)
-    const [tb3MainBallot] = await upgradeClient`
+    const [tb3SubD] = await upgradeClient`
+      INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status)
+      VALUES (${tb3TiedChallenge.id}, ${userD.id}, ${profD.id}, 'submitted')
+      RETURNING id;
+    `;
+    // Main ballots producing: A=20, B=20, C=20, D=15
+    const [tb3MainBallot1] = await upgradeClient`
       INSERT INTO challenge_ballots (challenge_id, user_id, round_type, stars_allocated, is_finalized)
-      VALUES (${tb3TiedChallenge.id}, ${userA.id}, 'main', 3, true)
+      VALUES (${tb3TiedChallenge.id}, ${userA.id}, 'main', 60, true)
       RETURNING id;
     `;
     await upgradeClient`
       INSERT INTO challenge_ballot_stars (ballot_id, submission_id, stars_count)
-      VALUES (${tb3MainBallot.id}, ${tb3SubA.id}, 1), (${tb3MainBallot.id}, ${tb3SubB.id}, 1), (${tb3MainBallot.id}, ${tb3SubC.id}, 1);
+      VALUES (${tb3MainBallot1.id}, ${tb3SubA.id}, 20), (${tb3MainBallot1.id}, ${tb3SubB.id}, 20), (${tb3MainBallot1.id}, ${tb3SubC.id}, 20);
     `;
-    // Partially cast tiebreak ballot that only votes for tb3SubA (referencing only 1 of 3 candidates)
+    const [tb3MainBallot2] = await upgradeClient`
+      INSERT INTO challenge_ballots (challenge_id, user_id, round_type, stars_allocated, is_finalized)
+      VALUES (${tb3TiedChallenge.id}, ${userB.id}, 'main', 15, true)
+      RETURNING id;
+    `;
+    await upgradeClient`
+      INSERT INTO challenge_ballot_stars (ballot_id, submission_id, stars_count)
+      VALUES (${tb3MainBallot2.id}, ${tb3SubD.id}, 15);
+    `;
+
+    // Partially cast tiebreak ballot that only votes for tb3SubA and tb3SubB (referencing only 2 of the 3 tied candidates)
     const [tb3TbBallot] = await upgradeClient`
       INSERT INTO challenge_ballots (challenge_id, user_id, round_type, stars_allocated, is_finalized)
-      VALUES (${tb3TiedChallenge.id}, ${userB.id}, 'tiebreak', 1, true)
+      VALUES (${tb3TiedChallenge.id}, ${userC.id}, 'tiebreak', 1, true)
       RETURNING id;
     `;
     await upgradeClient`
@@ -319,7 +319,7 @@ async function runMigrationVerification() {
       VALUES (${tb3TbBallot.id}, ${tb3SubA.id}, 1);
     `;
 
-    // 6. Legacy Submission-Open Challenge (No ballots yet, 1 submission)
+    // 5. Legacy Submission-Open Challenge (No ballots yet, 1 submission)
     const [openChallenge] = await upgradeClient`
       INSERT INTO challenges (title, slug, theme, description, prompt_rules, status, award_mode, stars_per_member, created_by_user_id)
       VALUES ('Legacy Open Challenge', 'legacy-open-2026', 'Future', 'Testing open state', 'Rules', 'submission_open', 'vote_and_jury', 3, ${userA.id})
@@ -331,14 +331,14 @@ async function runMigrationVerification() {
       RETURNING id;
     `;
 
-    // 7. Legacy Showcase-Only Challenge (Draft, no ballots)
+    // 6. Legacy Showcase-Only Challenge (Draft, no ballots)
     const [showcaseChallenge] = await upgradeClient`
       INSERT INTO challenges (title, slug, theme, description, prompt_rules, status, award_mode, stars_per_member, created_by_user_id)
       VALUES ('Legacy Showcase Challenge', 'legacy-showcase-2026', 'Art Only', 'Testing showcase', 'Rules', 'draft', 'showcase_only', 0, ${userA.id})
       RETURNING id;
     `;
 
-    // 8. Simulate known pre-remediation schema drift by inserting a malformed row (null slot and null rank)
+    // 7. Simulate known pre-remediation schema drift by inserting a malformed row (null slot and null rank)
     await upgradeClient`ALTER TABLE challenge_results ALTER COLUMN final_rank DROP NOT NULL;`;
     const [malformedSub] = await upgradeClient`
       INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status)
@@ -458,24 +458,7 @@ async function runMigrationVerification() {
     }
     console.log("✓ Invariant 4 Passed: Zero voting rounds for finished jury_only (with results), finished showcase_only (with results), submission_open, and draft showcase.");
 
-    // Invariant 5: Active Legacy Tiebreak Candidate Reconstruction (Zero Ballots and 3+ Tied Candidates with Partial Ballots) & Timing
-    const tbZeroRounds = await upgradeClient`
-      SELECT vr.id, vr.round_type, vr.status, vr.starts_at, vr.deadline, COUNT(vrc.id)::int as candidate_count
-      FROM challenge_voting_rounds vr
-      LEFT JOIN challenge_voting_round_candidates vrc ON vrc.voting_round_id = vr.id
-      WHERE vr.challenge_id = ${tbZeroChallenge.id} AND vr.round_type = 'tiebreak'
-      GROUP BY vr.id, vr.round_type, vr.status, vr.starts_at, vr.deadline;
-    `;
-    if (tbZeroRounds.length !== 1 || tbZeroRounds[0].candidate_count !== 2) {
-      throw new Error(`Tiebreak candidate reconstruction failed for zero-ballot tiebreak! Expected 1 round with 2 candidates, got ${JSON.stringify(tbZeroRounds)}`);
-    }
-    if (new Date(tbZeroRounds[0].starts_at) >= new Date(tbZeroRounds[0].deadline)) {
-      throw new Error(`Tiebreak timing invalid: starts_at (${tbZeroRounds[0].starts_at}) >= deadline (${tbZeroRounds[0].deadline})`);
-    }
-    if (new Date(tbZeroRounds[0].deadline).getTime() <= Date.now()) {
-      throw new Error(`Active tiebreak deadline expired! Deadline: ${tbZeroRounds[0].deadline}`);
-    }
-
+    // Invariant 5: Authoritative First-Place Tiebreak Candidate Reconstruction (A, B, C tied for #1, D excluded) & Timing
     const tb3Rounds = await upgradeClient`
       SELECT vr.id, vr.round_type, vr.status, vr.starts_at, vr.deadline, COUNT(vrc.id)::int as candidate_count
       FROM challenge_voting_rounds vr
@@ -484,7 +467,7 @@ async function runMigrationVerification() {
       GROUP BY vr.id, vr.round_type, vr.status, vr.starts_at, vr.deadline;
     `;
     if (tb3Rounds.length !== 1 || tb3Rounds[0].candidate_count !== 3) {
-      throw new Error(`Tiebreak candidate reconstruction failed for 3-way tiebreak with partial ballots! Expected 3 candidates, got ${JSON.stringify(tb3Rounds)}`);
+      throw new Error(`Tiebreak candidate reconstruction failed for 3-way tiebreak with partial ballots! Expected exactly 3 candidates, got ${JSON.stringify(tb3Rounds)}`);
     }
     if (new Date(tb3Rounds[0].starts_at) >= new Date(tb3Rounds[0].deadline)) {
       throw new Error(`3-way tiebreak timing invalid: starts_at >= deadline`);
@@ -500,7 +483,10 @@ async function runMigrationVerification() {
     if (!tb3CandIds.includes(tb3SubA.id) || !tb3CandIds.includes(tb3SubB.id) || !tb3CandIds.includes(tb3SubC.id)) {
       throw new Error(`Tiebreak reconstruction omitted tied candidates! Expected [${tb3SubA.id}, ${tb3SubB.id}, ${tb3SubC.id}], got ${JSON.stringify(tb3CandIds)}`);
     }
-    console.log("✓ Invariant 5 Passed: Active legacy tiebreak candidate sets successfully reconstructed for 3+ tied candidates (with partial ballots) and zero-ballot scenarios with valid timing.");
+    if (tb3CandIds.includes(tb3SubD.id)) {
+      throw new Error(`Tiebreak reconstruction illegally included non-first-place submission D (${tb3SubD.id})!`);
+    }
+    console.log("✓ Invariant 5 Passed: Active legacy tiebreak candidate sets successfully reconstructed for A/B/C tied for #1 (excluding non-first-place D) with partial ballots and valid timing.");
 
     // Invariant 6: Regression fixture exercising ACTUAL PRODUCTION DOMAIN SERVICE for post-migration round creation
     console.log("-> Testing post-migration submission & production service candidate freezing on legacy open challenge...");
@@ -571,6 +557,94 @@ async function runMigrationVerification() {
     await upgradeClient.end();
     console.log("🎉 SCENARIO 2 (UPGRADE, REAL DRIZZLE MIGRATOR & INVARIANT INTEGRITY) PASSED!\n");
 
+    // --------------------------------------------------------------------------
+    // SCENARIO 3: FAIL-CLOSED RECONCILIATION TEST (TIEBREAK BALLOT REFERENCES NON-FIRST-PLACE D)
+    // --------------------------------------------------------------------------
+    console.log(`[Scenario 3] Testing fail-closed migration on invalid tiebreak ballot referencing non-first-place submission...`);
+    await adminClient.unsafe(`CREATE DATABASE "${failDbName1}";`);
+    const failClient1 = postgres(`${urlObj.protocol}//${urlObj.username}:${urlObj.password}@${urlObj.host}/${failDbName1}`, { max: 1 });
+    const failDrizzle1 = drizzle(failClient1, { schema });
+
+    await migrate(failDrizzle1, { migrationsFolder: temp0006Dir });
+
+    const [f1User] = await failClient1`INSERT INTO users (email, role) VALUES ('f1@mengart.local', 'admin') RETURNING id;`;
+    const [f1Prof] = await failClient1`INSERT INTO profiles (user_id, display_name, slug) VALUES (${f1User.id}, 'F1 Artist', 'f1-artist') RETURNING id;`;
+    const [f1Challenge] = await failClient1`
+      INSERT INTO challenges (title, slug, theme, description, prompt_rules, status, award_mode, stars_per_member, voting_deadline, created_by_user_id)
+      VALUES ('F1 Challenge', 'f1-challenge', 'Theme', 'Desc', 'Rules', 'tiebreak_open', 'vote_and_jury', 3, now() + interval '24 hours', ${f1User.id})
+      RETURNING id;
+    `;
+    const [f1SubA] = await failClient1`INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status) VALUES (${f1Challenge.id}, ${f1User.id}, ${f1Prof.id}, 'submitted') RETURNING id;`;
+    const [f1SubB] = await failClient1`INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status) VALUES (${f1Challenge.id}, ${f1User.id}, ${f1Prof.id}, 'submitted') RETURNING id;`;
+    const [f1SubD] = await failClient1`INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status) VALUES (${f1Challenge.id}, ${f1User.id}, ${f1Prof.id}, 'submitted') RETURNING id;`;
+
+    // Main: A=20, B=20 (tied for #1), D=10 (below #1)
+    const [f1Main] = await failClient1`INSERT INTO challenge_ballots (challenge_id, user_id, round_type, stars_allocated, is_finalized) VALUES (${f1Challenge.id}, ${f1User.id}, 'main', 50, true) RETURNING id;`;
+    await failClient1`INSERT INTO challenge_ballot_stars (ballot_id, submission_id, stars_count) VALUES (${f1Main.id}, ${f1SubA.id}, 20), (${f1Main.id}, ${f1SubB.id}, 20), (${f1Main.id}, ${f1SubD.id}, 10);`;
+
+    // Tiebreak ballot referencing D (invalid non-first-place submission)
+    const [f1Tb] = await failClient1`INSERT INTO challenge_ballots (challenge_id, user_id, round_type, stars_allocated, is_finalized) VALUES (${f1Challenge.id}, ${f1User.id}, 'tiebreak', 1, true) RETURNING id;`;
+    await failClient1`INSERT INTO challenge_ballot_stars (ballot_id, submission_id, stars_count) VALUES (${f1Tb.id}, ${f1SubD.id}, 1);`;
+
+    let f1FailedProperly = false;
+    try {
+      await migrate(failDrizzle1, { migrationsFolder: "./drizzle" });
+    } catch (err: any) {
+      if (err.message && err.message.includes("Legacy tiebreak reconciliation required")) {
+        f1FailedProperly = true;
+        console.log(`✓ Scenario 3 Passed: Migration safely failed closed for tiebreak ballot referencing non-first-place D: "${err.message.trim()}"`);
+      } else {
+        throw err;
+      }
+    }
+    if (!f1FailedProperly) {
+      throw new Error("Scenario 3 expected migration failure with reconciliation error, but migration succeeded!");
+    }
+    await failClient1.end();
+    console.log("🎉 SCENARIO 3 (FAIL-CLOSED INVALID BALLOT SUBMISSION) PASSED!\n");
+
+    // --------------------------------------------------------------------------
+    // SCENARIO 4: FAIL-CLOSED RECONCILIATION TEST (TIE BELOW FIRST PLACE IN TIEBREAK_OPEN)
+    // --------------------------------------------------------------------------
+    console.log(`[Scenario 4] Testing fail-closed migration on tie below first place (A=30, B=20, C=20 in tiebreak_open)...`);
+    await adminClient.unsafe(`CREATE DATABASE "${failDbName2}";`);
+    const failClient2 = postgres(`${urlObj.protocol}//${urlObj.username}:${urlObj.password}@${urlObj.host}/${failDbName2}`, { max: 1 });
+    const failDrizzle2 = drizzle(failClient2, { schema });
+
+    await migrate(failDrizzle2, { migrationsFolder: temp0006Dir });
+
+    const [f2User] = await failClient2`INSERT INTO users (email, role) VALUES ('f2@mengart.local', 'admin') RETURNING id;`;
+    const [f2Prof] = await failClient2`INSERT INTO profiles (user_id, display_name, slug) VALUES (${f2User.id}, 'F2 Artist', 'f2-artist') RETURNING id;`;
+    const [f2Challenge] = await failClient2`
+      INSERT INTO challenges (title, slug, theme, description, prompt_rules, status, award_mode, stars_per_member, voting_deadline, created_by_user_id)
+      VALUES ('F2 Challenge', 'f2-challenge', 'Theme', 'Desc', 'Rules', 'tiebreak_open', 'vote_and_jury', 3, now() + interval '24 hours', ${f2User.id})
+      RETURNING id;
+    `;
+    const [f2SubA] = await failClient2`INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status) VALUES (${f2Challenge.id}, ${f2User.id}, ${f2Prof.id}, 'submitted') RETURNING id;`;
+    const [f2SubB] = await failClient2`INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status) VALUES (${f2Challenge.id}, ${f2User.id}, ${f2Prof.id}, 'submitted') RETURNING id;`;
+    const [f2SubC] = await failClient2`INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status) VALUES (${f2Challenge.id}, ${f2User.id}, ${f2Prof.id}, 'submitted') RETURNING id;`;
+
+    // Main: A=30 (unique #1), B=20, C=20 (tie for #2)
+    const [f2Main] = await failClient2`INSERT INTO challenge_ballots (challenge_id, user_id, round_type, stars_allocated, is_finalized) VALUES (${f2Challenge.id}, ${f2User.id}, 'main', 70, true) RETURNING id;`;
+    await failClient2`INSERT INTO challenge_ballot_stars (ballot_id, submission_id, stars_count) VALUES (${f2Main.id}, ${f2SubA.id}, 30), (${f2Main.id}, ${f2SubB.id}, 20), (${f2Main.id}, ${f2SubC.id}, 20);`;
+
+    let f2FailedProperly = false;
+    try {
+      await migrate(failDrizzle2, { migrationsFolder: "./drizzle" });
+    } catch (err: any) {
+      if (err.message && err.message.includes("Legacy tiebreak reconciliation required")) {
+        f2FailedProperly = true;
+        console.log(`✓ Scenario 4 Passed: Migration safely failed closed for tie below #1 in tiebreak_open: "${err.message.trim()}"`);
+      } else {
+        throw err;
+      }
+    }
+    if (!f2FailedProperly) {
+      throw new Error("Scenario 4 expected migration failure with reconciliation error, but migration succeeded!");
+    }
+    await failClient2.end();
+    console.log("🎉 SCENARIO 4 (FAIL-CLOSED TIE BELOW FIRST PLACE) PASSED!\n");
+
     console.log("=================================================================");
     console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A)");
     console.log("=================================================================\n");
@@ -586,6 +660,8 @@ async function runMigrationVerification() {
     try {
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${freshDbName}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName}";`);
+      await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName1}";`);
+      await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName2}";`);
     } catch (_e) {
       // Ignored cleanup error
     }

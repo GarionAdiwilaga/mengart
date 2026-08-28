@@ -97,7 +97,7 @@ DECLARE
 BEGIN
   -- Backfill rounds ONLY for challenges that have legacy ballots OR voting-mode challenges with results/voting states
   FOR ch IN 
-    SELECT c.id, c.status, c.stars_per_member, c.created_at, c.voting_deadline, c.voting_starts_at, c.award_mode
+    SELECT c.id, c.title, c.status, c.stars_per_member, c.created_at, c.voting_deadline, c.voting_starts_at, c.award_mode
     FROM "challenges" c
     WHERE (
       -- Has actual legacy ballots (authoritative voting history)
@@ -165,18 +165,78 @@ BEGIN
     ) OR ch.status::text = 'tiebreak_open' THEN
       tiebreak_round_id := gen_random_uuid();
 
-      -- Calculate timing: ensure starts_at < deadline and active tiebreak deadline is viable
+      -- Determine Authoritative First-Place Tied Candidate Set from Main Round Ballots
       DECLARE
+        first_place_tied_count integer;
+        max_stars_val integer;
         tb_starts_at timestamp with time zone;
         tb_deadline timestamp with time zone;
+        invalid_ballot_sub_count integer;
       BEGIN
-        tb_starts_at := COALESCE(ch.voting_deadline, ch.voting_starts_at, ch.created_at);
+        -- 1. Find max star score and count how many submissions share this maximum score
+        WITH main_scores AS (
+          SELECT 
+            bs.submission_id, 
+            SUM(bs.stars_count) as total_stars
+          FROM "challenge_ballot_stars" bs
+          INNER JOIN "challenge_ballots" b ON b.id = bs.ballot_id
+          WHERE b.challenge_id = ch.id AND (b.round_type = 'main' OR b.round_type IS NULL)
+          GROUP BY bs.submission_id
+        ),
+        max_score AS (
+          SELECT MAX(total_stars) as max_stars
+          FROM main_scores
+        )
+        SELECT 
+          COALESCE((SELECT max_stars FROM max_score), 0),
+          COUNT(*)
+        INTO max_stars_val, first_place_tied_count
+        FROM main_scores
+        WHERE total_stars = (SELECT max_stars FROM max_score);
+
+        -- If candidate count <= 1 (no tie for first place, e.g. unique rank #1 or no main ballots),
+        -- active tiebreak state is inconsistent -> fail closed for explicit operator reconciliation.
+        IF first_place_tied_count <= 1 THEN
+          RAISE EXCEPTION 'Legacy tiebreak reconciliation required for challenge % (%): No authoritative first-place tie found (candidate count: %, max stars: %)', ch.id, ch.title, first_place_tied_count, max_stars_val;
+        END IF;
+
+        -- 2. Validate that legacy tiebreak ballots only reference submissions in the authoritative first-place tie set
+        WITH main_scores AS (
+          SELECT 
+            bs.submission_id, 
+            SUM(bs.stars_count) as total_stars
+          FROM "challenge_ballot_stars" bs
+          INNER JOIN "challenge_ballots" b ON b.id = bs.ballot_id
+          WHERE b.challenge_id = ch.id AND (b.round_type = 'main' OR b.round_type IS NULL)
+          GROUP BY bs.submission_id
+        ),
+        first_place_subs AS (
+          SELECT submission_id
+          FROM main_scores
+          WHERE total_stars = (SELECT MAX(total_stars) FROM main_scores)
+        )
+        SELECT COUNT(DISTINCT bs.submission_id)
+        INTO invalid_ballot_sub_count
+        FROM "challenge_ballot_stars" bs
+        INNER JOIN "challenge_ballots" b ON b.id = bs.ballot_id
+        WHERE b.challenge_id = ch.id 
+          AND b.round_type = 'tiebreak'
+          AND bs.submission_id NOT IN (SELECT submission_id FROM first_place_subs);
+
+        IF invalid_ballot_sub_count > 0 THEN
+          RAISE EXCEPTION 'Legacy tiebreak reconciliation required for challenge % (%): Legacy tiebreak ballot references % non-first-place submission(s)', ch.id, ch.title, invalid_ballot_sub_count;
+        END IF;
+
+        -- 3. Calculate timing: ensure genuine valid recoverable deadline exists
+        tb_starts_at := COALESCE(ch.voting_starts_at, ch.created_at);
         IF ch.status::text = 'tiebreak_open' THEN
-          IF tb_starts_at > now() THEN
-            tb_starts_at := now();
+          -- For active tiebreak: must have valid recoverable deadline in the future relative to starts_at
+          IF ch.voting_deadline IS NULL OR ch.voting_deadline <= tb_starts_at OR ch.voting_deadline <= now() THEN
+            RAISE EXCEPTION 'Legacy tiebreak reconciliation required for challenge % (%): Inoperable or expired active tiebreak deadline (starts_at: %, deadline: %)', ch.id, ch.title, tb_starts_at, ch.voting_deadline;
           END IF;
-          tb_deadline := GREATEST(COALESCE(ch.voting_deadline, now()), now()) + interval '24 hours';
+          tb_deadline := ch.voting_deadline;
         ELSE
+          -- For finished historical tiebreak
           tb_deadline := COALESCE(ch.voting_deadline, ch.created_at + interval '7 days');
           IF tb_starts_at >= tb_deadline THEN
             tb_deadline := tb_starts_at + interval '24 hours';
@@ -206,59 +266,35 @@ BEGIN
           now(),
           now()
         );
+
+        -- Link legacy TIEBREAK ballots of this challenge to the tiebreak round
+        UPDATE "challenge_ballots"
+        SET "voting_round_id" = tiebreak_round_id
+        WHERE "challenge_id" = ch.id 
+          AND ("voting_round_id" IS NULL)
+          AND ("round_type" = 'tiebreak');
+
+        -- 4. Freeze only the authoritative first-place tied candidate set
+        FOR tb_sub IN 
+          WITH main_scores AS (
+            SELECT 
+              bs.submission_id, 
+              SUM(bs.stars_count) as total_stars
+            FROM "challenge_ballot_stars" bs
+            INNER JOIN "challenge_ballots" b ON b.id = bs.ballot_id
+            WHERE b.challenge_id = ch.id AND (b.round_type = 'main' OR b.round_type IS NULL)
+            GROUP BY bs.submission_id
+          )
+          SELECT submission_id
+          FROM main_scores
+          WHERE total_stars = (SELECT MAX(total_stars) FROM main_scores)
+        LOOP
+          INSERT INTO "challenge_voting_round_candidates" ("id", "voting_round_id", "submission_id", "created_at")
+          VALUES (gen_random_uuid(), tiebreak_round_id, tb_sub.submission_id, now())
+          ON CONFLICT ("voting_round_id", "submission_id") DO NOTHING;
+        END LOOP;
+
       END;
-
-      -- Link legacy TIEBREAK ballots of this challenge to the tiebreak round
-      UPDATE "challenge_ballots"
-      SET "voting_round_id" = tiebreak_round_id
-      WHERE "challenge_id" = ch.id 
-        AND ("voting_round_id" IS NULL)
-        AND ("round_type" = 'tiebreak');
-
-      -- 1. Freeze candidate entries voted on in legacy tiebreak ballots
-      FOR tb_sub IN 
-        SELECT DISTINCT bs.submission_id 
-        FROM "challenge_ballot_stars" bs
-        INNER JOIN "challenge_ballots" b ON b.id = bs.ballot_id
-        WHERE b.challenge_id = ch.id AND b.voting_round_id = tiebreak_round_id
-      LOOP
-        INSERT INTO "challenge_voting_round_candidates" ("id", "voting_round_id", "submission_id", "created_at")
-        VALUES (gen_random_uuid(), tiebreak_round_id, tb_sub.submission_id, now())
-        ON CONFLICT ("voting_round_id", "submission_id") DO NOTHING;
-      END LOOP;
-
-      -- 2. Unconditionally reconstruct full tied candidate group at the Community winner cutoff rank
-      FOR tb_sub IN 
-        WITH main_scores AS (
-          SELECT 
-            bs.submission_id, 
-            SUM(bs.stars_count) as total_stars
-          FROM "challenge_ballot_stars" bs
-          INNER JOIN "challenge_ballots" b ON b.id = bs.ballot_id
-          WHERE b.challenge_id = ch.id AND (b.round_type = 'main' OR b.round_type IS NULL)
-          GROUP BY bs.submission_id
-        ),
-        community_slots AS (
-          SELECT COALESCE(NULLIF(COUNT(*), 0), 1) as k
-          FROM "challenge_winner_slots"
-          WHERE challenge_id = ch.id AND slot_type = 'community_vote'
-        ),
-        cutoff_score AS (
-          SELECT ms.total_stars
-          FROM main_scores ms, community_slots cs
-          ORDER BY ms.total_stars DESC
-          OFFSET (SELECT GREATEST(cs.k - 1, 0) FROM community_slots cs)
-          LIMIT 1
-        )
-        SELECT ms.submission_id
-        FROM main_scores ms
-        WHERE ms.total_stars = (SELECT total_stars FROM cutoff_score)
-          AND (SELECT COUNT(*) FROM main_scores ms2 WHERE ms2.total_stars = ms.total_stars) > 1
-      LOOP
-        INSERT INTO "challenge_voting_round_candidates" ("id", "voting_round_id", "submission_id", "created_at")
-        VALUES (gen_random_uuid(), tiebreak_round_id, tb_sub.submission_id, now())
-        ON CONFLICT ("voting_round_id", "submission_id") DO NOTHING;
-      END LOOP;
 
     END IF;
 
