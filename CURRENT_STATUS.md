@@ -1,16 +1,20 @@
 # Current Status
 
 ## Active Remediation Roadmap (Independent QA Audit 28-Aug-2026)
-- **Phase 1: Release Gate A (Database Migrations & Lifecycle State Engine):** **CORRECTION PASS COMPLETED & VERIFIED**
-  - Clean migration file `drizzle/0007_perfect_sunspot.sql` with embedded authoritative SQL data backfill for legacy ballots, candidate snapshots, voting rounds, and winner slot award types.
-  - Upgraded two-way migration test suite `scripts/verifyMigrations.ts` exercising real Drizzle migrator (`migrate()`) from 0006 journal to 0007, with 4 strict migration invariant assertions.
-  - Protected lifecycle transitions: blocked direct `finished` and `results_revoked` bypasses in `transitionChallengeStatusService`.
-  - Enforced revocation governance: `computeChallengeResultsService` rejects `finished` status without explicit prior revocation.
-  - Previous results snapshots preserved in `audit_logs.metadata` on revocation and recomputation.
-  - Public result visibility strictly separated from moderator review: unpublished review and revoked results suppressed from public views; Atelier official revocation and review notices rendered.
-  - `ChallengeTransitionButtons` updated to be award-mode aware; invalid `draft -> submission_open` bypass removed.
-  - Idempotent `materializeScheduledTransitionsService` added for automated scheduled lifecycle progression.
-  - Winner notification dispatching made transaction-safe (collected in service transaction and dispatched post-commit).
+- **Phase 1: Release Gate A (Database Migrations & Lifecycle State Engine):** **CORRECTION PASS 2 COMPLETED & FULLY VERIFIED**
+  - Refined SQL migration `drizzle/0007_perfect_sunspot.sql`:
+    - Filtered backfill to challenges with existing voting history or in active/concluded voting stages.
+    - Preserved `draft`, `scheduled`, `submission_open`, `submission_locked` (without ballots) and `jury_only` / `showcase_only` challenges from premature voting round creation or candidate freezing.
+    - Preserved legacy round semantics: `round_type = 'main'` -> main round (seq 1); `round_type = 'tiebreak'` -> tiebreak round (seq 2).
+    - Deterministic `award_type` classification from winner slot type, valid `final_rank` classification, and safe deletion of legacy orphan rows with null slot and null rank.
+  - Strengthened `scripts/verifyMigrations.ts`:
+    - Regression fixture testing legacy `submission_open` challenge (verifying no premature round created pre-transition, post-migration submission addition, and complete candidate set freezing at `voting_open`).
+    - Verified main and tiebreak round preservation and ballot linkage.
+    - Tested fresh empty database (0000 -> 0007) and genuine upgrade (0006 -> 0007) via real Drizzle migrator.
+  - Protected lifecycle transitions: blocked direct `review` transitions in `transitionChallengeStatusService` for result-producing modes (`vote_only`, `vote_and_jury`, `jury_only`), enforcing computation through `computeChallengeResultsService`.
+  - Production scheduler execution path: added protected HTTP cron endpoint (`/api/cron/materialize-challenges`), CLI script runner (`npm run cron:materialize`), and documented in `DEPLOYMENT.md`.
+  - Concurrency-idempotent materialization: atomic conditional database updates (`WHERE id = ch.id AND status = expectedOldStatus RETURNING id`) preventing duplicate transitions and duplicate audit logs.
+  - Architectural mandate recorded for Phase 2: replace `(challenge_id, user_id, round_type)` unique constraint on `challenge_ballots` with `(voting_round_id, user_id)` for sequential tiebreak rounds.
 - **Phase 2: Release Gate B (Voting & Tiebreak Architecture):** PENDING APPROVAL
 - **Phase 3: Release Gate C (Shared Jury Slots & Result Integrity):** PENDING REVIEW
 - **Phase 4: Release Gate D (Media Processing, Watermarking & Rate Limiting):** PENDING REVIEW

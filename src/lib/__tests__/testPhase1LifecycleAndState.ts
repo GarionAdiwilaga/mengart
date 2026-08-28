@@ -289,7 +289,7 @@ async function runPhase1LifecycleTests() {
   }
   console.log("✓ Results revocation verified: Status is 'results_revoked', results unpublished, and historical snapshot stored in audit logs.");
 
-  // 6. Protected Transitions Bypasses Blocked
+  // 6. Protected Transitions Bypasses Blocked (finished, results_revoked, and review for result modes)
   console.log("\n[Test 6] Testing Protected Lifecycle Transitions Cannot Be Bypassed...");
   
   let finishedBypassBlocked = false;
@@ -311,7 +311,55 @@ async function runPhase1LifecycleTests() {
   if (!revokedBypassBlocked) {
     throw new Error("Direct generic transition to 'results_revoked' was not blocked!");
   }
-  console.log("✓ Protected transition bypasses ('finished' and 'results_revoked') safely blocked.");
+
+  // Direct generic transition to 'review' must be blocked for voting_open vote_only challenge
+  const [votingCh] = await db
+    .insert(challenges)
+    .values({
+      title: `Direct Review Block Test ${suffix}`,
+      slug: `direct-rev-block-${suffix}`,
+      theme: "Rules",
+      description: "Testing review block",
+      promptRules: "Rules",
+      status: "voting_open",
+      awardMode: "vote_only",
+      createdByUserId: admin.id,
+    })
+    .returning();
+
+  let reviewBypassBlocked = false;
+  try {
+    await transitionChallengeStatusService(db, adminCtx, votingCh.id, "review");
+  } catch (err: any) {
+    reviewBypassBlocked = true;
+    console.log(`✓ Direct transition to review blocked for result-producing mode: "${err.message}"`);
+  }
+  if (!reviewBypassBlocked) {
+    throw new Error("Direct generic transition to 'review' for vote_only challenge was not blocked!");
+  }
+
+  // Showcase-only challenge can transition submission_locked -> review directly
+  const [showcaseCh] = await db
+    .insert(challenges)
+    .values({
+      title: `Showcase Review Test ${suffix}`,
+      slug: `showcase-rev-${suffix}`,
+      theme: "Art",
+      description: "Testing showcase direct review",
+      promptRules: "Rules",
+      status: "submission_locked",
+      awardMode: "showcase_only",
+      createdByUserId: admin.id,
+    })
+    .returning();
+
+  await transitionChallengeStatusService(db, adminCtx, showcaseCh.id, "review");
+  const [showcaseRow] = await db.select().from(challenges).where(eq(challenges.id, showcaseCh.id));
+  if (showcaseRow.status !== "review") {
+    throw new Error("Showcase-only challenge failed to transition submission_locked -> review!");
+  }
+  console.log("✓ Direct transition to 'review' allowed for showcase_only mode.");
+  console.log("✓ Protected transition bypasses ('finished', 'results_revoked', and 'review') safely blocked.");
 
   // 7. Compute Blocked on FINISHED Challenge (Must Revoke First)
   console.log("\n[Test 7] Testing Compute Results Blocked on FINISHED Challenge...");
@@ -350,8 +398,8 @@ async function runPhase1LifecycleTests() {
   }
   console.log("✓ Results retrieval separation verified: Public sees 0 results on revoked challenge; moderator sees unpublished review results.");
 
-  // 9. Idempotent Scheduled Transition Materializer
-  console.log("\n[Test 9] Testing Idempotent Scheduled Transition Materializer...");
+  // 9. Idempotent & Concurrent Scheduled Transition Materializer
+  console.log("\n[Test 9] Testing Concurrency-Idempotent Scheduled Transition Materializer...");
   
   const [scheduledCh] = await db
     .insert(challenges)
@@ -368,18 +416,39 @@ async function runPhase1LifecycleTests() {
     })
     .returning();
 
-  const schedResult = await materializeScheduledTransitionsService(db, new Date());
-  const transitionedCh = schedResult.transitions.find((t) => t.challengeId === scheduledCh.id);
+  // Execute 2 concurrent materializer runs simultaneously
+  const [run1, run2] = await Promise.all([
+    materializeScheduledTransitionsService(db, new Date()),
+    materializeScheduledTransitionsService(db, new Date()),
+  ]);
 
-  if (!transitionedCh || transitionedCh.to !== "submission_open") {
-    throw new Error("Scheduler failed to materialize SCHEDULED -> SUBMISSION_OPEN!");
+  const totalTransitioned = run1.transitions.filter((t) => t.challengeId === scheduledCh.id).length +
+                           run2.transitions.filter((t) => t.challengeId === scheduledCh.id).length;
+
+  if (totalTransitioned !== 1) {
+    throw new Error(`Concurrency violation! Expected exactly 1 transition across concurrent runs, got ${totalTransitioned}`);
+  }
+
+  // Verify only 1 audit log created
+  const schedulerAudits = await db
+    .select()
+    .from(auditLogs)
+    .where(
+      and(
+        eq(auditLogs.targetId, scheduledCh.id),
+        eq(auditLogs.action, "scheduler.challenge_submission_opened")
+      )
+    );
+
+  if (schedulerAudits.length !== 1) {
+    throw new Error(`Expected exactly 1 audit log entry for scheduled transition, found ${schedulerAudits.length}`);
   }
 
   const [matRow] = await db.select().from(challenges).where(eq(challenges.id, scheduledCh.id));
   if (matRow.status !== "submission_open") {
     throw new Error(`Expected materialized status 'submission_open', got '${matRow.status}'`);
   }
-  console.log("✓ Scheduler materializer successfully transitioned scheduled challenge to submission_open.");
+  console.log("✓ Scheduler materializer concurrency idempotency verified: 2 simultaneous runs executed cleanly with exactly 1 state mutation and 1 audit log.");
 
   // 10. Persisted State Authority
   console.log("\n[Test 10] Testing Persisted State Authority...");

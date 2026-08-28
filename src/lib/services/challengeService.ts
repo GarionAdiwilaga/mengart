@@ -146,6 +146,16 @@ export async function transitionChallengeStatusService(
     challenge.pausedPreviousStatus
   );
 
+  if (
+    newStatus === "review" &&
+    challenge.awardMode !== "showcase_only" &&
+    currentStatus !== "results_revoked"
+  ) {
+    throw new Error(
+      `Transisi langsung ke 'review' tidak diizinkan untuk mode '${challenge.awardMode}'. Gunakan computeChallengeResultsService untuk menghitung hasil.`
+    );
+  }
+
   if (!allowedTransitions.includes(newStatus)) {
     throw new Error(
       `Transisi status ilegal: dari "${currentStatus}" ke "${newStatus}" untuk mode "${challenge.awardMode}". Transisi yang diizinkan: ${
@@ -727,7 +737,10 @@ export async function materializeScheduledTransitionsService(
 
   // 1. Scheduled -> Submission Open
   const scheduledChallenges = await dbOrTx
-    .select()
+    .select({
+      id: challenges.id,
+      submissionStartsAt: challenges.submissionStartsAt,
+    })
     .from(challenges)
     .where(
       and(
@@ -737,24 +750,35 @@ export async function materializeScheduledTransitionsService(
     );
 
   for (const ch of scheduledChallenges) {
-    await dbOrTx
+    const updated = await dbOrTx
       .update(challenges)
       .set({ status: "submission_open", updatedAt: now })
-      .where(eq(challenges.id, ch.id));
+      .where(
+        and(
+          eq(challenges.id, ch.id),
+          eq(challenges.status, "scheduled") // Concurrency conditional check
+        )
+      )
+      .returning({ id: challenges.id });
 
-    await dbOrTx.insert(auditLogs).values({
-      action: "scheduler.challenge_submission_opened",
-      targetType: "challenge",
-      targetId: ch.id,
-      reason: `Otomatis membuka submisi karena waktu mulai (${ch.submissionStartsAt?.toISOString()}) telah tercapai.`,
-    });
+    if (updated.length > 0) {
+      await dbOrTx.insert(auditLogs).values({
+        action: "scheduler.challenge_submission_opened",
+        targetType: "challenge",
+        targetId: ch.id,
+        reason: `Otomatis membuka submisi karena waktu mulai (${ch.submissionStartsAt?.toISOString()}) telah tercapai.`,
+      });
 
-    transitions.push({ challengeId: ch.id, from: "scheduled", to: "submission_open" });
+      transitions.push({ challengeId: ch.id, from: "scheduled", to: "submission_open" });
+    }
   }
 
   // 2. Submission Open -> Submission Locked
   const openChallenges = await dbOrTx
-    .select()
+    .select({
+      id: challenges.id,
+      submissionDeadline: challenges.submissionDeadline,
+    })
     .from(challenges)
     .where(
       and(
@@ -764,19 +788,27 @@ export async function materializeScheduledTransitionsService(
     );
 
   for (const ch of openChallenges) {
-    await dbOrTx
+    const updated = await dbOrTx
       .update(challenges)
       .set({ status: "submission_locked", updatedAt: now })
-      .where(eq(challenges.id, ch.id));
+      .where(
+        and(
+          eq(challenges.id, ch.id),
+          eq(challenges.status, "submission_open") // Concurrency conditional check
+        )
+      )
+      .returning({ id: challenges.id });
 
-    await dbOrTx.insert(auditLogs).values({
-      action: "scheduler.challenge_submission_locked",
-      targetType: "challenge",
-      targetId: ch.id,
-      reason: `Otomatis mengunci submisi karena deadline (${ch.submissionDeadline?.toISOString()}) telah terlewati.`,
-    });
+    if (updated.length > 0) {
+      await dbOrTx.insert(auditLogs).values({
+        action: "scheduler.challenge_submission_locked",
+        targetType: "challenge",
+        targetId: ch.id,
+        reason: `Otomatis mengunci submisi karena deadline (${ch.submissionDeadline?.toISOString()}) telah terlewati.`,
+      });
 
-    transitions.push({ challengeId: ch.id, from: "submission_open", to: "submission_locked" });
+      transitions.push({ challengeId: ch.id, from: "submission_open", to: "submission_locked" });
+    }
   }
 
   return {

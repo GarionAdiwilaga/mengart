@@ -39,3 +39,4 @@ next-env.d.ts
 /storage
 /uploads
 /backups
+.tmp_drizzle_*

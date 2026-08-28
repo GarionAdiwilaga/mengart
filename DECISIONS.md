@@ -171,4 +171,21 @@
 **Business Rule:** Real migration paths must automatically backfill legacy data with strict invariant guarantees. Results visibility is strictly gated by publication status and moderator authority.
 **Reason:** Resolves all 15 targeted Phase 1 correction gaps identified during independent QA review.
 
+## 2026-08-28
+
+### Phase 1 Correction Pass 2: Migration Scoping, Scheduler Idempotency, and Review Protection
+**Decision:** 
+1. **Scoped Migration Backfill (`0007_perfect_sunspot.sql`):** Filtered voting round backfill to challenges with existing legacy ballots, existing results, or active/concluded voting lifecycle states. Challenges in `draft`, `scheduled`, `submission_open`, `submission_locked` (without ballots) or modes `jury_only` / `showcase_only` do NOT receive premature voting rounds or prematurely frozen candidates. Future challenges freeze candidates only upon entering `voting_open`.
+2. **Preserved Legacy Ballot Round Semantics:** `round_type = 'main'` ballots are linked to a backfilled `main` round (seq 1), and `round_type = 'tiebreak'` ballots are linked to a distinct `tiebreak` round (seq 2).
+3. **Deterministic Award Type Classification & Orphan Purge:** Classified `award_type` strictly from authoritative winner slots (`slot_type = 'jury_award' -> 'jury_award'`, otherwise `'community_rank'`), classified unassigned rows with valid `final_rank` as `'community_rank'`, and deleted invalid legacy orphan rows where `winner_slot_id IS NULL AND final_rank IS NULL`.
+4. **Protected REVIEW Entry:** Generic `transitionChallengeStatusService(..., "review")` strictly blocks direct entry for `vote_only`, `vote_and_jury`, and `jury_only` modes, requiring `computeChallengeResultsService`. Preserved direct `submission_locked -> review` path for `showcase_only`.
+5. **Scheduler Execution Mechanism & Concurrency Idempotency:** Added protected cron endpoint (`/api/cron/materialize-challenges`), CLI script runner (`npm run cron:materialize`), documented in `DEPLOYMENT.md`, and implemented conditional database updates (`WHERE id = ch.id AND status = expectedOldStatus RETURNING id`) to ensure zero duplicate state mutations or audit log entries during concurrent scheduler executions.
+**Business Rule:** Scheduled state progression must be atomic and concurrency-idempotent. Result-producing challenges must compute tallies before entering review.
+**Reason:** Addressed all 9 independent QA audit requirements for Phase 1 Release Gate A.
+
+### Phase 2 Architecture Mandate: Ballot Uniqueness Index Migration
+**Decision:** The pre-0007 composite unique index `(challenge_id, user_id, round_type)` on `challenge_ballots` is fundamentally incompatible with multiple sequential tiebreak rounds. Phase 2 must migrate this unique constraint to an authoritative per-round uniqueness model `(voting_round_id, user_id)` before supporting multiple round sequences.
+**Business Rule:** A member may cast exactly 1 ballot per specific `voting_round_id`.
+**Reason:** Ensures support for arbitrary tiebreak rounds without index collision.
+
 

@@ -190,3 +190,25 @@ docker compose up -d --build web worker
 # 4. Verify readiness probe
 curl -f http://localhost:3000/api/health/readiness
 ```
+
+---
+
+## 8. Challenge Lifecycle Scheduler & Automated State Materializer
+
+Challenge status transitions (`scheduled -> submission_open` and `submission_open -> submission_locked`) run on an authoritative, concurrency-idempotent scheduler. Production supports two invocation modes:
+
+### Option A: Local / Server Crontab (CLI Runner)
+Run `crontab -e` on the host server or worker container:
+```bash
+# Execute scheduler every minute
+* * * * * cd /opt/mengart && npm run cron:materialize >> /var/log/mengart_cron.log 2>&1
+```
+
+### Option B: Cloud Scheduler / Vercel Cron (HTTP Endpoint)
+Configure an external scheduler or cloud cron trigger to invoke the protected endpoint:
+- **URL:** `https://mengart.yourdomain.com/api/cron/materialize-challenges`
+- **Method:** `GET` or `POST`
+- **Header:** `Authorization: Bearer <CRON_SECRET>` (configured in `.env.production`)
+- **Frequency:** Every 1–5 minutes.
+
+All executions utilize conditional database status updates to ensure complete concurrency idempotency with zero duplicate audit log entries.
