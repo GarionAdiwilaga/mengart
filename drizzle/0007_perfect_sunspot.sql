@@ -95,19 +95,20 @@ DECLARE
   sub RECORD;
   tb_sub RECORD;
 BEGIN
-  -- Backfill rounds ONLY for challenges that have legacy voting history or are in active/concluded voting stages
+  -- Backfill rounds ONLY for challenges that have legacy ballots OR voting-mode challenges with results/voting states
   FOR ch IN 
     SELECT c.id, c.status, c.stars_per_member, c.created_at, c.voting_deadline, c.voting_starts_at, c.award_mode
     FROM "challenges" c
     WHERE (
-      -- Has existing legacy ballots
+      -- Has actual legacy ballots (authoritative voting history)
       EXISTS (SELECT 1 FROM "challenge_ballots" b WHERE b.challenge_id = c.id)
-      -- Or has existing legacy results
-      OR EXISTS (SELECT 1 FROM "challenge_results" r WHERE r.challenge_id = c.id)
-      -- Or is currently in an active or post-voting lifecycle state (and not jury_only/showcase_only)
+      -- Or is a voting-capable award mode AND (has existing results or reached voting/post-voting lifecycle)
       OR (
-        c.status::text IN ('voting_open', 'tiebreak_open', 'review', 'finished', 'results_revoked')
-        AND COALESCE(c.award_mode, 'vote_and_jury') NOT IN ('jury_only', 'showcase_only')
+        COALESCE(c.award_mode, 'vote_and_jury') NOT IN ('jury_only', 'showcase_only')
+        AND (
+          EXISTS (SELECT 1 FROM "challenge_results" r WHERE r.challenge_id = c.id)
+          OR c.status::text IN ('voting_open', 'tiebreak_open', 'review', 'finished', 'results_revoked')
+        )
       )
     )
     AND NOT EXISTS (
@@ -195,7 +196,7 @@ BEGIN
         AND ("voting_round_id" IS NULL)
         AND ("round_type" = 'tiebreak');
 
-      -- Freeze candidate entries voted on in tiebreak ballots (or all submissions if none yet)
+      -- 1. Freeze candidate entries voted on in tiebreak ballots
       FOR tb_sub IN 
         SELECT DISTINCT bs.submission_id 
         FROM "challenge_ballot_stars" bs
@@ -206,6 +207,47 @@ BEGIN
         VALUES (gen_random_uuid(), tiebreak_round_id, tb_sub.submission_id, now())
         ON CONFLICT ("voting_round_id", "submission_id") DO NOTHING;
       END LOOP;
+
+      -- 2. If fewer than 2 candidates (e.g. 0 tiebreak ballots cast or partial voting), reconstruct tied candidates from main ballots
+      IF (SELECT COUNT(*) FROM "challenge_voting_round_candidates" WHERE "voting_round_id" = tiebreak_round_id) < 2 THEN
+        FOR tb_sub IN 
+          WITH main_scores AS (
+            SELECT bs.submission_id, SUM(bs.stars_count) as total_stars
+            FROM "challenge_ballot_stars" bs
+            INNER JOIN "challenge_ballots" b ON b.id = bs.ballot_id
+            WHERE b.challenge_id = ch.id AND (b.round_type = 'main' OR b.round_type IS NULL)
+            GROUP BY bs.submission_id
+          ),
+          tied_score AS (
+            SELECT total_stars
+            FROM main_scores
+            GROUP BY total_stars
+            HAVING COUNT(*) > 1
+            ORDER BY total_stars DESC
+            LIMIT 1
+          )
+          SELECT ms.submission_id
+          FROM main_scores ms
+          INNER JOIN tied_score ts ON ts.total_stars = ms.total_stars
+        LOOP
+          INSERT INTO "challenge_voting_round_candidates" ("id", "voting_round_id", "submission_id", "created_at")
+          VALUES (gen_random_uuid(), tiebreak_round_id, tb_sub.submission_id, now())
+          ON CONFLICT ("voting_round_id", "submission_id") DO NOTHING;
+        END LOOP;
+      END IF;
+
+      -- 3. If still fewer than 2 candidates (e.g. tiebreak_open with 0 main ballots), freeze all active submitted submissions
+      IF (SELECT COUNT(*) FROM "challenge_voting_round_candidates" WHERE "voting_round_id" = tiebreak_round_id) < 2 THEN
+        FOR tb_sub IN 
+          SELECT id as submission_id FROM "challenge_submissions" 
+          WHERE "challenge_id" = ch.id AND "submission_status" = 'submitted'
+        LOOP
+          INSERT INTO "challenge_voting_round_candidates" ("id", "voting_round_id", "submission_id", "created_at")
+          VALUES (gen_random_uuid(), tiebreak_round_id, tb_sub.submission_id, now())
+          ON CONFLICT ("voting_round_id", "submission_id") DO NOTHING;
+        END LOOP;
+      END IF;
+
     END IF;
 
   END LOOP;
@@ -225,6 +267,9 @@ UPDATE "challenge_results"
 SET "award_type" = 'community_rank'
 WHERE "winner_slot_id" IS NULL AND "final_rank" IS NOT NULL;--> statement-breakpoint
 
--- Clean verified invalid legacy orphan rows where both winner_slot_id and final_rank are null
+-- Clean verified invalid legacy non-winner orphan rows where both winner_slot_id and final_rank are null.
+-- Rationale: In legacy versions without strict validation, participant submission tracking occasionally
+-- inserted stub rows into challenge_results without a podium slot or a computed rank. Legitimate awards
+-- require either a winner_slot_id or a positive final_rank; rows with neither represent unranked noise.
 DELETE FROM "challenge_results"
 WHERE "winner_slot_id" IS NULL AND "final_rank" IS NULL;

@@ -5,19 +5,26 @@ import { materializeScheduledTransitionsService } from "@/lib/services/challenge
 /**
  * Production Cron Endpoint: Materialize Scheduled Challenge Status Transitions
  * Accessible via Vercel Cron, external cloud schedulers, crontab, or Cloudflare Workers.
- * Protected by CRON_SECRET bearer token.
+ * Protected by CRON_SECRET bearer token (Fail-Closed).
  */
 export async function GET(request: Request) {
-  const authHeader = request.headers.get("authorization");
-  const cronHeader = request.headers.get("x-cron-secret");
   const expectedSecret = process.env.CRON_SECRET;
 
-  // In production, enforce secret if configured
-  if (expectedSecret) {
-    const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
-    if (bearerToken !== expectedSecret && cronHeader !== expectedSecret) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  // 1. Missing server-side CRON_SECRET -> Fail Closed (503 Service Unavailable)
+  if (!expectedSecret || expectedSecret.trim() === "") {
+    return NextResponse.json(
+      { error: "CRON_SECRET is not configured on the server. Endpoint disabled." },
+      { status: 503 }
+    );
+  }
+
+  // 2. Validate caller authorization header or x-cron-secret header
+  const authHeader = request.headers.get("authorization");
+  const cronHeader = request.headers.get("x-cron-secret");
+  const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
+
+  if (bearerToken !== expectedSecret && cronHeader !== expectedSecret) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {

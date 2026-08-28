@@ -458,6 +458,47 @@ async function runPhase1LifecycleTests() {
   }
   console.log("✓ Persisted state authority strictly confirmed.");
 
+  // 11. Cron API Route Fail-Closed Auth Test
+  console.log("\n[Test 11] Testing /api/cron/materialize-challenges Fail-Closed Route...");
+  const { GET: cronHandler } = await import("@/app/api/cron/materialize-challenges/route");
+
+  const originalSecret = process.env.CRON_SECRET;
+
+  // 11a. Unset CRON_SECRET -> 503
+  delete process.env.CRON_SECRET;
+  const unconfiguredReq = new Request("http://localhost:3000/api/cron/materialize-challenges");
+  const unconfiguredRes = await cronHandler(unconfiguredReq);
+  if (unconfiguredRes.status !== 503) {
+    throw new Error(`Expected 503 when CRON_SECRET is unconfigured, got ${unconfiguredRes.status}`);
+  }
+
+  // 11b. Configured but wrong secret -> 401
+  process.env.CRON_SECRET = "test_super_secret_123";
+  const unauthorizedReq = new Request("http://localhost:3000/api/cron/materialize-challenges", {
+    headers: { Authorization: "Bearer wrong_secret" },
+  });
+  const unauthorizedRes = await cronHandler(unauthorizedReq);
+  if (unauthorizedRes.status !== 401) {
+    throw new Error(`Expected 401 for invalid secret, got ${unauthorizedRes.status}`);
+  }
+
+  // 11c. Configured with valid secret -> 200
+  const authorizedReq = new Request("http://localhost:3000/api/cron/materialize-challenges", {
+    headers: { Authorization: "Bearer test_super_secret_123" },
+  });
+  const authorizedRes = await cronHandler(authorizedReq);
+  if (authorizedRes.status !== 200) {
+    throw new Error(`Expected 200 for valid secret, got ${authorizedRes.status}`);
+  }
+  const cronData = await authorizedRes.json();
+  if (!cronData.ok) {
+    throw new Error(`Expected ok=true from cron endpoint, got: ${JSON.stringify(cronData)}`);
+  }
+
+  // Restore env
+  process.env.CRON_SECRET = originalSecret;
+  console.log("✓ /api/cron/materialize-challenges fail-closed verified: 503 when missing secret, 401 on mismatch, 200 on authorized invocation.");
+
   console.log("\n=================================================================");
   console.log("🎉 ALL ENHANCED PHASE 1 (GATE A) TESTS PASSED CLEANLY!");
   console.log("=================================================================\n");

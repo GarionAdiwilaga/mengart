@@ -184,8 +184,21 @@
 **Reason:** Addressed all 9 independent QA audit requirements for Phase 1 Release Gate A.
 
 ### Phase 2 Architecture Mandate: Ballot Uniqueness Index Migration
-**Decision:** The pre-0007 composite unique index `(challenge_id, user_id, round_type)` on `challenge_ballots` is fundamentally incompatible with multiple sequential tiebreak rounds. Phase 2 must migrate this unique constraint to an authoritative per-round uniqueness model `(voting_round_id, user_id)` before supporting multiple round sequences.
+**Decision:** The pre-0007 composite unique index `(challenge_id, user_id, round_type)` on `challenge_ballots` is fundamentally incompatible with multiple sequential tiebreak rounds. Phase 2 must explicitly drop/reconcile this unique constraint and replace it with an authoritative per-round uniqueness model `(voting_round_id, user_id)` before supporting multiple round sequences.
 **Business Rule:** A member may cast exactly 1 ballot per specific `voting_round_id`.
-**Reason:** Ensures support for arbitrary tiebreak rounds without index collision.
+**Reason:** Ensures support for arbitrary sequential tiebreak rounds without index collision.
+
+### Phase 1 Final Targeted Corrections: Scoping Hardening, Tiebreak Reconstruction, Fail-Closed Cron, and Transactional Schedulers
+**Decision:**
+1. **Award-Mode Scoping for Migration 0007:** Scoped voting round creation to require actual ballots OR voting-enabled award modes (`COALESCE(c.award_mode, 'vote_and_jury') NOT IN ('jury_only', 'showcase_only')`). Finished `jury_only` and `showcase_only` challenges with results and zero ballots receive 0 voting rounds.
+2. **Active Tiebreak Candidate Reconstruction:** When migrating `tiebreak_open` challenges with 0 or partial ballots, the candidate set is reconstructed from tied submissions in main round ballots (or all submissions if 0 main ballots exist), preventing empty or incomplete candidate snapshots.
+3. **Fail-Closed `/api/cron/materialize-challenges` Endpoint:** Unset/missing `CRON_SECRET` returns `503 Service Unavailable` (endpoint disabled). Invalid secret returns `401 Unauthorized`. Valid secret returns `200 OK`. `CRON_SECRET` documented in `.env.example` and `DEPLOYMENT.md`.
+4. **Transactional Scheduler Transitions:** In `materializeScheduledTransitionsService`, each conditional update (`UPDATE ... WHERE status = :expectedStatus RETURNING id`) and its corresponding audit log (`INSERT INTO audit_logs`) are wrapped in a single database transaction (`dbOrTx.transaction()`), ensuring state mutation and audit logging commit atomically.
+5. **Production Service Validation in Migration Suite:** `scripts/verifyMigrations.ts` exercises the actual production `transitionChallengeStatusService` to transition legacy `submission_open -> submission_locked -> voting_open` and confirms candidate snapshot freezing for both pre- and post-migration submissions.
+6. **Purge of Malformed Orphan Results:** Explicitly verified cleanup of legacy stub rows where both `winner_slot_id IS NULL AND final_rank IS NULL`, documenting that legitimate results strictly require either a winner slot or a positive rank.
+7. **Phase 2 Ballot Index Mandate:** Reconfirmed that Phase 2 must explicitly drop/reconcile the legacy unique constraint `(challenge_id, user_id, round_type)` on `challenge_ballots` and replace it with per-round uniqueness `(voting_round_id, user_id)`.
+**Business Rule:** Production security endpoints must fail closed. Database migrations must never fabricate voting rounds for non-voting modes or leave active rounds empty.
+**Reason:** Addressed final independent QA review findings for Phase 1 Release Gate A.
+
 
 

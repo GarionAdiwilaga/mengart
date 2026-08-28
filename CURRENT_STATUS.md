@@ -1,19 +1,19 @@
 # Current Status
 
 ## Active Remediation Roadmap (Independent QA Audit 28-Aug-2026)
-- **Phase 1: Release Gate A (Database Migrations & Lifecycle State Engine):** **CORRECTION PASS 2 COMPLETED & FULLY VERIFIED**
+- **Phase 1: Release Gate A (Database Migrations & Lifecycle State Engine):** **FINAL TARGETED CORRECTIONS COMPLETED & VERIFIED**
   - Refined SQL migration `drizzle/0007_perfect_sunspot.sql`:
-    - Filtered backfill to challenges with existing voting history or in active/concluded voting stages.
-    - Preserved `draft`, `scheduled`, `submission_open`, `submission_locked` (without ballots) and `jury_only` / `showcase_only` challenges from premature voting round creation or candidate freezing.
-    - Preserved legacy round semantics: `round_type = 'main'` -> main round (seq 1); `round_type = 'tiebreak'` -> tiebreak round (seq 2).
-    - Deterministic `award_type` classification from winner slot type, valid `final_rank` classification, and safe deletion of legacy orphan rows with null slot and null rank.
+    - Strict award-mode scoping: finished `jury_only` and `showcase_only` challenges with results and zero ballots receive 0 voting rounds.
+    - Active tiebreak candidate set reconstruction: populates tied candidates from main round ballots for `tiebreak_open` challenges with 0 or partial ballots.
+    - Legacy round semantics preserved: `round_type = 'main'` -> seq 1 main round, `round_type = 'tiebreak'` -> seq 2 tiebreak round.
+    - Deterministic `award_type` classification and safe cleanup of verified invalid orphan rows (`winner_slot_id IS NULL AND final_rank IS NULL`).
   - Strengthened `scripts/verifyMigrations.ts`:
-    - Regression fixture testing legacy `submission_open` challenge (verifying no premature round created pre-transition, post-migration submission addition, and complete candidate set freezing at `voting_open`).
-    - Verified main and tiebreak round preservation and ballot linkage.
-    - Tested fresh empty database (0000 -> 0007) and genuine upgrade (0006 -> 0007) via real Drizzle migrator.
-  - Protected lifecycle transitions: blocked direct `review` transitions in `transitionChallengeStatusService` for result-producing modes (`vote_only`, `vote_and_jury`, `jury_only`), enforcing computation through `computeChallengeResultsService`.
-  - Production scheduler execution path: added protected HTTP cron endpoint (`/api/cron/materialize-challenges`), CLI script runner (`npm run cron:materialize`), and documented in `DEPLOYMENT.md`.
-  - Concurrency-idempotent materialization: atomic conditional database updates (`WHERE id = ch.id AND status = expectedOldStatus RETURNING id`) preventing duplicate transitions and duplicate audit logs.
+    - Verified 0 rounds for finished `jury_only` (with result), finished `showcase_only` (with result), and draft showcase.
+    - Verified candidate set reconstruction for zero-ballot and partial-ballot `tiebreak_open` challenges.
+    - Verified production `transitionChallengeStatusService` creates future main round and freezes full candidate set (both pre- and post-migration submissions) upon entering `voting_open`.
+    - Verified malformed result row cleanup.
+  - Fail-closed security on `/api/cron/materialize-challenges`: returns 503 when `CRON_SECRET` is unset, 401 on mismatch, and 200 on authorized invocation. `CRON_SECRET` added to `.env.example` and `DEPLOYMENT.md`.
+  - Transactional scheduler execution: wrapped conditional status updates and audit logging inside atomic `dbOrTx.transaction()`.
   - Architectural mandate recorded for Phase 2: replace `(challenge_id, user_id, round_type)` unique constraint on `challenge_ballots` with `(voting_round_id, user_id)` for sequential tiebreak rounds.
 - **Phase 2: Release Gate B (Voting & Tiebreak Architecture):** PENDING APPROVAL
 - **Phase 3: Release Gate C (Shared Jury Slots & Result Integrity):** PENDING REVIEW

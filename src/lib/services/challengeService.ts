@@ -750,25 +750,35 @@ export async function materializeScheduledTransitionsService(
     );
 
   for (const ch of scheduledChallenges) {
-    const updated = await dbOrTx
-      .update(challenges)
-      .set({ status: "submission_open", updatedAt: now })
-      .where(
-        and(
-          eq(challenges.id, ch.id),
-          eq(challenges.status, "scheduled") // Concurrency conditional check
+    const performTransition = async (tx: any) => {
+      const updated = await tx
+        .update(challenges)
+        .set({ status: "submission_open", updatedAt: now })
+        .where(
+          and(
+            eq(challenges.id, ch.id),
+            eq(challenges.status, "scheduled") // Concurrency conditional check
+          )
         )
-      )
-      .returning({ id: challenges.id });
+        .returning({ id: challenges.id });
 
-    if (updated.length > 0) {
-      await dbOrTx.insert(auditLogs).values({
-        action: "scheduler.challenge_submission_opened",
-        targetType: "challenge",
-        targetId: ch.id,
-        reason: `Otomatis membuka submisi karena waktu mulai (${ch.submissionStartsAt?.toISOString()}) telah tercapai.`,
-      });
+      if (updated.length > 0) {
+        await tx.insert(auditLogs).values({
+          action: "scheduler.challenge_submission_opened",
+          targetType: "challenge",
+          targetId: ch.id,
+          reason: `Otomatis membuka submisi karena waktu mulai (${ch.submissionStartsAt?.toISOString()}) telah tercapai.`,
+        });
+        return true;
+      }
+      return false;
+    };
 
+    const succeeded = typeof dbOrTx.transaction === "function"
+      ? await dbOrTx.transaction(async (tx: any) => performTransition(tx))
+      : await performTransition(dbOrTx);
+
+    if (succeeded) {
       transitions.push({ challengeId: ch.id, from: "scheduled", to: "submission_open" });
     }
   }
@@ -788,25 +798,35 @@ export async function materializeScheduledTransitionsService(
     );
 
   for (const ch of openChallenges) {
-    const updated = await dbOrTx
-      .update(challenges)
-      .set({ status: "submission_locked", updatedAt: now })
-      .where(
-        and(
-          eq(challenges.id, ch.id),
-          eq(challenges.status, "submission_open") // Concurrency conditional check
+    const performLockTransition = async (tx: any) => {
+      const updated = await tx
+        .update(challenges)
+        .set({ status: "submission_locked", updatedAt: now })
+        .where(
+          and(
+            eq(challenges.id, ch.id),
+            eq(challenges.status, "submission_open") // Concurrency conditional check
+          )
         )
-      )
-      .returning({ id: challenges.id });
+        .returning({ id: challenges.id });
 
-    if (updated.length > 0) {
-      await dbOrTx.insert(auditLogs).values({
-        action: "scheduler.challenge_submission_locked",
-        targetType: "challenge",
-        targetId: ch.id,
-        reason: `Otomatis mengunci submisi karena deadline (${ch.submissionDeadline?.toISOString()}) telah terlewati.`,
-      });
+      if (updated.length > 0) {
+        await tx.insert(auditLogs).values({
+          action: "scheduler.challenge_submission_locked",
+          targetType: "challenge",
+          targetId: ch.id,
+          reason: `Otomatis mengunci submisi karena batas waktu (${ch.submissionDeadline?.toISOString()}) telah tercapai.`,
+        });
+        return true;
+      }
+      return false;
+    };
 
+    const succeeded = typeof dbOrTx.transaction === "function"
+      ? await dbOrTx.transaction(async (tx: any) => performLockTransition(tx))
+      : await performLockTransition(dbOrTx);
+
+    if (succeeded) {
       transitions.push({ challengeId: ch.id, from: "submission_open", to: "submission_locked" });
     }
   }

@@ -208,7 +208,12 @@ Run `crontab -e` on the host server or worker container:
 Configure an external scheduler or cloud cron trigger to invoke the protected endpoint:
 - **URL:** `https://mengart.yourdomain.com/api/cron/materialize-challenges`
 - **Method:** `GET` or `POST`
-- **Header:** `Authorization: Bearer <CRON_SECRET>` (configured in `.env.production`)
+- **Header:** `Authorization: Bearer <CRON_SECRET>` or `x-cron-secret: <CRON_SECRET>` (configured in `.env.production`)
+- **Security & Fail-Closed Behavior:**
+  - `503 Service Unavailable`: Server has not configured `CRON_SECRET` in environment variables (endpoint disabled by default).
+  - `401 Unauthorized`: Request missing `CRON_SECRET` or provided invalid secret.
+  - `200 OK`: Authorized execution returning processed challenge count and transitions array.
 - **Frequency:** Every 1–5 minutes.
 
-All executions utilize conditional database status updates to ensure complete concurrency idempotency with zero duplicate audit log entries.
+All executions utilize conditional database status updates and transactional audit logging to ensure complete concurrency idempotency with zero duplicate audit log entries.
+
