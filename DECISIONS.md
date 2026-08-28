@@ -200,5 +200,17 @@
 **Business Rule:** Production security endpoints must fail closed. Database migrations must never fabricate voting rounds for non-voting modes or leave active rounds empty.
 **Reason:** Addressed final independent QA review findings for Phase 1 Release Gate A.
 
+## 2026-08-29
+
+### Phase 1 Tiebreak Candidate Reconstruction & Migration Hardening
+**Decision:**
+1. **Unconditional Tiebreak Candidate Reconstruction at Community Cutoff:** Removed the `< 2` candidate count condition in `drizzle/0007_perfect_sunspot.sql`. Migration authoritatively unions candidates referenced in legacy tiebreak ballots with all candidates tied at the exact $K$-th `community_vote` cutoff rank from main round ballots.
+2. **Removed Arbitrary Fallbacks:** Completely removed the unsafe fallback that froze all submitted submissions. If an active historical tiebreak candidate set cannot be reconstructed, the migration fails closed rather than inventing a candidate set.
+3. **Active Legacy Tiebreak Timing Validation:** For active `tiebreak_open` rounds, set `starts_at <= now()` and `deadline = GREATEST(voting_deadline, now()) + interval '24 hours'` to guarantee `starts_at < deadline` and a viable future operational window.
+4. **Pre-Migration Malformed Result Cleanup Verification:** Verified in `scripts/verifyMigrations.ts` that known schema drift (a malformed stub row with both `winner_slot_id IS NULL AND final_rank IS NULL` inserted before migration) is purged by migration 0007 itself during execution.
+**Business Rule:** Tiebreak candidate reconstruction must match the live cutoff algorithm and never expand eligibility to untied candidates.
+**Reason:** Addressed independent QA audit requirements for Phase 1 tiebreak integrity.
+
+
 
 

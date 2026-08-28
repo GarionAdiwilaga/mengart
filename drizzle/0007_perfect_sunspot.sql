@@ -165,29 +165,48 @@ BEGIN
     ) OR ch.status::text = 'tiebreak_open' THEN
       tiebreak_round_id := gen_random_uuid();
 
-      INSERT INTO "challenge_voting_rounds" (
-        "id",
-        "challenge_id",
-        "round_type",
-        "round_sequence",
-        "status",
-        "starts_at",
-        "deadline",
-        "stars_per_member",
-        "created_at",
-        "updated_at"
-      ) VALUES (
-        tiebreak_round_id,
-        ch.id,
-        'tiebreak',
-        2,
-        CASE WHEN ch.status::text = 'tiebreak_open' THEN 'open'::voting_round_status ELSE 'closed'::voting_round_status END,
-        COALESCE(ch.voting_deadline, now()),
-        ch.voting_deadline,
-        1,
-        now(),
-        now()
-      );
+      -- Calculate timing: ensure starts_at < deadline and active tiebreak deadline is viable
+      DECLARE
+        tb_starts_at timestamp with time zone;
+        tb_deadline timestamp with time zone;
+      BEGIN
+        tb_starts_at := COALESCE(ch.voting_deadline, ch.voting_starts_at, ch.created_at);
+        IF ch.status::text = 'tiebreak_open' THEN
+          IF tb_starts_at > now() THEN
+            tb_starts_at := now();
+          END IF;
+          tb_deadline := GREATEST(COALESCE(ch.voting_deadline, now()), now()) + interval '24 hours';
+        ELSE
+          tb_deadline := COALESCE(ch.voting_deadline, ch.created_at + interval '7 days');
+          IF tb_starts_at >= tb_deadline THEN
+            tb_deadline := tb_starts_at + interval '24 hours';
+          END IF;
+        END IF;
+
+        INSERT INTO "challenge_voting_rounds" (
+          "id",
+          "challenge_id",
+          "round_type",
+          "round_sequence",
+          "status",
+          "starts_at",
+          "deadline",
+          "stars_per_member",
+          "created_at",
+          "updated_at"
+        ) VALUES (
+          tiebreak_round_id,
+          ch.id,
+          'tiebreak',
+          2,
+          CASE WHEN ch.status::text = 'tiebreak_open' THEN 'open'::voting_round_status ELSE 'closed'::voting_round_status END,
+          tb_starts_at,
+          tb_deadline,
+          1,
+          now(),
+          now()
+        );
+      END;
 
       -- Link legacy TIEBREAK ballots of this challenge to the tiebreak round
       UPDATE "challenge_ballots"
@@ -196,7 +215,7 @@ BEGIN
         AND ("voting_round_id" IS NULL)
         AND ("round_type" = 'tiebreak');
 
-      -- 1. Freeze candidate entries voted on in tiebreak ballots
+      -- 1. Freeze candidate entries voted on in legacy tiebreak ballots
       FOR tb_sub IN 
         SELECT DISTINCT bs.submission_id 
         FROM "challenge_ballot_stars" bs
@@ -208,45 +227,38 @@ BEGIN
         ON CONFLICT ("voting_round_id", "submission_id") DO NOTHING;
       END LOOP;
 
-      -- 2. If fewer than 2 candidates (e.g. 0 tiebreak ballots cast or partial voting), reconstruct tied candidates from main ballots
-      IF (SELECT COUNT(*) FROM "challenge_voting_round_candidates" WHERE "voting_round_id" = tiebreak_round_id) < 2 THEN
-        FOR tb_sub IN 
-          WITH main_scores AS (
-            SELECT bs.submission_id, SUM(bs.stars_count) as total_stars
-            FROM "challenge_ballot_stars" bs
-            INNER JOIN "challenge_ballots" b ON b.id = bs.ballot_id
-            WHERE b.challenge_id = ch.id AND (b.round_type = 'main' OR b.round_type IS NULL)
-            GROUP BY bs.submission_id
-          ),
-          tied_score AS (
-            SELECT total_stars
-            FROM main_scores
-            GROUP BY total_stars
-            HAVING COUNT(*) > 1
-            ORDER BY total_stars DESC
-            LIMIT 1
-          )
-          SELECT ms.submission_id
-          FROM main_scores ms
-          INNER JOIN tied_score ts ON ts.total_stars = ms.total_stars
-        LOOP
-          INSERT INTO "challenge_voting_round_candidates" ("id", "voting_round_id", "submission_id", "created_at")
-          VALUES (gen_random_uuid(), tiebreak_round_id, tb_sub.submission_id, now())
-          ON CONFLICT ("voting_round_id", "submission_id") DO NOTHING;
-        END LOOP;
-      END IF;
-
-      -- 3. If still fewer than 2 candidates (e.g. tiebreak_open with 0 main ballots), freeze all active submitted submissions
-      IF (SELECT COUNT(*) FROM "challenge_voting_round_candidates" WHERE "voting_round_id" = tiebreak_round_id) < 2 THEN
-        FOR tb_sub IN 
-          SELECT id as submission_id FROM "challenge_submissions" 
-          WHERE "challenge_id" = ch.id AND "submission_status" = 'submitted'
-        LOOP
-          INSERT INTO "challenge_voting_round_candidates" ("id", "voting_round_id", "submission_id", "created_at")
-          VALUES (gen_random_uuid(), tiebreak_round_id, tb_sub.submission_id, now())
-          ON CONFLICT ("voting_round_id", "submission_id") DO NOTHING;
-        END LOOP;
-      END IF;
+      -- 2. Unconditionally reconstruct full tied candidate group at the Community winner cutoff rank
+      FOR tb_sub IN 
+        WITH main_scores AS (
+          SELECT 
+            bs.submission_id, 
+            SUM(bs.stars_count) as total_stars
+          FROM "challenge_ballot_stars" bs
+          INNER JOIN "challenge_ballots" b ON b.id = bs.ballot_id
+          WHERE b.challenge_id = ch.id AND (b.round_type = 'main' OR b.round_type IS NULL)
+          GROUP BY bs.submission_id
+        ),
+        community_slots AS (
+          SELECT COALESCE(NULLIF(COUNT(*), 0), 1) as k
+          FROM "challenge_winner_slots"
+          WHERE challenge_id = ch.id AND slot_type = 'community_vote'
+        ),
+        cutoff_score AS (
+          SELECT ms.total_stars
+          FROM main_scores ms, community_slots cs
+          ORDER BY ms.total_stars DESC
+          OFFSET (SELECT GREATEST(cs.k - 1, 0) FROM community_slots cs)
+          LIMIT 1
+        )
+        SELECT ms.submission_id
+        FROM main_scores ms
+        WHERE ms.total_stars = (SELECT total_stars FROM cutoff_score)
+          AND (SELECT COUNT(*) FROM main_scores ms2 WHERE ms2.total_stars = ms.total_stars) > 1
+      LOOP
+        INSERT INTO "challenge_voting_round_candidates" ("id", "voting_round_id", "submission_id", "created_at")
+        VALUES (gen_random_uuid(), tiebreak_round_id, tb_sub.submission_id, now())
+        ON CONFLICT ("voting_round_id", "submission_id") DO NOTHING;
+      END LOOP;
 
     END IF;
 

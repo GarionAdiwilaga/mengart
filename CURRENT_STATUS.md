@@ -1,19 +1,22 @@
 # Current Status
 
 ## Active Remediation Roadmap (Independent QA Audit 28-Aug-2026)
-- **Phase 1: Release Gate A (Database Migrations & Lifecycle State Engine):** **FINAL TARGETED CORRECTIONS COMPLETED & VERIFIED**
-  - Refined SQL migration `drizzle/0007_perfect_sunspot.sql`:
-    - Strict award-mode scoping: finished `jury_only` and `showcase_only` challenges with results and zero ballots receive 0 voting rounds.
-    - Active tiebreak candidate set reconstruction: populates tied candidates from main round ballots for `tiebreak_open` challenges with 0 or partial ballots.
-    - Legacy round semantics preserved: `round_type = 'main'` -> seq 1 main round, `round_type = 'tiebreak'` -> seq 2 tiebreak round.
-    - Deterministic `award_type` classification and safe cleanup of verified invalid orphan rows (`winner_slot_id IS NULL AND final_rank IS NULL`).
-  - Strengthened `scripts/verifyMigrations.ts`:
-    - Verified 0 rounds for finished `jury_only` (with result), finished `showcase_only` (with result), and draft showcase.
-    - Verified candidate set reconstruction for zero-ballot and partial-ballot `tiebreak_open` challenges.
-    - Verified production `transitionChallengeStatusService` creates future main round and freezes full candidate set (both pre- and post-migration submissions) upon entering `voting_open`.
-    - Verified malformed result row cleanup.
-  - Fail-closed security on `/api/cron/materialize-challenges`: returns 503 when `CRON_SECRET` is unset, 401 on mismatch, and 200 on authorized invocation. `CRON_SECRET` added to `.env.example` and `DEPLOYMENT.md`.
-  - Transactional scheduler execution: wrapped conditional status updates and audit logging inside atomic `dbOrTx.transaction()`.
+- **Phase 1: Release Gate A (Database Migrations & Lifecycle State Engine):** **TIEBREAK INTEGRITY CORRECTIONS COMPLETED & FULLY VERIFIED**
+  - Migration 0007 (`drizzle/0007_perfect_sunspot.sql`):
+    - Unconditional reconstruction of tied candidate sets at the Community winner cutoff rank.
+    - Full support for 3+ tied candidate sets with partial tiebreak ballots.
+    - Zero unsafe fallbacks (no arbitrary freezing of all submissions).
+    - Valid active tiebreak timing window (`starts_at < deadline`, `deadline > now()`).
+    - Authoritative award-mode scoping (zero voting rounds for finished `jury_only` and `showcase_only` with results).
+    - Deterministic `award_type` backfill and purge of malformed orphan results.
+  - Comprehensive Migration Test Suite (`scripts/verifyMigrations.ts`):
+    - Tested 7 strict invariants on fresh database and upgrade database from 0006 journal.
+    - Validated 3-way tiebreak candidate set reconstruction with partial voting.
+    - Validated pre-migration malformed row purge by migration 0007 itself.
+    - Validated production `transitionChallengeStatusService` for post-migration round creation and candidate freeze.
+  - Protected Lifecycle & Scheduler:
+    - Fail-closed `/api/cron/materialize-challenges` (503 when unset, 401 when invalid, 200 when valid).
+    - Concurrency-idempotent and transactional scheduler state mutations and audit logging.
   - Architectural mandate recorded for Phase 2: replace `(challenge_id, user_id, round_type)` unique constraint on `challenge_ballots` with `(voting_round_id, user_id)` for sequential tiebreak rounds.
 - **Phase 2: Release Gate B (Voting & Tiebreak Architecture):** PENDING APPROVAL
 - **Phase 3: Release Gate C (Shared Jury Slots & Result Integrity):** PENDING REVIEW

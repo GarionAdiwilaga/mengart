@@ -272,41 +272,51 @@ async function runMigrationVerification() {
       VALUES (${tbZeroMainBallot.id}, ${tbZeroSubA.id}, 1), (${tbZeroMainBallot.id}, ${tbZeroSubB.id}, 1);
     `;
 
-    // 5. Active TIEBREAK-OPEN Challenge with PARTIAL tiebreak ballots
-    const [tbPartChallenge] = await upgradeClient`
+    // 5. Active TIEBREAK-OPEN Challenge with 3+ TIED CANDIDATES and PARTIALLY CAST ballots
+    const [tb3TiedChallenge] = await upgradeClient`
       INSERT INTO challenges (title, slug, theme, description, prompt_rules, status, award_mode, stars_per_member, created_by_user_id)
-      VALUES ('Legacy Tiebreak Open Partial Ballots', 'legacy-tb-part-2026', 'Tiebreak Part', 'Testing tb partial', 'Rules', 'tiebreak_open', 'vote_and_jury', 3, ${userA.id})
+      VALUES ('Legacy 3-Way Tiebreak Open', 'legacy-tb-3way-2026', 'Tiebreak 3Way', 'Testing 3-way tie', 'Rules', 'tiebreak_open', 'vote_and_jury', 3, ${userA.id})
       RETURNING id;
     `;
-    const [tbPartSubA] = await upgradeClient`
+    const [tb3Slot] = await upgradeClient`
+      INSERT INTO challenge_winner_slots (challenge_id, slot_type, rank, title, display_order)
+      VALUES (${tb3TiedChallenge.id}, 'community_vote', 1, 'Juara 1 Komunitas', 1)
+      RETURNING id;
+    `;
+    const [tb3SubA] = await upgradeClient`
       INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status)
-      VALUES (${tbPartChallenge.id}, ${userA.id}, ${profA.id}, 'submitted')
+      VALUES (${tb3TiedChallenge.id}, ${userA.id}, ${profA.id}, 'submitted')
       RETURNING id;
     `;
-    const [tbPartSubB] = await upgradeClient`
+    const [tb3SubB] = await upgradeClient`
       INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status)
-      VALUES (${tbPartChallenge.id}, ${userB.id}, ${profB.id}, 'submitted')
+      VALUES (${tb3TiedChallenge.id}, ${userB.id}, ${profB.id}, 'submitted')
       RETURNING id;
     `;
-    // Main ballots producing a tie
-    const [tbPartMainBallot] = await upgradeClient`
+    const [tb3SubC] = await upgradeClient`
+      INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status)
+      VALUES (${tb3TiedChallenge.id}, ${userC.id}, ${profC.id}, 'submitted')
+      RETURNING id;
+    `;
+    // Main ballot producing a 3-way tie at 1st place cutoff (1 star to A, 1 star to B, 1 star to C)
+    const [tb3MainBallot] = await upgradeClient`
       INSERT INTO challenge_ballots (challenge_id, user_id, round_type, stars_allocated, is_finalized)
-      VALUES (${tbPartChallenge.id}, ${userC.id}, 'main', 2, true)
+      VALUES (${tb3TiedChallenge.id}, ${userA.id}, 'main', 3, true)
       RETURNING id;
     `;
     await upgradeClient`
       INSERT INTO challenge_ballot_stars (ballot_id, submission_id, stars_count)
-      VALUES (${tbPartMainBallot.id}, ${tbPartSubA.id}, 1), (${tbPartMainBallot.id}, ${tbPartSubB.id}, 1);
+      VALUES (${tb3MainBallot.id}, ${tb3SubA.id}, 1), (${tb3MainBallot.id}, ${tb3SubB.id}, 1), (${tb3MainBallot.id}, ${tb3SubC.id}, 1);
     `;
-    // 1 Tiebreak ballot cast voting for tbPartSubA
-    const [tbPartTbBallot] = await upgradeClient`
+    // Partially cast tiebreak ballot that only votes for tb3SubA (referencing only 1 of 3 candidates)
+    const [tb3TbBallot] = await upgradeClient`
       INSERT INTO challenge_ballots (challenge_id, user_id, round_type, stars_allocated, is_finalized)
-      VALUES (${tbPartChallenge.id}, ${userA.id}, 'tiebreak', 1, true)
+      VALUES (${tb3TiedChallenge.id}, ${userB.id}, 'tiebreak', 1, true)
       RETURNING id;
     `;
     await upgradeClient`
       INSERT INTO challenge_ballot_stars (ballot_id, submission_id, stars_count)
-      VALUES (${tbPartTbBallot.id}, ${tbPartSubA.id}, 1);
+      VALUES (${tb3TbBallot.id}, ${tb3SubA.id}, 1);
     `;
 
     // 6. Legacy Submission-Open Challenge (No ballots yet, 1 submission)
@@ -325,6 +335,19 @@ async function runMigrationVerification() {
     const [showcaseChallenge] = await upgradeClient`
       INSERT INTO challenges (title, slug, theme, description, prompt_rules, status, award_mode, stars_per_member, created_by_user_id)
       VALUES ('Legacy Showcase Challenge', 'legacy-showcase-2026', 'Art Only', 'Testing showcase', 'Rules', 'draft', 'showcase_only', 0, ${userA.id})
+      RETURNING id;
+    `;
+
+    // 8. Simulate known pre-remediation schema drift by inserting a malformed row (null slot and null rank)
+    await upgradeClient`ALTER TABLE challenge_results ALTER COLUMN final_rank DROP NOT NULL;`;
+    const [malformedSub] = await upgradeClient`
+      INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status)
+      VALUES (${challenge.id}, ${userB.id}, ${profB.id}, 'submitted')
+      RETURNING id;
+    `;
+    const [malformedLegacyRow] = await upgradeClient`
+      INSERT INTO challenge_results (challenge_id, submission_id, winner_slot_id, final_rank, total_community_stars, is_published)
+      VALUES (${challenge.id}, ${malformedSub.id}, null, null, 0, false)
       RETURNING id;
     `;
 
@@ -435,29 +458,49 @@ async function runMigrationVerification() {
     }
     console.log("✓ Invariant 4 Passed: Zero voting rounds for finished jury_only (with results), finished showcase_only (with results), submission_open, and draft showcase.");
 
-    // Invariant 5: Active Legacy Tiebreak Candidate Reconstruction (Zero Ballots and Partial Ballots)
+    // Invariant 5: Active Legacy Tiebreak Candidate Reconstruction (Zero Ballots and 3+ Tied Candidates with Partial Ballots) & Timing
     const tbZeroRounds = await upgradeClient`
-      SELECT vr.id, vr.round_type, vr.status, COUNT(vrc.id)::int as candidate_count
+      SELECT vr.id, vr.round_type, vr.status, vr.starts_at, vr.deadline, COUNT(vrc.id)::int as candidate_count
       FROM challenge_voting_rounds vr
       LEFT JOIN challenge_voting_round_candidates vrc ON vrc.voting_round_id = vr.id
       WHERE vr.challenge_id = ${tbZeroChallenge.id} AND vr.round_type = 'tiebreak'
-      GROUP BY vr.id, vr.round_type, vr.status;
+      GROUP BY vr.id, vr.round_type, vr.status, vr.starts_at, vr.deadline;
     `;
     if (tbZeroRounds.length !== 1 || tbZeroRounds[0].candidate_count !== 2) {
       throw new Error(`Tiebreak candidate reconstruction failed for zero-ballot tiebreak! Expected 1 round with 2 candidates, got ${JSON.stringify(tbZeroRounds)}`);
     }
+    if (new Date(tbZeroRounds[0].starts_at) >= new Date(tbZeroRounds[0].deadline)) {
+      throw new Error(`Tiebreak timing invalid: starts_at (${tbZeroRounds[0].starts_at}) >= deadline (${tbZeroRounds[0].deadline})`);
+    }
+    if (new Date(tbZeroRounds[0].deadline).getTime() <= Date.now()) {
+      throw new Error(`Active tiebreak deadline expired! Deadline: ${tbZeroRounds[0].deadline}`);
+    }
 
-    const tbPartRounds = await upgradeClient`
-      SELECT vr.id, vr.round_type, vr.status, COUNT(vrc.id)::int as candidate_count
+    const tb3Rounds = await upgradeClient`
+      SELECT vr.id, vr.round_type, vr.status, vr.starts_at, vr.deadline, COUNT(vrc.id)::int as candidate_count
       FROM challenge_voting_rounds vr
       LEFT JOIN challenge_voting_round_candidates vrc ON vrc.voting_round_id = vr.id
-      WHERE vr.challenge_id = ${tbPartChallenge.id} AND vr.round_type = 'tiebreak'
-      GROUP BY vr.id, vr.round_type, vr.status;
+      WHERE vr.challenge_id = ${tb3TiedChallenge.id} AND vr.round_type = 'tiebreak'
+      GROUP BY vr.id, vr.round_type, vr.status, vr.starts_at, vr.deadline;
     `;
-    if (tbPartRounds.length !== 1 || tbPartRounds[0].candidate_count !== 2) {
-      throw new Error(`Tiebreak candidate reconstruction failed for partial-ballot tiebreak! Expected 1 round with 2 candidates, got ${JSON.stringify(tbPartRounds)}`);
+    if (tb3Rounds.length !== 1 || tb3Rounds[0].candidate_count !== 3) {
+      throw new Error(`Tiebreak candidate reconstruction failed for 3-way tiebreak with partial ballots! Expected 3 candidates, got ${JSON.stringify(tb3Rounds)}`);
     }
-    console.log("✓ Invariant 5 Passed: Active legacy tiebreak candidate sets successfully reconstructed for both zero-ballot and partial-ballot scenarios.");
+    if (new Date(tb3Rounds[0].starts_at) >= new Date(tb3Rounds[0].deadline)) {
+      throw new Error(`3-way tiebreak timing invalid: starts_at >= deadline`);
+    }
+    if (new Date(tb3Rounds[0].deadline).getTime() <= Date.now()) {
+      throw new Error(`3-way tiebreak deadline expired! Deadline: ${tb3Rounds[0].deadline}`);
+    }
+
+    const tb3Candidates = await upgradeClient`
+      SELECT submission_id FROM challenge_voting_round_candidates WHERE voting_round_id = ${tb3Rounds[0].id};
+    `;
+    const tb3CandIds = tb3Candidates.map((c: any) => c.submission_id);
+    if (!tb3CandIds.includes(tb3SubA.id) || !tb3CandIds.includes(tb3SubB.id) || !tb3CandIds.includes(tb3SubC.id)) {
+      throw new Error(`Tiebreak reconstruction omitted tied candidates! Expected [${tb3SubA.id}, ${tb3SubB.id}, ${tb3SubC.id}], got ${JSON.stringify(tb3CandIds)}`);
+    }
+    console.log("✓ Invariant 5 Passed: Active legacy tiebreak candidate sets successfully reconstructed for 3+ tied candidates (with partial ballots) and zero-ballot scenarios with valid timing.");
 
     // Invariant 6: Regression fixture exercising ACTUAL PRODUCTION DOMAIN SERVICE for post-migration round creation
     console.log("-> Testing post-migration submission & production service candidate freezing on legacy open challenge...");
@@ -515,29 +558,15 @@ async function runMigrationVerification() {
     }
     console.log(`✓ Invariant 6 Passed: Production transitionChallengeStatusService successfully created round and froze both pre-migration (${openSub1.id}) and post-migration (${openSub2.id}) submissions (${futureCandIds.length} candidates).`);
 
-    // Invariant 7: Verified Cleanup of Malformed Orphan Result Rows
-    console.log("-> Verifying cleanup of malformed result rows (winner_slot_id IS NULL AND final_rank IS NULL)...");
-    const [malformedSub] = await upgradeClient`
-      INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status)
-      VALUES (${openChallenge.id}, ${userC.id}, ${profC.id}, 'submitted')
-      RETURNING id;
-    `;
-    // Insert malformed stub row (both null)
-    await upgradeClient`
-      INSERT INTO challenge_results (challenge_id, submission_id, winner_slot_id, final_rank, total_community_stars, is_published)
-      VALUES (${openChallenge.id}, ${malformedSub.id}, null, null, 0, false);
-    `;
-    // Run migration cleanup statement
-    await upgradeClient`
-      DELETE FROM challenge_results WHERE winner_slot_id IS NULL AND final_rank IS NULL;
-    `;
+    // Invariant 7: Verified Cleanup of Malformed Orphan Result Rows by Migration 0007 itself
+    console.log("-> Verifying cleanup of malformed result rows (winner_slot_id IS NULL AND final_rank IS NULL) by migration 0007...");
     const malformedCheck = await upgradeClient`
-      SELECT id FROM challenge_results WHERE winner_slot_id IS NULL AND final_rank IS NULL;
+      SELECT id FROM challenge_results WHERE id = ${malformedLegacyRow.id};
     `;
     if (malformedCheck.length !== 0) {
-      throw new Error(`Malformed result row purge failed! Found ${malformedCheck.length} invalid rows.`);
+      throw new Error(`Migration 0007 failed to purge malformed result row ${malformedLegacyRow.id}!`);
     }
-    console.log("✓ Invariant 7 Passed: Malformed non-winner orphan rows with NULL slot and NULL rank are cleanly purged.");
+    console.log("✓ Invariant 7 Passed: Malformed non-winner orphan row inserted before migration was cleanly purged by migration 0007 itself.");
 
     await upgradeClient.end();
     console.log("🎉 SCENARIO 2 (UPGRADE, REAL DRIZZLE MIGRATOR & INVARIANT INTEGRITY) PASSED!\n");
