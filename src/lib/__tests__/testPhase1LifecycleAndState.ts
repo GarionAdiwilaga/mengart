@@ -89,58 +89,39 @@ async function runPhase1LifecycleTests() {
   }
   console.log("✓ Illegal transition attempt safely blocked by mode matrix.");
 
-  // 3. Pause & Resume with Persisted Deadline Validation (QA-P1-007)
-  console.log("\n[Test 3] Testing Pause & Resume with Deadline Validation (QA-P1-007)...");
+  // 3. Inert PAUSED Behavior Verification (Blueprint 2.2.1)
+  console.log("\n[Test 3] Testing Inert PAUSED Transition Rejection (Blueprint 2.2.1)...");
   
-  const pastDeadline = new Date(Date.now() - 3600 * 1000); // 1 hour ago
   const [activeChallenge] = await db
     .insert(challenges)
     .values({
-      title: `Active Paused Challenge ${suffix}`,
-      slug: `active-paused-${suffix}`,
-      theme: "Pause Tests",
-      description: "Testing deadline validation",
+      title: `Active Challenge ${suffix}`,
+      slug: `active-ch-${suffix}`,
+      theme: "Pause Inactive Tests",
+      description: "Testing paused status rejection",
       promptRules: "Rules",
       status: "submission_open",
-      submissionDeadline: pastDeadline,
+      submissionDeadline: new Date(Date.now() + 3600 * 1000),
       createdByUserId: admin.id,
     })
     .returning();
 
-  // Pause the challenge
-  await transitionChallengeStatusService(db, adminCtx, activeChallenge.id, "paused", {
-    reason: "Maintenance pause",
-  });
-
-  const [pausedRow] = await db.select().from(challenges).where(eq(challenges.id, activeChallenge.id));
-  if (pausedRow.status !== "paused" || pausedRow.pausedPreviousStatus !== "submission_open") {
-    throw new Error("Pause failed to set status or pausedPreviousStatus!");
-  }
-  console.log("✓ Challenge successfully paused with preserved previous status.");
-
-  // Attempt to resume with past deadline (Must Fail)
-  let expiredResumeBlocked = false;
+  // Attempting to pause the challenge must fail under Blueprint 2.2.1
+  let pauseAttemptBlocked = false;
   try {
-    await transitionChallengeStatusService(db, adminCtx, activeChallenge.id, "submission_open");
+    await transitionChallengeStatusService(db, adminCtx, activeChallenge.id, "paused" as any, {
+      reason: "Maintenance pause",
+    });
   } catch (err: any) {
-    expiredResumeBlocked = true;
-    console.log(`✓ Expired resume blocked: "${err.message}"`);
-  }
-  if (!expiredResumeBlocked) {
-    throw new Error("Resuming challenge with expired deadline was not rejected!");
+    if (err.message.includes("telah dinonaktifkan")) {
+      pauseAttemptBlocked = true;
+    }
   }
 
-  // Resume with updated future deadline (Must Succeed)
-  const futureDeadline = new Date(Date.now() + 7 * 24 * 3600 * 1000);
-  await transitionChallengeStatusService(db, adminCtx, activeChallenge.id, "submission_open", {
-    submissionDeadline: futureDeadline,
-  });
-
-  const [resumedRow] = await db.select().from(challenges).where(eq(challenges.id, activeChallenge.id));
-  if (resumedRow.status !== "submission_open" || resumedRow.pausedPreviousStatus !== null) {
-    throw new Error("Resume with updated deadline failed!");
+  if (!pauseAttemptBlocked) {
+    throw new Error("Transition to 'paused' was not safely rejected!");
   }
-  console.log("✓ Challenge resumed cleanly with validated extended deadline.");
+  console.log("✓ Transition to 'paused' safely blocked per Blueprint 2.2.1.");
 
   // 4. Two-Stage Finalization (compute -> review -> publish -> finished) (QA-P0-008)
   console.log("\n[Test 4] Testing Two-Stage Finalization (QA-P0-008)...");

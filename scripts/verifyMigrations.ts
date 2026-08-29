@@ -27,6 +27,7 @@ async function runMigrationVerification() {
   const upgradeDbName = `mengart_test_upgrade_${Date.now()}`;
   const failDbName1 = `mengart_test_fail1_${Date.now()}`;
   const failDbName2 = `mengart_test_fail2_${Date.now()}`;
+  const failDbName3 = `mengart_test_fail3_${Date.now()}`;
   const temp0006Dir = path.resolve("./.tmp_drizzle_0006");
 
   try {
@@ -533,15 +534,13 @@ async function runMigrationVerification() {
       throw new Error("Production transition to submission_locked failed");
     }
 
-    const openVotingResult = await transitionChallengeStatusService(
-      upgradeDrizzle,
-      adminCtx,
-      openChallenge.id,
-      "voting_open"
-    );
-    if (!openVotingResult.success) {
-      throw new Error("Production transition to voting_open failed");
-    }
+    // Set votingStartsAt in the past so scheduler transitions submission_locked to voting_open
+    await upgradeClient`
+      UPDATE challenges SET voting_starts_at = now() - interval '1 minute' WHERE id = ${openChallenge.id};
+    `;
+
+    const { materializeScheduledTransitionsService } = await import("../src/lib/services/challengeService");
+    await materializeScheduledTransitionsService(upgradeDrizzle, new Date());
 
     const futureRounds = await upgradeClient`
       SELECT vr.id, vr.round_type, vr.status
@@ -663,8 +662,50 @@ async function runMigrationVerification() {
     await failClient2.end();
     console.log("🎉 SCENARIO 4 (FAIL-CLOSED TIE BELOW FIRST PLACE) PASSED!\n");
 
+    // --------------------------------------------------------------------------
+    // SCENARIO 5: FAIL-CLOSED RECONCILIATION TEST (UNRECONCILED BALLOT WITHOUT ROUND IN MIGRATION 0008)
+    // --------------------------------------------------------------------------
+    console.log(`[Scenario 5] Testing fail-closed migration 0008 on unreconciled ballot without matching voting round...`);
+    await adminClient.unsafe(`CREATE DATABASE "${failDbName3}";`);
+    const failClient3 = postgres(`${urlObj.protocol}//${urlObj.username}:${urlObj.password}@${urlObj.host}/${failDbName3}`, { max: 1 });
+    const failDrizzle3 = drizzle(failClient3, { schema });
+
+    // Migrate up to 0007 first
+    await migrate(failDrizzle3, { migrationsFolder: "./drizzle" });
+
+    // Insert an unlinked ballot with NULL voting_round_id on a new challenge that has no voting round
+    const [f3User] = await failClient3`INSERT INTO users (email, role) VALUES ('f3@mengart.local', 'admin') RETURNING id;`;
+    const [f3Challenge] = await failClient3`
+      INSERT INTO challenges (title, slug, theme, description, prompt_rules, status, award_mode, stars_per_member, created_by_user_id)
+      VALUES ('F3 Challenge', 'f3-challenge', 'Theme', 'Desc', 'Rules', 'draft', 'vote_only', 3, ${f3User.id})
+      RETURNING id;
+    `;
+    
+    // Temporarily drop NOT NULL to simulate legacy unlinked ballot
+    await failClient3`ALTER TABLE "challenge_ballots" ALTER COLUMN "voting_round_id" DROP NOT NULL;`;
+    await failClient3`INSERT INTO challenge_ballots (challenge_id, user_id, round_type, stars_allocated, is_finalized, voting_round_id) VALUES (${f3Challenge.id}, ${f3User.id}, 'main', 1, true, NULL);`;
+
+    // Now execute migration 0008 SQL directly
+    const mig0008Sql = await fs.readFile("./drizzle/0008_round_ballot_uniqueness_and_tie_pending.sql", "utf-8");
+    let f3FailedProperly = false;
+    try {
+      await failClient3.unsafe(mig0008Sql);
+    } catch (err: any) {
+      if (err.message && err.message.includes("Legacy ballot reconciliation required")) {
+        f3FailedProperly = true;
+        console.log(`✓ Scenario 5 Passed: Migration safely failed closed for unreconciled ballot: "${err.message.trim()}"`);
+      } else {
+        throw err;
+      }
+    }
+    if (!f3FailedProperly) {
+      throw new Error("Scenario 5 expected migration failure with reconciliation error, but migration succeeded!");
+    }
+    await failClient3.end();
+    console.log("🎉 SCENARIO 5 (FAIL-CLOSED UNRECONCILED BALLOT) PASSED!\n");
+
     console.log("=================================================================");
-    console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A)");
+    console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A & B)");
     console.log("=================================================================\n");
     process.exit(0);
   } finally {
@@ -680,6 +721,7 @@ async function runMigrationVerification() {
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName1}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName2}";`);
+      await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName3}";`);
     } catch (_e) {
       // Ignored cleanup error
     }

@@ -244,7 +244,19 @@
 **Business Rule:** A challenge has at most 1 official Community Winner (`awardType = 'community_vote_winner'`). All live round operations lock parent records and validate deadlines before closing.
 **Reason:** Strict compliance with Blueprint 2.2.1 and Gate B / Phase 2 specifications.
 
-
-
-
-
+### Blueprint 2.2.1 Gate B / Phase 2: Voting & Tie Resolution Targeted Corrections
+**Decision:** Applied 8 targeted integrity corrections to Gate B / Phase 2 under Blueprint 2.2.1:
+1. **Migration 0008 Fail-Closed Reconciliation:** Removed destructive `DELETE FROM challenge_ballots WHERE voting_round_id IS NULL`. Replaced with deterministic 1-to-1 round matching reconciliation. If any orphan ballots remain with `voting_round_id IS NULL`, migration aborts with `RAISE EXCEPTION` to preserve audit history.
+2. **Strict User Membership Status Validation:** `castOrUpdateBallotService` and `resetBallotService` query `users.membershipStatus === 'active'` and `!users.deletedAt`. Non-active or deleted users are rejected.
+3. **Star Allocation Structure & Boundary Validation:** Validated every allocation: non-empty string `submissionId`, finite non-negative integer stars ($A \ge 0$), duplicate `submissionId` rejection, and total allowance check ($A = -100, B = 103$ strictly rejected).
+4. **Scheduler System Context with NULL Actor:** Automated scheduler transitions use `{ userId: null, role: 'system' }`, producing valid `actor_id = NULL` in `audit_logs` (UUID column).
+5. **Exact Operational State in Finalization:** In `finalizeVotingRoundService`:
+   - `round.status === 'closed'` $\rightarrow$ idempotent return.
+   - `round.status !== 'open'` $\rightarrow$ reject.
+   - Requires exact matching challenge status (`voting_open` for main, `tiebreak_open` for tiebreak).
+   - Requires persisted deadline and `now >= round.deadline`.
+6. **Inert PAUSED & Scheduler-Authoritative Voting Opening:** Removed `'paused'` from active legal transitions and actions. Blocked manual transition into `'voting_open'` via `transitionChallengeStatusService` (opening is exclusively scheduler-driven when `votingStartsAt` is reached).
+7. **Clean Mutation Signatures:** Server actions and `VotingWorkspace` accept strictly `{ votingRoundId, votes }` and `{ votingRoundId }`.
+8. **Comprehensive 15-Scenario Test Matrix:** Validated single winner, zero votes, tiebreak flow, tiebreak 0-vote manual resolve, membership auth, malformed negative star bypass rejection, reset ballot, voter anonymity, per-round ballot uniqueness, finalize checks, scheduler system actor null check, mode-specific branching, concurrency tests (manual vs manual, manual vs tiebreak start), and generic lifecycle bypass rejections.
+**Business Rule:** All mutations enforce active membership and allocation bounds. Database migrations fail closed without deleting unreconciled ballots.
+**Reason:** Addressed independent QA review findings for Gate B / Phase 2.

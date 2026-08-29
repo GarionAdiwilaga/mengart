@@ -24,7 +24,7 @@ interface VotingWorkspaceProps {
   challengeId: string;
   challengeTitle: string;
   challengeSlug: string;
-  votingRoundId?: string;
+  votingRoundId: string;
   roundType?: "main" | "tiebreak";
   candidates: CandidateArtwork[];
   initialAllocations: { [submissionId: string]: number };
@@ -93,11 +93,7 @@ export function VotingWorkspace({
     if (!confirm("Reset seluruh alokasi Stars Anda untuk babak voting ini?")) return;
     setIsLoading(true);
     try {
-      if (votingRoundId) {
-        await resetBallotAction({ votingRoundId });
-      } else {
-        await resetBallotAction(challengeId, roundType);
-      }
+      await resetBallotAction({ votingRoundId });
       setAllocations({});
       setRemainingStars(maxStars);
       setFeedback({ type: "success", text: "Alokasi Stars berhasil direset." });
@@ -117,12 +113,7 @@ export function VotingWorkspace({
       .map(([submissionId, starsCount]) => ({ submissionId, starsCount }));
 
     try {
-      let res;
-      if (votingRoundId) {
-        res = await castOrUpdateBallotAction({ votingRoundId, votes: activeList });
-      } else {
-        res = await castOrUpdateBallotAction(challengeId, activeList, roundType);
-      }
+      const res = await castOrUpdateBallotAction({ votingRoundId, votes: activeList });
       if (res.success) {
         setFeedback({
           type: "success",

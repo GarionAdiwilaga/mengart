@@ -21,16 +21,27 @@ DECLARE
   dup_open_count integer;
   dup_rank1_count integer;
 BEGIN
-  -- A. Link any unlinked legacy ballots to matching voting rounds
+  -- A. Link unlinked legacy ballots where exactly one authoritative matching round exists
   UPDATE "challenge_ballots" b
-  SET "voting_round_id" = r.id
-  FROM "challenge_voting_rounds" r
+  SET "voting_round_id" = (
+    SELECT r.id
+    FROM "challenge_voting_rounds" r
+    WHERE r.challenge_id = b.challenge_id
+      AND r.round_type::text = b.round_type::text
+  )
   WHERE b."voting_round_id" IS NULL
-    AND b."challenge_id" = r."challenge_id"
-    AND b."round_type"::text = r."round_type"::text;
+    AND (
+      SELECT count(*)
+      FROM "challenge_voting_rounds" r
+      WHERE r.challenge_id = b.challenge_id
+        AND r.round_type::text = b.round_type::text
+    ) = 1;
 
-  -- Purge any orphaned ballots where no voting round exists
-  DELETE FROM "challenge_ballots" WHERE "voting_round_id" IS NULL;
+  -- Fail-closed if any NULL voting_round_id ballots remain unreconciled
+  SELECT count(*) INTO orphans_count FROM "challenge_ballots" WHERE "voting_round_id" IS NULL;
+  IF orphans_count > 0 THEN
+    RAISE EXCEPTION 'Legacy ballot reconciliation required: unreconciled NULL voting_round_id ballots remain (% count)', orphans_count;
+  END IF;
 
   -- B. Check for orphan voting_round_id (does not exist in challenge_voting_rounds)
   SELECT count(*) INTO orphans_count 

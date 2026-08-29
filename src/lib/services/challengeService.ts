@@ -16,7 +16,7 @@ import { eq, and, sql, desc, asc, lte, isNull } from "drizzle-orm";
 import type { EffectiveChallengeStatus } from "@/lib/challenges";
 
 export interface ServiceContext {
-  userId: string;
+  userId: string | null;
   role: string;
 }
 
@@ -57,60 +57,56 @@ export const LEGAL_TRANSITIONS: Record<string, Record<string, string[]>> = {
   // Mode: vote_and_jury (Standard Community Voting + Jury Awards)
   vote_and_jury: {
     draft: ["scheduled", "cancelled"],
-    scheduled: ["submission_open", "cancelled", "paused"],
-    submission_open: ["submission_locked", "cancelled", "paused"],
-    submission_locked: ["voting_open", "cancelled", "paused"],
-    voting_open: ["tie_pending", "tiebreak_open", "jury_selection_open", "review", "cancelled", "paused"],
-    tie_pending: ["tiebreak_open", "jury_selection_open", "cancelled", "paused"],
-    tiebreak_open: ["tie_pending", "jury_selection_open", "review", "cancelled", "paused"],
-    jury_selection_open: ["review", "cancelled", "paused"],
-    review: ["finished", "cancelled", "paused"],
+    scheduled: ["submission_open", "cancelled"],
+    submission_open: ["submission_locked", "cancelled"],
+    submission_locked: ["cancelled"],
+    voting_open: ["cancelled"],
+    tie_pending: ["cancelled"],
+    tiebreak_open: ["cancelled"],
+    jury_selection_open: ["review", "cancelled"],
+    review: ["finished", "cancelled"],
     finished: ["results_revoked"],
     results_revoked: ["review", "cancelled"],
-    paused: [], // Handled dynamically from pausedPreviousStatus
     cancelled: [],
   },
 
   // Mode: vote_only (Community Voting Only)
   vote_only: {
     draft: ["scheduled", "cancelled"],
-    scheduled: ["submission_open", "cancelled", "paused"],
-    submission_open: ["submission_locked", "cancelled", "paused"],
-    submission_locked: ["voting_open", "cancelled", "paused"],
-    voting_open: ["tie_pending", "tiebreak_open", "review", "finished", "cancelled", "paused"],
-    tie_pending: ["tiebreak_open", "finished", "cancelled", "paused"],
-    tiebreak_open: ["tie_pending", "review", "finished", "cancelled", "paused"],
-    review: ["finished", "cancelled", "paused"],
+    scheduled: ["submission_open", "cancelled"],
+    submission_open: ["submission_locked", "cancelled"],
+    submission_locked: ["cancelled"],
+    voting_open: ["cancelled"],
+    tie_pending: ["cancelled"],
+    tiebreak_open: ["cancelled"],
+    review: ["finished", "cancelled"],
     finished: ["results_revoked"],
     results_revoked: ["review", "cancelled"],
-    paused: [],
     cancelled: [],
   },
 
   // Mode: jury_only (Jury Selection Only)
   jury_only: {
     draft: ["scheduled", "cancelled"],
-    scheduled: ["submission_open", "cancelled", "paused"],
-    submission_open: ["submission_locked", "cancelled", "paused"],
-    submission_locked: ["jury_selection_open", "cancelled", "paused"],
-    jury_selection_open: ["review", "cancelled", "paused"],
-    review: ["finished", "cancelled", "paused"],
+    scheduled: ["submission_open", "cancelled"],
+    submission_open: ["submission_locked", "cancelled"],
+    submission_locked: ["jury_selection_open", "cancelled"],
+    jury_selection_open: ["review", "cancelled"],
+    review: ["finished", "cancelled"],
     finished: ["results_revoked"],
     results_revoked: ["review", "cancelled"],
-    paused: [],
     cancelled: [],
   },
 
   // Mode: showcase_only (Showcase / Curated Portfolio Submissions)
   showcase_only: {
     draft: ["scheduled", "cancelled"],
-    scheduled: ["submission_open", "cancelled", "paused"],
-    submission_open: ["submission_locked", "cancelled", "paused"],
-    submission_locked: ["review", "finished", "cancelled", "paused"],
-    review: ["finished", "cancelled", "paused"],
+    scheduled: ["submission_open", "cancelled"],
+    submission_open: ["submission_locked", "cancelled"],
+    submission_locked: ["review", "finished", "cancelled"],
+    review: ["finished", "cancelled"],
     finished: ["results_revoked"],
     results_revoked: ["review", "cancelled"],
-    paused: [],
     cancelled: [],
   },
 };
@@ -168,6 +164,16 @@ export async function transitionChallengeStatusService(
       `Transisi langsung ke '${newStatus}' dilarang melalui aksi umum. Gunakan finalizeVotingRoundService atau startTiebreakService.`
     );
   }
+  if (newStatus === "voting_open") {
+    throw new Error(
+      "Transisi langsung ke 'voting_open' dilarang. Pembukaan babak voting harus dilakukan secara otomatis oleh scheduler saat votingStartsAt tercapai."
+    );
+  }
+  if (newStatus === "paused") {
+    throw new Error(
+      "Status 'paused' telah dinonaktifkan dalam alur operasional Blueprint 2.2.1."
+    );
+  }
 
   const [challenge] = await dbOrTx
     .select()
@@ -218,90 +224,19 @@ export async function transitionChallengeStatusService(
     updatedAt: now,
   };
 
-  // If pausing, store current status in pausedPreviousStatus
-  if (newStatus === "paused") {
-    updateData.status = "paused";
-    updateData.pausedPreviousStatus = currentStatus;
-  } else if (currentStatus === "paused") {
-    // If resuming, validate that deadlines remain viable or have been updated
-    updateData.status = newStatus;
+  updateData.status = newStatus;
+
+  if (currentStatus === "paused") {
     updateData.pausedPreviousStatus = null;
-
-    if (newStatus === "submission_open") {
-      const activeDeadline = options?.submissionDeadline
-        ? new Date(options.submissionDeadline)
-        : challenge.submissionDeadline
-        ? new Date(challenge.submissionDeadline)
-        : null;
-
-      if (activeDeadline && activeDeadline <= now) {
-        throw new Error(
-          "Tidak dapat melanjutkan challenge ke 'submission_open': Batas waktu submisi telah terlewati saat challenge dijeda. Harap perbarui deadline submisi sebelum melanjutkan."
-        );
-      }
-      if (options?.submissionDeadline) {
-        updateData.submissionDeadline = new Date(options.submissionDeadline);
-      }
-    }
-
-    if (newStatus === "voting_open" || newStatus === "tiebreak_open") {
-      // Look up active voting round deadline
-      const [activeRound] = await dbOrTx
-        .select()
-        .from(challengeVotingRounds)
-        .where(
-          and(
-            eq(challengeVotingRounds.challengeId, challengeId),
-            eq(challengeVotingRounds.roundType, newStatus === "tiebreak_open" ? "tiebreak" : "main")
-          )
-        )
-        .orderBy(desc(challengeVotingRounds.roundSequence))
-        .limit(1);
-
-      const activeDeadline = options?.votingDeadline
-        ? new Date(options.votingDeadline)
-        : activeRound?.deadline
-        ? new Date(activeRound.deadline)
-        : challenge.votingDeadline
-        ? new Date(challenge.votingDeadline)
-        : null;
-
-      if (activeDeadline && activeDeadline <= now) {
-        throw new Error(
-          `Tidak dapat melanjutkan challenge ke sesi voting (${newStatus}): Batas waktu voting ronde telah terlewati saat challenge dijeda. Harap perbarui deadline voting sebelum melanjutkan.`
-        );
-      }
-      if (options?.votingDeadline) {
-        updateData.votingDeadline = new Date(options.votingDeadline);
-        if (activeRound) {
-          await dbOrTx
-            .update(challengeVotingRounds)
-            .set({ deadline: new Date(options.votingDeadline), updatedAt: now })
-            .where(eq(challengeVotingRounds.id, activeRound.id));
-        }
-      }
-    }
-  } else {
-    updateData.status = newStatus;
   }
 
   if (newStatus === "cancelled") {
     updateData.cancellationReason = options?.reason || "Dibatalkan oleh moderator/admin";
   }
 
-  // Entering VOTING_OPEN: Automatically Create & Freeze Main Voting Round Candidates if not present
-  if (newStatus === "voting_open") {
-    const existingRounds = await dbOrTx
-      .select()
-      .from(challengeVotingRounds)
-      .where(
-        and(
-          eq(challengeVotingRounds.challengeId, challengeId),
-          eq(challengeVotingRounds.roundType, "main")
-        )
-      );
-
-    if (existingRounds.length === 0) {
+  // Entering SUBMISSION_LOCKED: Create & Freeze Main Voting Round Candidates for voting modes
+  if (newStatus === "submission_locked") {
+    if (challenge.awardMode === "vote_only" || challenge.awardMode === "vote_and_jury") {
       const activeSubmissions = await dbOrTx
         .select({ id: challengeSubmissions.id })
         .from(challengeSubmissions)
@@ -312,26 +247,60 @@ export async function transitionChallengeStatusService(
           )
         );
 
-      const [mainRound] = await dbOrTx
-        .insert(challengeVotingRounds)
-        .values({
-          challengeId,
-          roundType: "main",
-          roundSequence: 1,
-          status: "open",
-          startsAt: now,
-          deadline: options?.votingDeadline ? new Date(options.votingDeadline) : challenge.votingDeadline,
-          starsPerMember: challenge.starsPerMember,
-        })
-        .returning();
+      if (activeSubmissions.length === 0) {
+        updateData.status = "cancelled";
+        updateData.cancellationReason = "Tidak ada submisi karya yang valid saat batas waktu submisi berakhir.";
+      } else if (activeSubmissions.length === 1) {
+        const singleSub = activeSubmissions[0];
+        await dbOrTx.insert(challengeResults).values({
+          challengeId: challenge.id,
+          submissionId: singleSub.id,
+          finalRank: 1,
+          awardType: "community_vote_winner",
+          totalCommunityStars: 0,
+          resolutionMethod: "automatic_single_submission",
+          isPublished: true,
+        });
+        updateData.status = "finished";
+      } else {
+        const existingRounds = await dbOrTx
+          .select()
+          .from(challengeVotingRounds)
+          .where(
+            and(
+              eq(challengeVotingRounds.challengeId, challengeId),
+              eq(challengeVotingRounds.roundType, "main")
+            )
+          );
 
-      if (activeSubmissions.length > 0) {
-        await dbOrTx.insert(challengeVotingRoundCandidates).values(
-          activeSubmissions.map((sub: any) => ({
-            votingRoundId: mainRound.id,
-            submissionId: sub.id,
-          }))
-        );
+        let roundId: string;
+        if (existingRounds.length === 0) {
+          const [mainRound] = await dbOrTx
+            .insert(challengeVotingRounds)
+            .values({
+              challengeId,
+              roundType: "main",
+              roundSequence: 1,
+              status: "pending",
+              startsAt: challenge.votingStartsAt,
+              deadline: challenge.votingDeadline,
+              starsPerMember: challenge.starsPerMember,
+            })
+            .returning();
+          roundId = mainRound.id;
+        } else {
+          roundId = existingRounds[0].id;
+        }
+
+        for (const sub of activeSubmissions) {
+          await dbOrTx
+            .insert(challengeVotingRoundCandidates)
+            .values({
+              votingRoundId: roundId,
+              submissionId: sub.id,
+            })
+            .onConflictDoNothing();
+        }
       }
     }
   }
@@ -1126,7 +1095,7 @@ export async function materializeScheduledTransitionsService(
     const performFinalize = async (tx: any) => {
       return await finalizeVotingRoundService(
         tx,
-        { userId: "system", role: "admin" },
+        { userId: null, role: "system" },
         { votingRoundId: round.id }
       );
     };

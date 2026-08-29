@@ -18,7 +18,7 @@ import {
   challengeResults,
   auditLogs,
 } from "@/db/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, desc } from "drizzle-orm";
 import {
   castOrUpdateBallotService,
   resetBallotService,
@@ -51,7 +51,7 @@ async function runTests() {
 
   await adminClient.unsafe(`CREATE DATABASE "${testDbName}";`);
   const testDbUrl = `${urlObj.protocol}//${urlObj.username}:${urlObj.password}@${urlObj.host}/${testDbName}`;
-  const testClient = postgres(testDbUrl, { max: 5 });
+  const testClient = postgres(testDbUrl, { max: 10 });
   const db = drizzle(testClient, { schema });
 
   try {
@@ -62,31 +62,45 @@ async function runTests() {
     // Setup basic actors
     const [adminUser] = await db
       .insert(users)
-      .values({ email: "admin@atelier.local", role: "admin", emailVerified: new Date() })
+      .values({ email: "admin@atelier.local", role: "admin", membershipStatus: "active", emailVerified: new Date() })
       .returning();
     const [modUser] = await db
       .insert(users)
-      .values({ email: "mod@atelier.local", role: "moderator", emailVerified: new Date() })
+      .values({ email: "mod@atelier.local", role: "moderator", membershipStatus: "active", emailVerified: new Date() })
       .returning();
     const [artist1] = await db
       .insert(users)
-      .values({ email: "artist1@atelier.local", role: "member", emailVerified: new Date() })
+      .values({ email: "artist1@atelier.local", role: "member", membershipStatus: "active", emailVerified: new Date() })
       .returning();
     const [artist2] = await db
       .insert(users)
-      .values({ email: "artist2@atelier.local", role: "member", emailVerified: new Date() })
+      .values({ email: "artist2@atelier.local", role: "member", membershipStatus: "active", emailVerified: new Date() })
       .returning();
     const [artist3] = await db
       .insert(users)
-      .values({ email: "artist3@atelier.local", role: "member", emailVerified: new Date() })
+      .values({ email: "artist3@atelier.local", role: "member", membershipStatus: "active", emailVerified: new Date() })
       .returning();
     const [voter1] = await db
       .insert(users)
-      .values({ email: "voter1@atelier.local", role: "member", emailVerified: new Date() })
+      .values({ email: "voter1@atelier.local", role: "member", membershipStatus: "active", emailVerified: new Date() })
       .returning();
     const [voter2] = await db
       .insert(users)
-      .values({ email: "voter2@atelier.local", role: "member", emailVerified: new Date() })
+      .values({ email: "voter2@atelier.local", role: "member", membershipStatus: "active", emailVerified: new Date() })
+      .returning();
+
+    // Additional users for auth test matrix
+    const [suspendedUser] = await db
+      .insert(users)
+      .values({ email: "suspended@atelier.local", role: "member", membershipStatus: "suspended", emailVerified: new Date() })
+      .returning();
+    const [revokedUser] = await db
+      .insert(users)
+      .values({ email: "revoked@atelier.local", role: "member", membershipStatus: "revoked", emailVerified: new Date() })
+      .returning();
+    const [deletedUser] = await db
+      .insert(users)
+      .values({ email: "deleted@atelier.local", role: "member", membershipStatus: "active", emailVerified: new Date(), deletedAt: new Date() })
       .returning();
 
     const [prof1] = await db
@@ -102,71 +116,70 @@ async function runTests() {
       .values({ userId: artist3.id, displayName: "Artist Three", slug: "artist-three" })
       .returning();
 
-    const adminCtx = { userId: adminUser.id, role: "admin" as const };
-    const modCtx = { userId: modUser.id, role: "moderator" as const };
-    const voter1Ctx = { userId: voter1.id, role: "member" as const };
-    const voter2Ctx = { userId: voter2.id, role: "member" as const };
-    const artist1Ctx = { userId: artist1.id, role: "member" as const };
+    const adminCtx = { userId: adminUser.id, role: adminUser.role };
+    const modCtx = { userId: modUser.id, role: modUser.role };
+    const voter1Ctx = { userId: voter1.id, role: voter1.role };
+    const voter2Ctx = { userId: voter2.id, role: voter2.role };
 
-    // Helper to create submissions
-    async function createSubmission(challengeId: string, user: any, prof: any, title: string) {
+    // Helper: Create Submissions with Artwork Versions
+    async function createSubmission(chId: string, artistUser: any, artistProf: any, title: string) {
       const [art] = await db
         .insert(artworks)
         .values({
-          userId: user.id,
-          slug: `art-${Math.random().toString(36).substring(2)}-${Date.now()}`,
+          userId: artistUser.id,
           title,
+          slug: `${title.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           mediaType: "image",
           publicationStatus: "published",
         })
         .returning();
 
-      const [artVersion] = await db
+      const [artVer] = await db
         .insert(artworkVersions)
         .values({
           artworkId: art.id,
           versionNumber: 1,
           mediaType: "image",
-          masterStorageKey: "master_1.jpg",
-          thumbnailStorageKey: "thumb_1.jpg",
-          publicStorageKey: "full_1.jpg",
-          mimeType: "image/jpeg",
+          masterStorageKey: `master_${art.id}.png`,
+          publicStorageKey: `public_${art.id}.webp`,
+          thumbnailStorageKey: `thumb_${art.id}.webp`,
+          mimeType: "image/png",
           fileSizeBytes: 1024,
           checksumSha256: "dummy_checksum",
+          processingStatus: "ready",
         })
         .returning();
 
-      const [submission] = await db
+      const [sub] = await db
         .insert(challengeSubmissions)
         .values({
-          challengeId,
-          userId: user.id,
-          profileId: prof.id,
+          challengeId: chId,
+          userId: artistUser.id,
+          profileId: artistProf.id,
           submissionStatus: "submitted",
-          currentVersionId: null,
         })
         .returning();
 
-      const [subVersion] = await db
+      const [subVer] = await db
         .insert(challengeSubmissionVersions)
         .values({
-          submissionId: submission.id,
+          submissionId: sub.id,
           versionNumber: 1,
-          artworkVersionId: artVersion.id,
+          artworkVersionId: artVer.id,
           title,
         })
         .returning();
 
       await db
         .update(challengeSubmissions)
-        .set({ currentVersionId: subVersion.id })
-        .where(eq(challengeSubmissions.id, submission.id));
+        .set({ currentVersionId: subVer.id })
+        .where(eq(challengeSubmissions.id, sub.id));
 
-      return submission;
+      return sub;
     }
 
     // --------------------------------------------------------------------------
-    // TEST 1: Main round - unique positive max stars
+    // TEST 1: MAIN ROUND - UNIQUE POSITIVE MAX STARS -> SINGLE COMMUNITY WINNER
     // --------------------------------------------------------------------------
     console.log("-> [Test 1] Main Round - unique positive max stars resolving single Community Winner...");
     const [ch1] = await db
@@ -494,140 +507,306 @@ async function runTests() {
     ) {
       throw new Error(`Test 3 results verification failed: ${JSON.stringify(results3)}`);
     }
-    console.log("✓ Test 3, 4, 5 Passed: Main tie -> tie_pending -> tiebreak_open -> tiebreak winner resolved.\n");
+    console.log("✓ Test 3 Passed: Main tie -> tie_pending -> tiebreak_open -> tiebreak winner resolved.\n");
 
     // --------------------------------------------------------------------------
-    // TEST 6 & 7: Tiebreak 0-votes -> TIE_PENDING -> Manual Resolve
+    // TEST 4: TIEBREAK 0-VOTES -> TIE_PENDING -> MANUAL RESOLVE
     // --------------------------------------------------------------------------
-    console.log("-> [Test 6, 7] Tiebreak 0-votes -> TIE_PENDING -> Manual Resolve with reason & candidate validation...");
+    console.log("-> [Test 4] Tiebreak 0-votes -> TIE_PENDING -> Manual Resolve with reason & candidate validation...");
     const [ch4] = await db
       .insert(challenges)
       .values({
-        title: "Challenge 4",
-        slug: "ch-4",
+        title: "Challenge 4 - Tiebreak 0 Votes",
+        slug: `ch4-${Date.now()}`,
         theme: "Theme",
         description: "Desc",
         promptRules: "Rules",
-        status: "voting_open",
+        status: "tie_pending",
         awardMode: "vote_only",
-        starsPerMember: 1,
         createdByUserId: adminUser.id,
       })
       .returning();
-
     const sub4A = await createSubmission(ch4.id, artist1, prof1, "Art 4A");
     const sub4B = await createSubmission(ch4.id, artist2, prof2, "Art 4B");
 
     const [round4Main] = await db
       .insert(challengeVotingRounds)
-      .values({
-        challengeId: ch4.id,
-        roundType: "main",
-        roundSequence: 1,
-        status: "open",
-        startsAt: new Date(Date.now() - 3600000),
-        deadline: futureDeadline,
-        starsPerMember: 1,
-      })
+      .values({ challengeId: ch4.id, roundType: "main", roundSequence: 1, status: "closed", deadline: pastDeadline })
       .returning();
-
     await db.insert(challengeVotingRoundCandidates).values([
       { votingRoundId: round4Main.id, submissionId: sub4A.id },
       { votingRoundId: round4Main.id, submissionId: sub4B.id },
     ]);
+    const [b4] = await db.insert(challengeBallots).values({ challengeId: ch4.id, votingRoundId: round4Main.id, userId: voter1.id, roundType: "main", starsAllocated: 2, isFinalized: true }).returning();
+    await db.insert(challengeBallotStars).values([
+      { ballotId: b4.id, submissionId: sub4A.id, starsCount: 1 },
+      { ballotId: b4.id, submissionId: sub4B.id, starsCount: 1 },
+    ]);
 
-    // Vote main: 4A = 1, 4B = 1 -> tie
-    await castOrUpdateBallotService(db, voter1Ctx, {
-      votingRoundId: round4Main.id,
-      votes: [{ submissionId: sub4A.id, starsCount: 1 }],
-    });
-    await castOrUpdateBallotService(db, voter2Ctx, {
-      votingRoundId: round4Main.id,
-      votes: [{ submissionId: sub4B.id, starsCount: 1 }],
-    });
-
-    // Advance deadline to allow finalization
+    const tbStartRes4 = await startTiebreakService(db, adminCtx, { challengeId: ch4.id });
     await db
       .update(challengeVotingRounds)
       .set({ deadline: pastDeadline })
-      .where(eq(challengeVotingRounds.id, round4Main.id));
-
-    await finalizeVotingRoundService(db, adminCtx, { votingRoundId: round4Main.id });
-
-    // Start tiebreak
-    const tb4 = await startTiebreakService(db, modCtx, { challengeId: ch4.id });
-
-    // 0 votes cast in tiebreak round, close tiebreak
-    await db
-      .update(challengeVotingRounds)
-      .set({ deadline: pastDeadline })
-      .where(eq(challengeVotingRounds.id, tb4.votingRoundId));
-
-    const tb4Fin = await finalizeVotingRoundService(db, adminCtx, { votingRoundId: tb4.votingRoundId });
-    if (tb4Fin.outcome !== "tie_pending" || !tb4Fin.requiresManualResolve) {
-      throw new Error(`Expected tiebreak 0-vote to enter tie_pending requiring manual resolve, got ${JSON.stringify(tb4Fin)}`);
+      .where(eq(challengeVotingRounds.id, tbStartRes4.votingRoundId));
+    const fin4Tb = await finalizeVotingRoundService(db, adminCtx, { votingRoundId: tbStartRes4.votingRoundId });
+    if (!fin4Tb.success || fin4Tb.outcome !== "tie_pending" || !fin4Tb.requiresManualResolve) {
+      throw new Error(`Test 4 Failed: Expected tiebreak 0-votes to yield tie_pending with manual resolve required, got ${JSON.stringify(fin4Tb)}`);
     }
 
-    // Verify calling startTiebreak again throws error
-    let secondTbFailed = false;
-    try {
-      await startTiebreakService(db, modCtx, { challengeId: ch4.id });
-    } catch (err: any) {
-      secondTbFailed = true;
-    }
-    if (!secondTbFailed) {
-      throw new Error("Expected starting a 2nd tiebreak to fail, but it succeeded!");
-    }
-
-    // Manual resolve validation:
-    // 1. Invalid short reason
-    let shortReasonFailed = false;
+    // Attempting manual resolve with non-candidate sub1A -> rejected
+    let nonCandRejected = false;
     try {
       await resolveTieManuallyService(db, modCtx, {
         challengeId: ch4.id,
-        submissionId: sub4B.id,
-        reason: "abc",
+        submissionId: sub1A.id,
+        reason: "Valid curator reason for winner",
       });
     } catch (err: any) {
-      shortReasonFailed = true;
+      nonCandRejected = true;
     }
-    if (!shortReasonFailed) throw new Error("Expected short reason to fail!");
+    if (!nonCandRejected) throw new Error("Expected non-candidate manual resolve to fail!");
 
-    // 2. Valid manual resolve
+    // Manual resolve with valid candidate sub4A and >= 5 char reason
     const manRes = await resolveTieManuallyService(db, modCtx, {
       challengeId: ch4.id,
-      submissionId: sub4B.id,
-      reason: "Curator decision based on technical excellence and composition.",
+      submissionId: sub4A.id,
+      reason: "Curator choice based on thematic composition and lighting craft.",
     });
-
-    if (!manRes.success || manRes.winnerSubmissionId !== sub4B.id) {
-      throw new Error(`Manual resolve failed: ${JSON.stringify(manRes)}`);
+    if (!manRes.success || manRes.winnerSubmissionId !== sub4A.id) {
+      throw new Error(`Test 4 Failed: Expected manual resolve success, got ${JSON.stringify(manRes)}`);
     }
 
-    const [ch4Final] = await db.select().from(challenges).where(eq(challenges.id, ch4.id));
-    if (ch4Final.status !== "finished") {
-      throw new Error(`Expected ch4 status = 'finished', got ${ch4Final.status}`);
+    const [res4] = await db
+      .select()
+      .from(challengeResults)
+      .where(and(eq(challengeResults.challengeId, ch4.id), eq(challengeResults.awardType, "community_vote_winner")));
+    if (!res4 || res4.submissionId !== sub4A.id || res4.resolutionMethod !== "manual_tiebreak_tie") {
+      throw new Error(`Test 4 Failed: Expected persisted result with resolutionMethod manual_tiebreak_tie, got ${JSON.stringify(res4)}`);
     }
-
-    const results4 = await db.select().from(challengeResults).where(eq(challengeResults.challengeId, ch4.id));
-    if (
-      results4.length !== 1 ||
-      results4[0].submissionId !== sub4B.id ||
-      results4[0].resolutionMethod !== "manual_tiebreak_tie"
-    ) {
-      throw new Error(`Test 6 results verification failed: ${JSON.stringify(results4)}`);
-    }
-    console.log("✓ Test 6, 7 Passed: Tiebreak tie -> TIE_PENDING -> Manual Resolve with audit.\n");
+    console.log("✓ Test 4 Passed: Tiebreak tie -> TIE_PENDING -> Manual Resolve with audit.\n");
 
     // --------------------------------------------------------------------------
-    // TEST 8: Anti-Self-Voting & Star Limit Validation
+    // TEST 5: USER MEMBERSHIP STATUS AUTHORIZATION (ACTIVE VS SUSPENDED / REVOKED / DELETED)
     // --------------------------------------------------------------------------
-    console.log("-> [Test 8] Anti-Self-Voting, frozen candidate whitelist, and Star limit checks...");
+    console.log("-> [Test 5] User membership status authorization in castOrUpdateBallotService & resetBallotService...");
     const [ch5] = await db
       .insert(challenges)
       .values({
-        title: "Challenge 5",
-        slug: "ch-5",
+        title: "Challenge 5 - Auth Matrix",
+        slug: `ch5-${Date.now()}`,
+        theme: "Theme",
+        description: "Desc",
+        promptRules: "Rules",
+        status: "voting_open",
+        awardMode: "vote_only",
+        starsPerMember: 3,
+        createdByUserId: adminUser.id,
+      })
+      .returning();
+    const sub5A = await createSubmission(ch5.id, artist1, prof1, "Art 5A");
+    const sub5B = await createSubmission(ch5.id, artist2, prof2, "Art 5B");
+    const [round5] = await db
+      .insert(challengeVotingRounds)
+      .values({ challengeId: ch5.id, roundType: "main", roundSequence: 1, status: "open", starsPerMember: 3 })
+      .returning();
+    await db.insert(challengeVotingRoundCandidates).values([
+      { votingRoundId: round5.id, submissionId: sub5A.id },
+      { votingRoundId: round5.id, submissionId: sub5B.id },
+    ]);
+
+    // 1. Active member -> allowed
+    const activeRes = await castOrUpdateBallotService(db, voter1Ctx, {
+      votingRoundId: round5.id,
+      votes: [{ submissionId: sub5A.id, starsCount: 1 }],
+    });
+    if (!activeRes.success) throw new Error("Expected active member voting to succeed");
+
+    // 2. Suspended member -> rejected
+    let suspendedRejected = false;
+    try {
+      await castOrUpdateBallotService(db, { userId: suspendedUser.id, role: suspendedUser.role }, {
+        votingRoundId: round5.id,
+        votes: [{ submissionId: sub5A.id, starsCount: 1 }],
+      });
+    } catch (err: any) {
+      if (err.message.includes("tidak aktif atau sedang ditangguhkan/dicabut")) {
+        suspendedRejected = true;
+      }
+    }
+    if (!suspendedRejected) throw new Error("Expected suspended member voting to be rejected!");
+
+    // 3. Revoked member -> rejected
+    let revokedRejected = false;
+    try {
+      await castOrUpdateBallotService(db, { userId: revokedUser.id, role: revokedUser.role }, {
+        votingRoundId: round5.id,
+        votes: [{ submissionId: sub5A.id, starsCount: 1 }],
+      });
+    } catch (err: any) {
+      if (err.message.includes("tidak aktif atau sedang ditangguhkan/dicabut")) {
+        revokedRejected = true;
+      }
+    }
+    if (!revokedRejected) throw new Error("Expected revoked member voting to be rejected!");
+
+    // 4. Deleted member -> rejected
+    let deletedRejected = false;
+    try {
+      await castOrUpdateBallotService(db, { userId: deletedUser.id, role: deletedUser.role }, {
+        votingRoundId: round5.id,
+        votes: [{ submissionId: sub5A.id, starsCount: 1 }],
+      });
+    } catch (err: any) {
+      if (err.message.includes("tidak aktif atau sedang ditangguhkan/dicabut")) {
+        deletedRejected = true;
+      }
+    }
+    if (!deletedRejected) throw new Error("Expected deleted member voting to be rejected!");
+
+    // 5. Reset ballot by suspended member -> rejected
+    let resetSuspendedRejected = false;
+    try {
+      await resetBallotService(db, { userId: suspendedUser.id, role: suspendedUser.role }, {
+        votingRoundId: round5.id,
+      });
+    } catch (err: any) {
+      if (err.message.includes("tidak aktif atau sedang ditangguhkan/dicabut")) {
+        resetSuspendedRejected = true;
+      }
+    }
+    if (!resetSuspendedRejected) throw new Error("Expected reset ballot by suspended user to be rejected!");
+
+    console.log("✓ Test 5 Passed: Membership status (active vs suspended/revoked/deleted) strictly enforced.\n");
+
+    // --------------------------------------------------------------------------
+    // TEST 6: MALFORMED ALLOCATIONS & NEGATIVE STAR BYPASS PREVENTION
+    // --------------------------------------------------------------------------
+    console.log("-> [Test 6] Malformed allocations & negative Star bypass prevention...");
+    // Attempt A = -100, B = 103 on max allowance 3 -> must be rejected
+    let negBypassRejected = false;
+    try {
+      await castOrUpdateBallotService(db, voter2Ctx, {
+        votingRoundId: round5.id,
+        votes: [
+          { submissionId: sub5A.id, starsCount: -100 },
+          { submissionId: sub5B.id, starsCount: 103 },
+        ],
+      });
+    } catch (err: any) {
+      if (err.message.includes("negatif")) {
+        negBypassRejected = true;
+      }
+    }
+    if (!negBypassRejected) throw new Error("Expected negative star allocation bypass to be rejected!");
+
+    // Fractional stars (1.5)
+    let fracRejected = false;
+    try {
+      await castOrUpdateBallotService(db, voter2Ctx, {
+        votingRoundId: round5.id,
+        votes: [{ submissionId: sub5A.id, starsCount: 1.5 }],
+      });
+    } catch (err: any) {
+      if (err.message.includes("bilangan bulat")) {
+        fracRejected = true;
+      }
+    }
+    if (!fracRejected) throw new Error("Expected fractional stars to be rejected!");
+
+    // Duplicate submissionId in same request
+    let dupSubRejected = false;
+    try {
+      await castOrUpdateBallotService(db, voter2Ctx, {
+        votingRoundId: round5.id,
+        votes: [
+          { submissionId: sub5A.id, starsCount: 1 },
+          { submissionId: sub5A.id, starsCount: 1 },
+        ],
+      });
+    } catch (err: any) {
+      if (err.message.includes("Duplikasi")) {
+        dupSubRejected = true;
+      }
+    }
+    if (!dupSubRejected) throw new Error("Expected duplicate submissionId to be rejected!");
+
+    // Self-voting attempt
+    let selfVoteRejected = false;
+    try {
+      await castOrUpdateBallotService(db, { userId: artist1.id, role: artist1.role }, {
+        votingRoundId: round5.id,
+        votes: [{ submissionId: sub5A.id, starsCount: 1 }],
+      });
+    } catch (err: any) {
+      if (err.message.includes("Self-voting dilarang")) {
+        selfVoteRejected = true;
+      }
+    }
+    if (!selfVoteRejected) throw new Error("Expected self-voting to be rejected!");
+
+    // Valid stacking within allowance (2 stars on sub5A, 1 star on sub5B)
+    const validStackRes = await castOrUpdateBallotService(db, voter2Ctx, {
+      votingRoundId: round5.id,
+      votes: [
+        { submissionId: sub5A.id, starsCount: 2 },
+        { submissionId: sub5B.id, starsCount: 1 },
+      ],
+    });
+    if (!validStackRes.success) throw new Error("Expected valid star stacking to succeed");
+
+    console.log("✓ Test 6 Passed: Malformed allocations (negative, fractional, duplicate, self-vote, stacking) validated.\n");
+
+    // --------------------------------------------------------------------------
+    // TEST 7: RESET BALLOT SERVICE TEST
+    // --------------------------------------------------------------------------
+    console.log("-> [Test 7] resetBallotService production service test...");
+    const resetRes = await resetBallotService(db, voter2Ctx, { votingRoundId: round5.id });
+    if (!resetRes.success) throw new Error("Expected resetBallotService to succeed");
+
+    const [voter2Ballot] = await db
+      .select()
+      .from(challengeBallots)
+      .where(and(eq(challengeBallots.votingRoundId, round5.id), eq(challengeBallots.userId, voter2.id)));
+    if (!voter2Ballot || voter2Ballot.starsAllocated !== 0) {
+      throw new Error(`Expected starsAllocated 0 after reset, got ${voter2Ballot?.starsAllocated}`);
+    }
+    const voter2Stars = await db
+      .select()
+      .from(challengeBallotStars)
+      .where(eq(challengeBallotStars.ballotId, voter2Ballot.id));
+    if (voter2Stars.length !== 0) {
+      throw new Error(`Expected 0 star rows after reset, got ${voter2Stars.length}`);
+    }
+    console.log("✓ Test 7 Passed: resetBallotService cleared allocations cleanly.\n");
+
+    // --------------------------------------------------------------------------
+    // TEST 8: VOTER IDENTITY ABSENT FROM GET AUTHORITATIVE VOTING ROUND DATA
+    // --------------------------------------------------------------------------
+    console.log("-> [Test 8] Voter anonymity in getAuthoritativeVotingRoundData payload...");
+    const roundData = await getAuthoritativeVotingRoundData(ch5.id, voter1.id, { dbOrTx: db });
+    if (!roundData || !roundData.candidates || roundData.candidates.length !== 2) {
+      throw new Error(`Expected 2 candidate entries in roundData`);
+    }
+    // Verify candidates array contains aggregate totalStars, but no foreign ballot lists
+    for (const c of roundData.candidates) {
+      if ("userId" in c && (c as any).userId !== c.artistUserId) {
+        throw new Error("Foreign voter userId leaked in candidate payload!");
+      }
+      if ("ballots" in c || "voterList" in c) {
+        throw new Error("Voter ballots array leaked in candidate payload!");
+      }
+    }
+    console.log("✓ Test 8 Passed: Voter identity is absent from candidate payload.\n");
+
+    // --------------------------------------------------------------------------
+    // TEST 9: SAME USER CAN OWN ONE MAIN BALLOT AND ONE TIEBREAK BALLOT
+    // --------------------------------------------------------------------------
+    console.log("-> [Test 9] Per-round ballot uniqueness (same user in Main and Tiebreak)...");
+    const [ch9] = await db
+      .insert(challenges)
+      .values({
+        title: "Challenge 9 - Multi Round User",
+        slug: `ch9-${Date.now()}`,
         theme: "Theme",
         description: "Desc",
         promptRules: "Rules",
@@ -637,127 +816,456 @@ async function runTests() {
         createdByUserId: adminUser.id,
       })
       .returning();
+    const sub9A = await createSubmission(ch9.id, artist1, prof1, "Art 9A");
+    const sub9B = await createSubmission(ch9.id, artist2, prof2, "Art 9B");
 
-    const sub5A = await createSubmission(ch5.id, artist1, prof1, "Art 5A");
-    const sub5B = await createSubmission(ch5.id, artist2, prof2, "Art 5B");
-
-    const [round5] = await db
+    const [round9Main] = await db
       .insert(challengeVotingRounds)
-      .values({
-        challengeId: ch5.id,
-        roundType: "main",
-        roundSequence: 1,
-        status: "open",
-        startsAt: new Date(Date.now() - 3600000),
-        deadline: new Date(Date.now() + 3600000),
-        starsPerMember: 2,
-      })
+      .values({ challengeId: ch9.id, roundType: "main", roundSequence: 1, status: "open", deadline: futureDeadline, starsPerMember: 2 })
       .returning();
-
     await db.insert(challengeVotingRoundCandidates).values([
-      { votingRoundId: round5.id, submissionId: sub5A.id },
-      { votingRoundId: round5.id, submissionId: sub5B.id },
+      { votingRoundId: round9Main.id, submissionId: sub9A.id },
+      { votingRoundId: round9Main.id, submissionId: sub9B.id },
     ]);
 
-    // Anti-self voting check: artist1 votes for sub5A (own submission)
-    let selfVoteFailed = false;
-    try {
-      await castOrUpdateBallotService(db, artist1Ctx, {
-        votingRoundId: round5.id,
-        votes: [{ submissionId: sub5A.id, starsCount: 1 }],
-      });
-    } catch (err: any) {
-      selfVoteFailed = true;
-    }
-    if (!selfVoteFailed) throw new Error("Expected self-voting to fail!");
+    // Voter 1 casts in Main
+    await castOrUpdateBallotService(db, voter1Ctx, {
+      votingRoundId: round9Main.id,
+      votes: [{ submissionId: sub9A.id, starsCount: 1 }, { submissionId: sub9B.id, starsCount: 1 }],
+    });
 
-    // Star limit check: 3 stars when max is 2
-    let limitFailed = false;
-    try {
-      await castOrUpdateBallotService(db, voter1Ctx, {
-        votingRoundId: round5.id,
-        votes: [{ submissionId: sub5A.id, starsCount: 3 }],
-      });
-    } catch (err: any) {
-      limitFailed = true;
-    }
-    if (!limitFailed) throw new Error("Expected over-allocation to fail!");
+    await db
+      .update(challengeVotingRounds)
+      .set({ deadline: pastDeadline })
+      .where(eq(challengeVotingRounds.id, round9Main.id));
 
-    console.log("✓ Test 8 Passed: Self-voting and star limit violations rejected.\n");
+    await finalizeVotingRoundService(db, adminCtx, { votingRoundId: round9Main.id });
+
+    // Open Tiebreak
+    const tbRes9 = await startTiebreakService(db, adminCtx, { challengeId: ch9.id });
+
+    // Voter 1 casts in Tiebreak
+    await castOrUpdateBallotService(db, voter1Ctx, {
+      votingRoundId: tbRes9.votingRoundId,
+      votes: [{ submissionId: sub9A.id, starsCount: 1 }],
+    });
+
+    const user9Ballots = await db
+      .select()
+      .from(challengeBallots)
+      .where(and(eq(challengeBallots.challengeId, ch9.id), eq(challengeBallots.userId, voter1.id)));
+    if (user9Ballots.length !== 2) {
+      throw new Error(`Expected exactly 2 ballots for user across main and tiebreak rounds, got ${user9Ballots.length}`);
+    }
+    console.log("✓ Test 9 Passed: User successfully owns separate ballots for Main and Tiebreak rounds.\n");
 
     // --------------------------------------------------------------------------
-    // TEST 9: Early Finalization Rejection
+    // TEST 10: OPERATIONAL STATE & DEADLINE VALIDATIONS IN FINALIZE
     // --------------------------------------------------------------------------
-    console.log("-> [Test 9] Early finalization before deadline rejection...");
-    let earlyFinFailed = false;
+    console.log("-> [Test 10] Operational state & deadline validation in finalizeVotingRoundService...");
+    // 1. Pending round -> cannot finalize
+    const [ch10Pending] = await db
+      .insert(challenges)
+      .values({
+        title: "Challenge 10 - Pending",
+        slug: `ch10-pending-${Date.now()}`,
+        theme: "Theme",
+        description: "Desc",
+        promptRules: "Rules",
+        status: "submission_locked",
+        awardMode: "vote_only",
+        createdByUserId: adminUser.id,
+      })
+      .returning();
+    await createSubmission(ch10Pending.id, artist1, prof1, "Art 10A");
+
+    const [round10Pending] = await db
+      .insert(challengeVotingRounds)
+      .values({ challengeId: ch10Pending.id, roundType: "main", roundSequence: 1, status: "pending", deadline: pastDeadline })
+      .returning();
+    let pendingFinalizeRejected = false;
     try {
-      await finalizeVotingRoundService(db, adminCtx, { votingRoundId: round5.id });
+      await finalizeVotingRoundService(db, adminCtx, { votingRoundId: round10Pending.id });
     } catch (err: any) {
-      if (err.message.includes("belum mencapai batas waktu deadline")) {
-        earlyFinFailed = true;
+      if (err.message.includes("bukan \"open\"")) {
+        pendingFinalizeRejected = true;
       }
     }
-    if (!earlyFinFailed) throw new Error("Expected early finalization to be rejected!");
-    console.log("✓ Test 9 Passed: Early finalization before deadline rejected.\n");
+    if (!pendingFinalizeRejected) throw new Error("Expected pending round finalization to be rejected!");
 
-    // --------------------------------------------------------------------------
-    // TEST 10: Mode-Specific Submission Lock Branching (0, 1, 2+ submissions)
-    // --------------------------------------------------------------------------
-    console.log("-> [Test 10] Mode-Specific Submission Lock Branching in Scheduler...");
-    // 10a. 0 submissions -> CANCELLED
-    const [ch0Sub] = await db
+    // 2. Future OPEN round -> cannot finalize
+    const [ch10Future] = await db
       .insert(challenges)
       .values({
-        title: "0 Sub Challenge",
-        slug: "ch-0-sub",
+        title: "Challenge 10 - Future",
+        slug: `ch10-future-${Date.now()}`,
+        theme: "Theme",
+        description: "Desc",
+        promptRules: "Rules",
+        status: "voting_open",
+        awardMode: "vote_only",
+        createdByUserId: adminUser.id,
+      })
+      .returning();
+    await createSubmission(ch10Future.id, artist1, prof1, "Art 10B");
+
+    const futureDeadline10 = new Date(Date.now() + 3600 * 1000);
+    const [round10Future] = await db
+      .insert(challengeVotingRounds)
+      .values({ challengeId: ch10Future.id, roundType: "main", roundSequence: 1, status: "open", deadline: futureDeadline10 })
+      .returning();
+    let futureFinalizeRejected = false;
+    try {
+      await finalizeVotingRoundService(db, adminCtx, { votingRoundId: round10Future.id });
+    } catch (err: any) {
+      if (err.message.includes("belum mencapai batas waktu deadline")) {
+        futureFinalizeRejected = true;
+      }
+    }
+    if (!futureFinalizeRejected) throw new Error("Expected future round finalization to be rejected!");
+
+    // 3. OPEN main + wrong challenge status (submission_locked) -> cannot finalize
+    const [ch10WrongStatus] = await db
+      .insert(challenges)
+      .values({
+        title: "Challenge 10 - Wrong Status",
+        slug: `ch10-wrong-${Date.now()}`,
+        theme: "Theme",
+        description: "Desc",
+        promptRules: "Rules",
+        status: "submission_locked",
+        awardMode: "vote_only",
+        createdByUserId: adminUser.id,
+      })
+      .returning();
+    await createSubmission(ch10WrongStatus.id, artist1, prof1, "Art 10C");
+
+    const [round10WrongStatus] = await db
+      .insert(challengeVotingRounds)
+      .values({ challengeId: ch10WrongStatus.id, roundType: "main", roundSequence: 1, status: "open", deadline: pastDeadline })
+      .returning();
+    let wrongChallengeStatusRejected = false;
+    try {
+      await finalizeVotingRoundService(db, adminCtx, { votingRoundId: round10WrongStatus.id });
+    } catch (err: any) {
+      if (err.message.includes("harus \"voting_open\"")) {
+        wrongChallengeStatusRejected = true;
+      }
+    }
+    if (!wrongChallengeStatusRejected) throw new Error("Expected finalization on wrong challenge status to be rejected!");
+
+    // 4. Closed round remains idempotent
+    await db.update(challengeVotingRounds).set({ status: "closed" }).where(eq(challengeVotingRounds.id, round10WrongStatus.id));
+    const closedRes = await finalizeVotingRoundService(db, adminCtx, { votingRoundId: round10WrongStatus.id });
+    if (!closedRes.success || !closedRes.idempotent) {
+      throw new Error(`Expected idempotent return for closed round, got ${JSON.stringify(closedRes)}`);
+    }
+
+    console.log("✓ Test 10 Passed: Operational state and deadline validations confirmed in finalizeVotingRoundService.\n");
+
+    // --------------------------------------------------------------------------
+    // TEST 11: SCHEDULER SYSTEM ACTOR & AUTOMATIC FINALIZATION
+    // --------------------------------------------------------------------------
+    console.log("-> [Test 11] Scheduler system actor with NULL actor_id in audit logs...");
+    const [ch11] = await db
+      .insert(challenges)
+      .values({
+        title: "Challenge 11 - Scheduler Finalize",
+        slug: `ch11-${Date.now()}`,
+        theme: "Theme",
+        description: "Desc",
+        promptRules: "Rules",
+        status: "voting_open",
+        awardMode: "vote_only",
+        starsPerMember: 2,
+        createdByUserId: adminUser.id,
+      })
+      .returning();
+    const sub11A = await createSubmission(ch11.id, artist1, prof1, "Art 11A");
+    const [round11] = await db
+      .insert(challengeVotingRounds)
+      .values({ challengeId: ch11.id, roundType: "main", roundSequence: 1, status: "open", deadline: futureDeadline, starsPerMember: 2 })
+      .returning();
+    await db.insert(challengeVotingRoundCandidates).values([{ votingRoundId: round11.id, submissionId: sub11A.id }]);
+
+    await castOrUpdateBallotService(db, voter1Ctx, {
+      votingRoundId: round11.id,
+      votes: [{ submissionId: sub11A.id, starsCount: 1 }],
+    });
+
+    // Advance deadline to past for scheduler to finalize
+    await db
+      .update(challengeVotingRounds)
+      .set({ deadline: pastDeadline })
+      .where(eq(challengeVotingRounds.id, round11.id));
+
+    // Run scheduler materializer
+    const schedRes = await materializeScheduledTransitionsService(db, new Date());
+    if (schedRes.processedCount === 0) {
+      throw new Error("Expected scheduler materializer to process expired round!");
+    }
+
+    const [ch11After] = await db.select().from(challenges).where(eq(challenges.id, ch11.id));
+    if (ch11After.status !== "finished") {
+      throw new Error(`Expected challenge 11 status finished, got ${ch11After.status}`);
+    }
+
+    // Verify audit row exists with valid null actor_id
+    const schedAudit = await db
+      .select()
+      .from(auditLogs)
+      .where(and(eq(auditLogs.targetId, ch11.id), eq(auditLogs.action, "challenge.transition_status")))
+      .orderBy(desc(auditLogs.createdAt))
+      .limit(1);
+
+    if (schedAudit.length === 0 || schedAudit[0].actorId !== null) {
+      throw new Error(`Expected scheduler audit row with null actorId, got ${JSON.stringify(schedAudit)}`);
+    }
+    console.log("✓ Test 11 Passed: Scheduler executed automatic finalization with valid NULL actor_id.\n");
+
+    // --------------------------------------------------------------------------
+    // TEST 12: MODE-SPECIFIC SUBMISSION LOCK BRANCHING (JURY_ONLY & SHOWCASE_ONLY)
+    // --------------------------------------------------------------------------
+    console.log("-> [Test 12] Mode-specific submission lock branching in scheduler...");
+    // Jury Only with 2 submissions -> JURY_SELECTION_OPEN, 0 Community Winners
+    const [chJury] = await db
+      .insert(challenges)
+      .values({
+        title: "Challenge Jury Only",
+        slug: `ch-jury-${Date.now()}`,
         theme: "Theme",
         description: "Desc",
         promptRules: "Rules",
         status: "submission_open",
-        awardMode: "vote_only",
+        awardMode: "jury_only",
         submissionDeadline: pastDeadline,
         createdByUserId: adminUser.id,
       })
       .returning();
+    await createSubmission(chJury.id, artist1, prof1, "Jury Art 1");
+    await createSubmission(chJury.id, artist2, prof2, "Jury Art 2");
 
     await materializeScheduledTransitionsService(db, new Date());
-    const [ch0SubRes] = await db.select().from(challenges).where(eq(challenges.id, ch0Sub.id));
-    if (ch0SubRes.status !== "cancelled") {
-      throw new Error(`Expected 0 sub challenge status = 'cancelled', got ${ch0SubRes.status}`);
+    const [chJuryAfter] = await db.select().from(challenges).where(eq(challenges.id, chJury.id));
+    if (chJuryAfter.status !== "jury_selection_open") {
+      throw new Error(`Expected jury_only challenge to transition to jury_selection_open, got ${chJuryAfter.status}`);
+    }
+    const juryResults = await db.select().from(challengeResults).where(eq(challengeResults.challengeId, chJury.id));
+    if (juryResults.length !== 0) {
+      throw new Error(`Expected 0 community results for jury_only, got ${juryResults.length}`);
     }
 
-    // 10b. 1 submission in vote_only -> auto winner -> FINISHED
-    const [ch1Sub] = await db
+    // Showcase Only with 2 submissions -> FINISHED, 0 Community Winners
+    const [chShowcase] = await db
       .insert(challenges)
       .values({
-        title: "1 Sub Challenge",
-        slug: "ch-1-sub",
+        title: "Challenge Showcase Only",
+        slug: `ch-showcase-${Date.now()}`,
         theme: "Theme",
         description: "Desc",
         promptRules: "Rules",
         status: "submission_open",
-        awardMode: "vote_only",
+        awardMode: "showcase_only",
         submissionDeadline: pastDeadline,
         createdByUserId: adminUser.id,
       })
       .returning();
+    await createSubmission(chShowcase.id, artist1, prof1, "Showcase Art 1");
+    await createSubmission(chShowcase.id, artist2, prof2, "Showcase Art 2");
 
-    const singleSub = await createSubmission(ch1Sub.id, artist1, prof1, "Sole Entry");
     await materializeScheduledTransitionsService(db, new Date());
-    const [ch1SubRes] = await db.select().from(challenges).where(eq(challenges.id, ch1Sub.id));
-    if (ch1SubRes.status !== "finished") {
-      throw new Error(`Expected 1 sub challenge status = 'finished', got ${ch1SubRes.status}`);
+    const [chShowcaseAfter] = await db.select().from(challenges).where(eq(challenges.id, chShowcase.id));
+    if (chShowcaseAfter.status !== "finished") {
+      throw new Error(`Expected showcase_only challenge to transition to finished, got ${chShowcaseAfter.status}`);
     }
-    const res1Sub = await db.select().from(challengeResults).where(eq(challengeResults.challengeId, ch1Sub.id));
-    if (
-      res1Sub.length !== 1 ||
-      res1Sub[0].submissionId !== singleSub.id ||
-      res1Sub[0].resolutionMethod !== "automatic_single_submission"
-    ) {
-      throw new Error(`Expected automatic single submission winner, got ${JSON.stringify(res1Sub)}`);
+    const showcaseResults = await db.select().from(challengeResults).where(eq(challengeResults.challengeId, chShowcase.id));
+    if (showcaseResults.length !== 0) {
+      throw new Error(`Expected 0 community results for showcase_only, got ${showcaseResults.length}`);
     }
 
-    console.log("✓ Test 10 Passed: Mode-specific submission lock branching verified.\n");
+    console.log("✓ Test 12 Passed: Mode-specific submission lock branching (jury_only & showcase_only) verified.\n");
+
+    // --------------------------------------------------------------------------
+    // TEST 13: CONCURRENCY - MANUAL RESOLVE VS MANUAL RESOLVE
+    // --------------------------------------------------------------------------
+    console.log("-> [Test 13] Concurrency: Manual Resolve vs Manual Resolve on same challenge...");
+    const [ch13] = await db
+      .insert(challenges)
+      .values({
+        title: "Challenge 13 - Resolve Concurrency",
+        slug: `ch13-${Date.now()}`,
+        theme: "Theme",
+        description: "Desc",
+        promptRules: "Rules",
+        status: "tie_pending",
+        awardMode: "vote_only",
+        createdByUserId: adminUser.id,
+      })
+      .returning();
+    const sub13A = await createSubmission(ch13.id, artist1, prof1, "Art 13A");
+    const sub13B = await createSubmission(ch13.id, artist2, prof2, "Art 13B");
+    const [round13] = await db
+      .insert(challengeVotingRounds)
+      .values({ challengeId: ch13.id, roundType: "main", roundSequence: 1, status: "closed", deadline: pastDeadline })
+      .returning();
+    await db.insert(challengeVotingRoundCandidates).values([
+      { votingRoundId: round13.id, submissionId: sub13A.id },
+      { votingRoundId: round13.id, submissionId: sub13B.id },
+    ]);
+    const [b13] = await db.insert(challengeBallots).values({ challengeId: ch13.id, votingRoundId: round13.id, userId: voter1.id, roundType: "main", starsAllocated: 2, isFinalized: true }).returning();
+    await db.insert(challengeBallotStars).values([
+      { ballotId: b13.id, submissionId: sub13A.id, starsCount: 1 },
+      { ballotId: b13.id, submissionId: sub13B.id, starsCount: 1 },
+    ]);
+
+    // Simulate concurrent manual resolution attempts (Admin picking 13A vs Mod picking 13B)
+    const results13 = await Promise.allSettled([
+      db.transaction(async (tx) => {
+        return await resolveTieManuallyService(tx, adminCtx, {
+          challengeId: ch13.id,
+          submissionId: sub13A.id,
+          reason: "Admin curator decision for 13A",
+        });
+      }),
+      db.transaction(async (tx) => {
+        return await resolveTieManuallyService(tx, modCtx, {
+          challengeId: ch13.id,
+          submissionId: sub13B.id,
+          reason: "Mod curator decision for 13B",
+        });
+      }),
+    ]);
+
+    const successes13 = results13.filter((r) => r.status === "fulfilled");
+    const rejections13 = results13.filter((r) => r.status === "rejected");
+    if (successes13.length !== 1 || rejections13.length !== 1) {
+      throw new Error(`Expected exactly 1 resolution to succeed and 1 to be rejected, got ${successes13.length} successes and ${rejections13.length} rejections`);
+    }
+
+    const res13 = await db.select().from(challengeResults).where(eq(challengeResults.challengeId, ch13.id));
+    if (res13.length !== 1) {
+      throw new Error(`Expected exactly 1 winner persisted in challenge_results, found ${res13.length}`);
+    }
+    console.log("✓ Test 13 Passed: Concurrent manual resolutions properly handled with FOR UPDATE locks.\n");
+
+    // --------------------------------------------------------------------------
+    // TEST 14: CONCURRENCY - MANUAL RESOLVE VS START TIEBREAK
+    // --------------------------------------------------------------------------
+    console.log("-> [Test 14] Concurrency: Manual Resolve vs Start Tiebreak on same challenge...");
+    const [ch14] = await db
+      .insert(challenges)
+      .values({
+        title: "Challenge 14 - Resolve vs Tiebreak Concurrency",
+        slug: `ch14-${Date.now()}`,
+        theme: "Theme",
+        description: "Desc",
+        promptRules: "Rules",
+        status: "tie_pending",
+        awardMode: "vote_only",
+        createdByUserId: adminUser.id,
+      })
+      .returning();
+    const sub14A = await createSubmission(ch14.id, artist1, prof1, "Art 14A");
+    const sub14B = await createSubmission(ch14.id, artist2, prof2, "Art 14B");
+    const [round14] = await db
+      .insert(challengeVotingRounds)
+      .values({ challengeId: ch14.id, roundType: "main", roundSequence: 1, status: "closed", deadline: pastDeadline })
+      .returning();
+    await db.insert(challengeVotingRoundCandidates).values([
+      { votingRoundId: round14.id, submissionId: sub14A.id },
+      { votingRoundId: round14.id, submissionId: sub14B.id },
+    ]);
+    const [b14] = await db.insert(challengeBallots).values({ challengeId: ch14.id, votingRoundId: round14.id, userId: voter1.id, roundType: "main", starsAllocated: 2, isFinalized: true }).returning();
+    await db.insert(challengeBallotStars).values([
+      { ballotId: b14.id, submissionId: sub14A.id, starsCount: 1 },
+      { ballotId: b14.id, submissionId: sub14B.id, starsCount: 1 },
+    ]);
+
+    const results14 = await Promise.allSettled([
+      db.transaction(async (tx) => {
+        return await resolveTieManuallyService(tx, adminCtx, {
+          challengeId: ch14.id,
+          submissionId: sub14A.id,
+          reason: "Admin curator decision for 14A",
+        });
+      }),
+      db.transaction(async (tx) => {
+        return await startTiebreakService(tx, modCtx, {
+          challengeId: ch14.id,
+        });
+      }),
+    ]);
+
+    const successes14 = results14.filter((r) => r.status === "fulfilled");
+    const rejections14 = results14.filter((r) => r.status === "rejected");
+    if (successes14.length !== 1 || rejections14.length !== 1) {
+      throw new Error(`Expected exactly 1 operation to succeed and 1 to be rejected, got ${successes14.length} successes and ${rejections14.length} rejections`);
+    }
+    console.log("✓ Test 14 Passed: Concurrent resolve vs tiebreak start handled cleanly.\n");
+
+    // --------------------------------------------------------------------------
+    // TEST 15: GENERIC PROTECTED LIFECYCLE TRANSITION BYPASS REJECTIONS
+    // --------------------------------------------------------------------------
+    console.log("-> [Test 15] Protected lifecycle transition bypass rejections...");
+    const [ch15] = await db
+      .insert(challenges)
+      .values({
+        title: "Challenge 15 - Protected Transitions",
+        slug: `ch15-${Date.now()}`,
+        theme: "Theme",
+        description: "Desc",
+        promptRules: "Rules",
+        status: "submission_locked",
+        awardMode: "vote_only",
+        createdByUserId: adminUser.id,
+      })
+      .returning();
+
+    // 1. Direct transition to voting_open -> rejected
+    let votingOpenRejected = false;
+    try {
+      await transitionChallengeStatusService(db, adminCtx, ch15.id, "voting_open");
+    } catch (err: any) {
+      if (err.message.includes("Transisi langsung ke 'voting_open' dilarang")) {
+        votingOpenRejected = true;
+      }
+    }
+    if (!votingOpenRejected) throw new Error("Expected direct transition to voting_open to be blocked!");
+
+    // 2. Direct transition to paused -> rejected
+    let pausedRejected = false;
+    try {
+      await transitionChallengeStatusService(db, adminCtx, ch15.id, "paused" as any);
+    } catch (err: any) {
+      if (err.message.includes("telah dinonaktifkan")) {
+        pausedRejected = true;
+      }
+    }
+    if (!pausedRejected) throw new Error("Expected direct transition to paused to be blocked!");
+
+    // 3. Direct transition to tie_pending -> rejected
+    let tiePendingRejected = false;
+    try {
+      await transitionChallengeStatusService(db, adminCtx, ch15.id, "tie_pending");
+    } catch (err: any) {
+      if (err.message.includes("dilarang melalui aksi umum")) {
+        tiePendingRejected = true;
+      }
+    }
+    if (!tiePendingRejected) throw new Error("Expected direct transition to tie_pending to be blocked!");
+
+    // 4. Direct transition to finished -> rejected
+    let finishedRejected = false;
+    try {
+      await transitionChallengeStatusService(db, adminCtx, ch15.id, "finished");
+    } catch (err: any) {
+      if (err.message.includes("Transisi langsung ke 'finished' dilarang")) {
+        finishedRejected = true;
+      }
+    }
+    if (!finishedRejected) throw new Error("Expected direct transition to finished to be blocked!");
+
+    console.log("✓ Test 15 Passed: Generic protected lifecycle bypass attempts strictly blocked.\n");
 
     console.log("=================================================================");
     console.log("🎉 ALL GATE B / PHASE 2 TEST SCENARIOS PASSED WITH FULL INTEGRITY!");

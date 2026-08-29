@@ -377,18 +377,53 @@ export async function castOrUpdateBallotService(
 ) {
   const { votingRoundId, votes } = params;
 
+  if (!actor?.userId) {
+    throw new Error("Pengguna autentikasi tidak valid untuk melakukan pemungutan suara.");
+  }
+  const voterUserId = actor.userId;
+
   // 1. Verify Actor Status
   const [user] = await dbOrTx
-    .select()
+    .select({
+      id: users.id,
+      membershipStatus: users.membershipStatus,
+      deletedAt: users.deletedAt,
+    })
     .from(users)
-    .where(eq(users.id, actor.userId))
+    .where(eq(users.id, voterUserId))
     .limit(1);
 
-  if (!user || user.accountStatus === "suspended" || user.deletedAt) {
-    throw new Error("Akun Anda tidak aktif atau sedang ditangguhkan. Pemungutan suara ditolak.");
+  if (!user || user.membershipStatus !== "active" || user.deletedAt) {
+    throw new Error("Akun Anda tidak aktif atau sedang ditangguhkan/dicabut. Aksi voting ditolak.");
   }
 
-  // 2. Lock Voting Round Row FOR UPDATE
+  // 2. Validate input votes structure & check for negative/fractional/duplicates
+  if (!Array.isArray(votes)) {
+    throw new Error("Format alokasi suara tidak valid.");
+  }
+
+  const seenSubmissions = new Set<string>();
+  for (const vote of votes) {
+    if (!vote || typeof vote.submissionId !== "string" || vote.submissionId.trim() === "") {
+      throw new Error("ID karya (submissionId) tidak boleh kosong.");
+    }
+    if (
+      typeof vote.starsCount !== "number" ||
+      !Number.isFinite(vote.starsCount) ||
+      !Number.isInteger(vote.starsCount)
+    ) {
+      throw new Error("Jumlah Stars harus berupa bilangan bulat (integer).");
+    }
+    if (vote.starsCount < 0) {
+      throw new Error("Jumlah Stars tidak boleh bernilai negatif.");
+    }
+    if (seenSubmissions.has(vote.submissionId)) {
+      throw new Error(`Duplikasi entri alokasi suara untuk karya ${vote.submissionId}.`);
+    }
+    seenSubmissions.add(vote.submissionId);
+  }
+
+  // 3. Lock Voting Round Row FOR UPDATE
   const [round] = await dbOrTx
     .select()
     .from(challengeVotingRounds)
@@ -400,7 +435,7 @@ export async function castOrUpdateBallotService(
     throw new Error(`Babak pemungutan suara (ID: ${votingRoundId}) tidak ditemukan.`);
   }
 
-  // 3. Lock Challenge Parent Row FOR UPDATE
+  // 4. Lock Challenge Parent Row FOR UPDATE
   const [challenge] = await dbOrTx
     .select()
     .from(challenges)
@@ -412,7 +447,7 @@ export async function castOrUpdateBallotService(
     throw new Error("Challenge induk tidak ditemukan.");
   }
 
-  // 4. Validate Round Status & Time Window
+  // 5. Validate Round Status & Time Window
   if (round.status !== "open") {
     throw new Error(`Babak pemungutan suara sedang tidak dibuka (Status saat ini: "${round.status}").`);
   }
@@ -432,7 +467,7 @@ export async function castOrUpdateBallotService(
     throw new Error("Batas waktu pemungutan suara telah berakhir.");
   }
 
-  // 5. Validate Star Allocation Limits
+  // 6. Validate Star Allocation Limits
   const maxStars = round.starsPerMember;
   const totalAllocated = votes.reduce((sum, v) => sum + v.starsCount, 0);
 
@@ -473,7 +508,7 @@ export async function castOrUpdateBallotService(
       throw new Error("Submisi karya tidak ditemukan.");
     }
 
-    if (sub.userId === actor.userId) {
+    if (sub.userId === voterUserId) {
       throw new Error("Self-voting dilarang dalam aturan atelier.");
     }
   }
@@ -485,7 +520,7 @@ export async function castOrUpdateBallotService(
     .where(
       and(
         eq(challengeBallots.votingRoundId, round.id),
-        eq(challengeBallots.userId, actor.userId)
+        eq(challengeBallots.userId, voterUserId)
       )
     )
     .for("update")
@@ -499,7 +534,7 @@ export async function castOrUpdateBallotService(
       .values({
         challengeId: round.challengeId,
         votingRoundId: round.id,
-        userId: actor.userId,
+        userId: voterUserId,
         roundType: round.roundType,
         starsAllocated: totalAllocated,
         isFinalized: false,
@@ -546,15 +581,24 @@ export async function resetBallotService(
 ) {
   const { votingRoundId } = params;
 
+  if (!actor?.userId) {
+    throw new Error("Pengguna autentikasi tidak valid untuk mereset suara.");
+  }
+  const voterUserId = actor.userId;
+
   // 1. Verify Actor Status
   const [user] = await dbOrTx
-    .select()
+    .select({
+      id: users.id,
+      membershipStatus: users.membershipStatus,
+      deletedAt: users.deletedAt,
+    })
     .from(users)
-    .where(eq(users.id, actor.userId))
+    .where(eq(users.id, voterUserId))
     .limit(1);
 
-  if (!user || user.accountStatus === "suspended" || user.deletedAt) {
-    throw new Error("Akun Anda tidak aktif atau sedang ditangguhkan.");
+  if (!user || user.membershipStatus !== "active" || user.deletedAt) {
+    throw new Error("Akun Anda tidak aktif atau sedang ditangguhkan/dicabut. Aksi reset suara ditolak.");
   }
 
   // 2. Lock Voting Round Row FOR UPDATE
@@ -596,7 +640,7 @@ export async function resetBallotService(
     .where(
       and(
         eq(challengeBallots.votingRoundId, round.id),
-        eq(challengeBallots.userId, actor.userId)
+        eq(challengeBallots.userId, voterUserId)
       )
     )
     .for("update")
@@ -658,9 +702,28 @@ export async function finalizeVotingRoundService(
     };
   }
 
-  // 4. Validate Deadline
+  // Round must be in OPEN status to finalize
+  if (round.status !== "open") {
+    throw new Error(
+      `Babak pemungutan suara tidak dapat difinalisasi karena statusnya "${round.status}" (bukan "open").`
+    );
+  }
+
+  // Validate Challenge Operational Status matches Round
+  const expectedChallengeStatus = round.roundType === "main" ? "voting_open" : "tiebreak_open";
+  if (challenge.status !== expectedChallengeStatus) {
+    throw new Error(
+      `Status challenge ("${challenge.status}") tidak valid untuk finalisasi babak ${round.roundType} (harus "${expectedChallengeStatus}").`
+    );
+  }
+
+  // Validate Authoritative Persisted Deadline
+  if (!round.deadline) {
+    throw new Error("Batas waktu (deadline) babak voting tidak terkonfigurasi.");
+  }
+
   const now = new Date();
-  if (round.deadline && now < round.deadline) {
+  if (now < round.deadline) {
     throw new Error(
       `Babak pemungutan suara belum mencapai batas waktu deadline (${round.deadline.toISOString()}). Finalisasi sebelum deadline ditolak.`
     );
@@ -967,7 +1030,7 @@ export async function startTiebreakService(
 
   // 9. Write Audit Log
   await dbOrTx.insert(auditLogs).values({
-    actorId: actor.userId,
+    actorId: actor?.userId ? actor.userId : null,
     action: "challenge.start_tiebreak",
     targetType: "challenge",
     targetId: challengeId,
@@ -1047,11 +1110,24 @@ export async function resolveTieManuallyService(
 
   // 3. Compute Authoritative Tied Candidate Set
   const tally = await computeAuthoritativeRoundTally(dbOrTx, latestClosedRound.id);
-  if (tally.outcome !== "tie") {
+  
+  const frozenCandidates = await dbOrTx
+    .select({ submissionId: challengeVotingRoundCandidates.submissionId })
+    .from(challengeVotingRoundCandidates)
+    .where(eq(challengeVotingRoundCandidates.votingRoundId, latestClosedRound.id));
+
+  const candidateIdList: string[] = frozenCandidates.map((fc: any) => fc.submissionId as string);
+
+  let tiedSubmissionIds: string[] = [];
+  if (tally.outcome === "tie") {
+    tiedSubmissionIds = tally.tiedSubmissionIds;
+  } else if (tally.outcome === "no_votes" && latestClosedRound.roundType === "tiebreak") {
+    tiedSubmissionIds = candidateIdList;
+  } else {
     throw new Error("Babak voting terakhir tidak menghasilkan kondisi seri.");
   }
 
-  if (!tally.tiedSubmissionIds.includes(submissionId)) {
+  if (!tiedSubmissionIds.includes(submissionId)) {
     throw new Error(
       "Karya yang dipilih bukan merupakan salah satu dari kandidat resmi yang seri pada babak ini."
     );
@@ -1102,7 +1178,7 @@ export async function resolveTieManuallyService(
 
   // 6. Write Audit Log
   await dbOrTx.insert(auditLogs).values({
-    actorId: actor.userId,
+    actorId: actor?.userId ? actor.userId : null,
     action: "challenge.resolve_tie_manually",
     targetType: "challenge",
     targetId: challenge.id,

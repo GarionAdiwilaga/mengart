@@ -47,11 +47,10 @@ export async function getChallengeVotingData(
  * Cast or Update Ballot for a Challenge Voting Round
  * Operates authoritatively on votingRoundId
  */
-export async function castOrUpdateBallotAction(
-  arg1: string | { votingRoundId: string; votes: Array<{ submissionId: string; starsCount: number }> },
-  arg2?: Array<{ submissionId: string; starsCount: number }>,
-  arg3: "main" | "tiebreak" = "main"
-) {
+export async function castOrUpdateBallotAction(params: {
+  votingRoundId: string;
+  votes: Array<{ submissionId: string; starsCount: number }>;
+}) {
   const user = await requireAuth("/login");
 
   // Rate Limiting on voting actions
@@ -60,35 +59,7 @@ export async function castOrUpdateBallotAction(
     throw new Error("Terlalu banyak permintaan pemungutan suara. Harap tunggu beberapa saat.");
   }
 
-  let votingRoundId: string;
-  let votes: Array<{ submissionId: string; starsCount: number }>;
-
-  if (typeof arg1 === "object" && "votingRoundId" in arg1) {
-    votingRoundId = arg1.votingRoundId;
-    votes = arg1.votes;
-  } else {
-    // Legacy positional signature: (challengeId, votes, roundType)
-    const challengeId = arg1 as string;
-    votes = arg2 || [];
-    const roundType = arg3;
-
-    const [round] = await db
-      .select({ id: challengeVotingRounds.id })
-      .from(challengeVotingRounds)
-      .where(
-        and(
-          eq(challengeVotingRounds.challengeId, challengeId),
-          eq(challengeVotingRounds.roundType, roundType)
-        )
-      )
-      .orderBy(desc(challengeVotingRounds.roundSequence))
-      .limit(1);
-
-    if (!round) {
-      throw new Error(`Babak pemungutan suara ${roundType} tidak ditemukan untuk challenge ini.`);
-    }
-    votingRoundId = round.id;
-  }
+  const { votingRoundId, votes } = params;
 
   const result = await db.transaction(async (tx) => {
     return await castOrUpdateBallotService(
@@ -125,37 +96,10 @@ export async function castOrUpdateBallotAction(
  * Reset Ballot Action
  * Operates authoritatively on votingRoundId
  */
-export async function resetBallotAction(
-  arg1: string | { votingRoundId: string },
-  arg2: "main" | "tiebreak" = "main"
-) {
+export async function resetBallotAction(params: { votingRoundId: string }) {
   const user = await requireAuth("/login");
 
-  let votingRoundId: string;
-
-  if (typeof arg1 === "object" && "votingRoundId" in arg1) {
-    votingRoundId = arg1.votingRoundId;
-  } else {
-    const challengeId = arg1 as string;
-    const roundType = arg2;
-
-    const [round] = await db
-      .select({ id: challengeVotingRounds.id })
-      .from(challengeVotingRounds)
-      .where(
-        and(
-          eq(challengeVotingRounds.challengeId, challengeId),
-          eq(challengeVotingRounds.roundType, roundType)
-        )
-      )
-      .orderBy(desc(challengeVotingRounds.roundSequence))
-      .limit(1);
-
-    if (!round) {
-      throw new Error(`Babak pemungutan suara ${roundType} tidak ditemukan.`);
-    }
-    votingRoundId = round.id;
-  }
+  const { votingRoundId } = params;
 
   const result = await db.transaction(async (tx) => {
     return await resetBallotService(tx, { userId: user.id, role: user.role }, { votingRoundId });
