@@ -267,7 +267,18 @@
 2. **Removed Reachable Legacy UI Voting Actions:** Removed manual "Hitung Hasil" action and obsolete podium tiebreak notices from `voting_open` and `tiebreak_open` views in `ChallengeTransitionButtons.tsx`.
 3. **Scheduler-Authoritative Submission Locking:** Removed manual "Kunci Submisi" action and rejected direct generic transitions to `submission_locked`. Submission locking and candidate snapshot freezing are exclusively scheduler-driven when `submissionDeadline` is reached.
 4. **Aligned Mutation Operating Windows:** Aligned `resetBallotService` with `castOrUpdateBallotService` to require round status `'open'`, matching challenge status, `now >= startsAt`, and strict rejection at or after deadline (`now >= deadline`).
-5. **Expanded Verification Matrix:** Added Tests 16, 17, and 18 to `testPhase2VotingAndTiebreak.ts`, bringing the suite to 18 complete passing scenarios.
 **Business Rule:** `finalizeVotingRoundService` and scheduler materialization are the exclusive authorities for voting results and submission locking.
 **Reason:** Final compatibility cleanup requested by independent QA review.
+
+## 2026-08-30
+
+### Blueprint 2.2.1 Gate B / Phase 2: Quorum Removal & Star Default Configuration
+**Decision:** Updated challenge configuration to match Blueprint 2.2.1:
+1. **Quorum Removal from Active Configuration:** Removed `quorumRequirement` state, UI input (`KUORUM MINIMAL VOTER`), and formData serialization from `ChallengeCreateForm.tsx`. Removed `quorumRequirement` parsing and persisting from `createOrUpdateChallengeAction` in `challenges.ts`. Legacy DB column preserved with neutral default `0` for backward compatibility without active product behavior.
+2. **Configurable Star Default Changed from 3 to 1:** Updated default Star allocation from 3 to 1 in `ChallengeCreateForm.tsx` (`useState(1)`), `createOrUpdateChallengeAction` (validated integer $\ge 1$, default 1), Drizzle schema (`challenges.starsPerMember` and `challengeVotingRounds.starsPerMember` default 1), and migration `0008` column default alteration.
+3. **Round Inheritance & Strict Tiebreak Rule:** Main voting round inherits challenge's configured value (e.g. 1 by default, or explicit custom values like 3). Single tiebreak round strictly enforces `starsPerMember = 1` regardless of main round allowance.
+4. **Verification:** Added Tests 19 and 20 to `testPhase2VotingAndTiebreak.ts`, bringing total test matrix to 20/20 passed scenarios.
+**Business Rule:** Default star allowance is 1 per member for community voting; tiebreak rounds are always exactly 1 star. Quorum is completely removed from live configuration.
+**Reason:** Strict compliance with Blueprint 2.2.1 requirements.
+
 

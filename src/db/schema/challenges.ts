@@ -87,7 +87,7 @@ export const challenges = pgTable(
     // Award Mode & Rules
     awardMode: awardModeEnum("award_mode").default("vote_and_jury").notNull(),
     tieStrategy: tieStrategyEnum("tie_strategy").default("tiebreak_round").notNull(),
-    starsPerMember: integer("stars_per_member").default(3).notNull(),
+    starsPerMember: integer("stars_per_member").default(1).notNull(),
     quorumRequirement: integer("quorum_requirement").default(0).notNull(),
     maxSubmissionsPerArtist: integer("max_submissions_per_artist").default(1).notNull(),
     allowRevisions: boolean("allow_revisions").default(true).notNull(),
@@ -233,7 +233,7 @@ export const challengeVotingRounds = pgTable(
     status: votingRoundStatusEnum("status").default("pending").notNull(),
     startsAt: timestamp("starts_at", { withTimezone: true }),
     deadline: timestamp("deadline", { withTimezone: true }),
-    starsPerMember: integer("stars_per_member").default(3).notNull(),
+    starsPerMember: integer("stars_per_member").default(1).notNull(),
     finalizedAt: timestamp("finalized_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

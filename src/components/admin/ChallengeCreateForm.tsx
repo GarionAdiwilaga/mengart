@@ -15,8 +15,7 @@ export function ChallengeCreateForm() {
     "1. Karya harus merupakan kreasi orisinal (bukan AI generated).\n2. Format file: PNG / JPG / WebP / MP4.\n3. Sesuai dengan tema yang ditentukan."
   );
   const [awardMode, setAwardMode] = useState<"vote_and_jury" | "vote_only" | "jury_only" | "showcase_only">("vote_and_jury");
-  const [starsPerMember, setStarsPerMember] = useState(3);
-  const [quorumRequirement, setQuorumRequirement] = useState(0);
+  const [starsPerMember, setStarsPerMember] = useState(1);
   const [allowRevisions, setAllowRevisions] = useState(true);
 
   // Default dates: start now, submission 7 days, voting 3 days
@@ -45,7 +44,6 @@ export function ChallengeCreateForm() {
     formData.append("promptRules", promptRules.trim());
     formData.append("awardMode", awardMode);
     formData.append("starsPerMember", String(starsPerMember));
-    formData.append("quorumRequirement", String(quorumRequirement));
     formData.append("allowRevisions", String(allowRevisions));
     formData.append("submissionStartsAt", new Date(submissionStartsAt).toISOString());
     formData.append("submissionDeadline", new Date(submissionDeadline).toISOString());
@@ -152,7 +150,7 @@ export function ChallengeCreateForm() {
           ))}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-mono text-zinc-300">ALOKASI STARS / MEMBER</label>
             <input
@@ -161,18 +159,6 @@ export function ChallengeCreateForm() {
               max={10}
               value={starsPerMember}
               onChange={(e) => setStarsPerMember(Number(e.target.value))}
-              className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-xs font-mono"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-mono text-zinc-300">KUORUM MINIMAL VOTER</label>
-            <input
-              type="number"
-              min={0}
-              max={100}
-              value={quorumRequirement}
-              onChange={(e) => setQuorumRequirement(Number(e.target.value))}
               className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-xs font-mono"
             />
           </div>

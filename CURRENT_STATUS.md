@@ -43,13 +43,18 @@
     - `finalizeVotingRoundService`: Enforces exact operational state matching (`voting_open` for main, `tiebreak_open` for tiebreak), requires `now >= round.deadline`, idempotent return for closed rounds, rejection for non-open rounds, inserts `community_vote_winner` for unique max, transitions to `tie_pending` on ties or 0-vote tiebreaks, and transitions to `finished` or `jury_selection_open`.
     - `startTiebreakService`: Enforces single tiebreak round limit, starts tiebreak (seq 2, 1 Star/member, +24h editable deadline, frozen tied candidates snapshot).
     - `resolveTieManuallyService`: Moderator manual tiebreak resolve with $\ge 5$ char reason and audit log, picking strictly from authoritative tied candidates.
+  - Quorum Removal & Star Default Configuration:
+    - Removed quorum input, state, and serialization from `ChallengeCreateForm.tsx` and `createOrUpdateChallengeAction`. Neutral DB default preserved for backward compatibility.
+    - Changed configurable Star default from 3 to 1 in `ChallengeCreateForm.tsx`, `createOrUpdateChallengeAction`, Drizzle schema (`challenges` & `challengeVotingRounds`), and migration `0008` column defaults.
+    - Main voting round inherits challenge's configured Star allowance (default 1, or explicit custom values like 3). Single tiebreak round strictly enforces `starsPerMember = 1`.
   - UI & Components:
     - Cleaned `ChallengeTransitionButtons.tsx`: Removed manual "Hitung Hasil" and "Buka Voting" during voting states; removed "Kunci Submisi"; cleaned obsolete podium tiebreak text.
+    - Cleaned `ChallengeCreateForm.tsx`: Removed quorum requirement UI input and state, set default stars allocation to 1.
     - Server actions and `VotingWorkspace.tsx` operate strictly on `{ votingRoundId, votes }` and `{ votingRoundId }`.
     - `TiePendingAdminPanel.tsx` with modal workflows for starting tiebreak and manual winner resolution.
     - `voting/page.tsx` and `results/page.tsx` updated for single Community Winner card under Blueprint 2.2.1.
   - Test Suite (`src/lib/__tests__/testPhase2VotingAndTiebreak.ts` & `scripts/verifyMigrations.ts`):
-    - Verified all 18 test scenarios under isolated PostgreSQL database: single Community Winner, zero-vote transitions, main tie $\rightarrow$ `tie_pending` $\rightarrow$ tiebreak $\rightarrow$ tiebreak winner, tiebreak 0-votes $\rightarrow$ manual resolve with audit, membership status auth, malformed negative Star bypass prevention, reset ballot, voter anonymity, per-round ballot uniqueness, finalize checks, scheduler system actor null check, mode-specific branching, concurrency tests, protected lifecycle bypass rejections, negative compute on live voting rejection, negative manual submission lock rejection, and mutation operating window boundary validations.
+    - Verified all 20 test scenarios under isolated PostgreSQL database: single Community Winner, zero-vote transitions, main tie $\rightarrow$ `tie_pending` $\rightarrow$ tiebreak $\rightarrow$ tiebreak winner, tiebreak 0-votes $\rightarrow$ manual resolve with audit, membership status auth, malformed negative Star bypass prevention, reset ballot, voter anonymity, per-round ballot uniqueness, finalize checks, scheduler system actor null check, mode-specific branching, concurrency tests, protected lifecycle bypass rejections, negative compute on live voting rejection, negative manual submission lock rejection, mutation operating window boundary validations, quorum removal verification, and Star defaults/inheritance/tiebreak 1-star enforcement.
     - Migration Scenario 5 verified fail-closed unreconciled ballot exception.
     - All test suites passing in `npm run test:all`, `npm run test:migrate`, `npm run lint` (0 errors), and `npm run build` (clean compilation).
 - **Phase 3: Release Gate C (Simplified Jury & Result Model):** READY FOR IMPLEMENTATION

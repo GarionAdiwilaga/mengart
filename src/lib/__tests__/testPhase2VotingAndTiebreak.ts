@@ -1526,6 +1526,185 @@ async function runTests() {
     }
     console.log("✓ Test 18 Passed: Operational window and deadline boundaries strictly enforced for both cast and reset mutations.\n");
 
+    // --------------------------------------------------------------------------
+    // TEST 19: NO ACTIVE QUORUM CONFIGURATION OR ENFORCEMENT
+    // --------------------------------------------------------------------------
+    console.log("-> [Test 19] Quorum removal verification: challenge finalization succeeds without active quorum dependency...");
+    const [ch19] = await db
+      .insert(challenges)
+      .values({
+        title: "Challenge 19 - No Quorum",
+        slug: `ch19-${Date.now()}`,
+        theme: "Theme",
+        description: "Desc",
+        promptRules: "Rules",
+        status: "voting_open",
+        awardMode: "vote_only",
+        createdByUserId: adminUser.id,
+      })
+      .returning();
+    const sub19A = await createSubmission(ch19.id, artist1, prof1, "Art 19A");
+    const sub19B = await createSubmission(ch19.id, artist2, prof2, "Art 19B");
+
+    const [round19] = await db
+      .insert(challengeVotingRounds)
+      .values({
+        challengeId: ch19.id,
+        roundType: "main",
+        roundSequence: 1,
+        status: "open",
+        startsAt: new Date(Date.now() - 3600 * 1000),
+        deadline: new Date(Date.now() + 3600 * 1000),
+      })
+      .returning();
+    await db.insert(challengeVotingRoundCandidates).values([
+      { votingRoundId: round19.id, submissionId: sub19A.id },
+      { votingRoundId: round19.id, submissionId: sub19B.id },
+    ]);
+
+    // Exactly 1 single voter casts 1 star (no quorum threshold blocking resolution)
+    await castOrUpdateBallotService(db, voter1Ctx, {
+      votingRoundId: round19.id,
+      votes: [{ submissionId: sub19A.id, starsCount: 1 }],
+    });
+
+    // Advance deadline to past so finalization is permitted
+    await db
+      .update(challengeVotingRounds)
+      .set({ deadline: new Date(Date.now() - 1000) })
+      .where(eq(challengeVotingRounds.id, round19.id));
+
+    const res19 = await finalizeVotingRoundService(db, adminCtx, { votingRoundId: round19.id });
+    if (!res19.success || res19.outcome !== "winner_resolved") {
+      throw new Error("Expected challenge finalization without quorum constraint to resolve successfully!");
+    }
+    const [winner19] = await db
+      .select()
+      .from(challengeResults)
+      .where(and(eq(challengeResults.challengeId, ch19.id), eq(challengeResults.awardType, "community_vote_winner")));
+    if (!winner19 || winner19.submissionId !== sub19A.id) {
+      throw new Error("Expected single community winner to be resolved without quorum check!");
+    }
+    console.log("✓ Test 19 Passed: Challenge finalized and winner resolved with zero active quorum dependency.\n");
+
+    // --------------------------------------------------------------------------
+    // TEST 20: STAR DEFAULTS & INHERITANCE (DEFAULT 1, CUSTOM 3, TIEBREAK ALWAYS 1)
+    // --------------------------------------------------------------------------
+    console.log("-> [Test 20] Star defaults & inheritance (default 1, custom 3, tiebreak always 1)...");
+    
+    // 1. Default challenge creation (no explicit starsPerMember provided)
+    const [ch20Default] = await db
+      .insert(challenges)
+      .values({
+        title: "Challenge 20 Default Stars",
+        slug: `ch20-default-${Date.now()}`,
+        theme: "Theme",
+        description: "Desc",
+        promptRules: "Rules",
+        status: "submission_open",
+        submissionDeadline: new Date(Date.now() - 1000), // deadline passed
+        votingStartsAt: new Date(Date.now() + 3600 * 1000),
+        votingDeadline: new Date(Date.now() + 7200 * 1000),
+        awardMode: "vote_only",
+        createdByUserId: adminUser.id,
+      })
+      .returning();
+    
+    if (ch20Default.starsPerMember !== 1) {
+      throw new Error(`Expected default challenge starsPerMember to be 1, got ${ch20Default.starsPerMember}`);
+    }
+
+    const sub20A1 = await createSubmission(ch20Default.id, artist1, prof1, "Art 20A1");
+    const sub20A2 = await createSubmission(ch20Default.id, artist2, prof2, "Art 20A2");
+
+    // Scheduler materializes submission_locked & creates main round
+    await materializeScheduledTransitionsService(db);
+    const [round20Default] = await db
+      .select()
+      .from(challengeVotingRounds)
+      .where(and(eq(challengeVotingRounds.challengeId, ch20Default.id), eq(challengeVotingRounds.roundType, "main")));
+    
+    if (!round20Default || round20Default.starsPerMember !== 1) {
+      throw new Error(`Expected generated main round to inherit starsPerMember = 1, got ${round20Default?.starsPerMember}`);
+    }
+
+    // 2. Custom challenge creation with explicit starsPerMember = 3
+    const [ch20Custom] = await db
+      .insert(challenges)
+      .values({
+        title: "Challenge 20 Custom 3 Stars",
+        slug: `ch20-custom-${Date.now()}`,
+        theme: "Theme",
+        description: "Desc",
+        promptRules: "Rules",
+        status: "submission_open",
+        starsPerMember: 3,
+        submissionDeadline: new Date(Date.now() - 1000), // deadline passed
+        votingStartsAt: new Date(Date.now() - 500),
+        votingDeadline: new Date(Date.now() + 7200 * 1000),
+        awardMode: "vote_only",
+        createdByUserId: adminUser.id,
+      })
+      .returning();
+
+    if (ch20Custom.starsPerMember !== 3) {
+      throw new Error(`Expected custom challenge starsPerMember to be 3, got ${ch20Custom.starsPerMember}`);
+    }
+
+    const sub20B1 = await createSubmission(ch20Custom.id, artist1, prof1, "Art 20B1");
+    const sub20B2 = await createSubmission(ch20Custom.id, artist2, prof2, "Art 20B2");
+
+    // Scheduler materializes submission_locked & creates main round
+    await materializeScheduledTransitionsService(db);
+    const [round20Custom] = await db
+      .select()
+      .from(challengeVotingRounds)
+      .where(and(eq(challengeVotingRounds.challengeId, ch20Custom.id), eq(challengeVotingRounds.roundType, "main")));
+
+    if (!round20Custom || round20Custom.starsPerMember !== 3) {
+      throw new Error(`Expected generated main round to inherit custom starsPerMember = 3, got ${round20Custom?.starsPerMember}`);
+    }
+
+    // Open main round and create tie (sub20B1 = 2 stars, sub20B2 = 2 stars)
+    await db.update(challenges).set({ status: "voting_open" }).where(eq(challenges.id, ch20Custom.id));
+    await db.update(challengeVotingRounds).set({ status: "open" }).where(eq(challengeVotingRounds.id, round20Custom.id));
+
+    await castOrUpdateBallotService(db, voter1Ctx, {
+      votingRoundId: round20Custom.id,
+      votes: [{ submissionId: sub20B1.id, starsCount: 2 }],
+    });
+    await castOrUpdateBallotService(db, voter2Ctx, {
+      votingRoundId: round20Custom.id,
+      votes: [{ submissionId: sub20B2.id, starsCount: 2 }],
+    });
+
+    // Advance deadline to past so finalization is permitted
+    await db
+      .update(challengeVotingRounds)
+      .set({ deadline: new Date(Date.now() - 1000) })
+      .where(eq(challengeVotingRounds.id, round20Custom.id));
+
+    const finalizeCustomRes = await finalizeVotingRoundService(db, adminCtx, { votingRoundId: round20Custom.id });
+    if (finalizeCustomRes.outcome !== "tie_pending") {
+      throw new Error("Expected first-place tie on custom 3-star challenge!");
+    }
+
+    // Start tiebreak round
+    const startTbRes = await startTiebreakService(db, adminCtx, { challengeId: ch20Custom.id });
+    if (!startTbRes.success) {
+      throw new Error("Expected startTiebreakService to succeed on tied custom challenge!");
+    }
+
+    const [round20Tiebreak] = await db
+      .select()
+      .from(challengeVotingRounds)
+      .where(and(eq(challengeVotingRounds.challengeId, ch20Custom.id), eq(challengeVotingRounds.roundType, "tiebreak")));
+
+    if (!round20Tiebreak || round20Tiebreak.starsPerMember !== 1) {
+      throw new Error(`Expected generated tiebreak round to strictly have starsPerMember = 1, got ${round20Tiebreak?.starsPerMember}`);
+    }
+    console.log("✓ Test 20 Passed: Default 1 star, custom 3 stars inheritance, and tiebreak strictly 1 star verified.\n");
+
     console.log("=================================================================");
     console.log("🎉 ALL GATE B / PHASE 2 TEST SCENARIOS PASSED WITH FULL INTEGRITY!");
     console.log("=================================================================\n");

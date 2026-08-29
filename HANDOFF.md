@@ -1,28 +1,29 @@
-# Handoff Context — Phase 2: Voting & Tie Resolution Final Cleanup (Gate B Against Blueprint 2.2.1)
+# Handoff Context — Phase 2: Configuration & Defaults Final Correction (Gate B Against Blueprint 2.2.1)
 
-**Date:** 2026-08-29
+**Date:** 2026-08-30
 **Base Historical Commit:** `15459ecfdb2e4bf2f22b16464b383ddf55e08c1c`
-**Reviewed Base Commit Under Correction:** `d0196e7efb4855490e57be14d64ecc5bfdc0e946`
+**Reviewed Base Commit Under Correction:** `e6b8707e944a74f4183226012723b4ea97759e8a`
 
 ## Session Summary
-- **Single Voting Result Authority:**
-  - `computeChallengeResultsService`: Deactivated legacy tiebreak creation and podium cutoff branches. Strictly rejects live voting states (`submission_locked`, `voting_open`, `tie_pending`, `tiebreak_open`). Preserves authoritative `community_vote_winner` rows.
-  - `finalizeVotingRoundService` + `TIE_PENDING` + `resolveTieManuallyService` / `startTiebreakService`: Exclusive authorities for Community voting results and tiebreak generation.
-- **Scheduler-Authoritative Submission Locking:**
-  - Removed manual "Kunci Submisi" action from `ChallengeTransitionButtons.tsx`; rejected direct generic transitions to `submission_locked`.
-  - Submission locking, candidate freezing, and single-submission auto winner logic are exclusively scheduler-driven when `submissionDeadline` is reached.
-- **Aligned Mutation Operating Windows (`src/lib/services/votingService.ts`):**
-  - `resetBallotService` and `castOrUpdateBallotService` enforce identical operating windows: round status `open`, matching challenge status, `now >= startsAt`, and strict rejection at or after deadline (`now >= deadline`).
-- **Cleaned UI:**
-  - Removed manual "Hitung Hasil" and "Buka Voting" during voting states; cleaned obsolete podium tiebreak notices.
+- **Quorum Removal from Active Configuration:**
+  - Removed `quorumRequirement` state, UI input (`KUORUM MINIMAL VOTER`), and formData serialization from `ChallengeCreateForm.tsx`.
+  - Removed `quorumRequirement` parsing and persisting from `createOrUpdateChallengeAction` in `src/app/actions/challenges.ts`.
+  - Neutral legacy DB column preserved without active product dependency.
+- **Configurable Star Default Changed from 3 to 1:**
+  - Updated default Star allocation from 3 to 1 in `ChallengeCreateForm.tsx` (`useState(1)`).
+  - Validated integer $\ge 1$ with default fallback 1 in `createOrUpdateChallengeAction`.
+  - Updated Drizzle schema defaults to 1 on `challenges.stars_per_member` and `challenge_voting_rounds.stars_per_member`.
+  - Added column default alterations to migration `0008` without rewriting past migrations.
+- **Round Inheritance & Strict Tiebreak Rule:**
+  - Main voting round inherits challenge's configured Star allowance (default 1, or explicit custom values like 3).
+  - Single tiebreak round strictly enforces `starsPerMember = 1` regardless of main round allowance.
 - **Comprehensive Automated Verification:**
-  - `src/lib/__tests__/testPhase2VotingAndTiebreak.ts`: 18 comprehensive scenarios passing 100% clean on isolated PostgreSQL (including negative compute rejection, negative manual submission lock rejection, and mutation operating window tests).
-  - `src/lib/__tests__/testPhase1LifecycleAndState.ts`: Updated vote-only finalization to use `finalizeVotingRoundService` directly under Blueprint 2.2.1.
+  - `src/lib/__tests__/testPhase2VotingAndTiebreak.ts`: 20 comprehensive scenarios passing 100% clean on isolated PostgreSQL (including Tests 19 & 20 verifying quorum removal and Star defaults/inheritance).
   - `npm run test:migrate`: 5/5 migration scenarios passed.
-  - `npm run test:all`: All test suites across the repository passed with code 0.
+  - `npm run test:all`: All 14 test suites across the repository passed with code 0.
   - `npm run lint`: 0 ESLint errors.
   - `npm run build`: Production Next.js build and worker bundle compiled cleanly.
 
 ## Verification Artifact
-- Single incremental Git patch generated from base commit `d0196e7efb4855490e57be14d64ecc5bfdc0e946`:
-  `phase2_gateb_final_cleanup.patch`
+- Single incremental Git patch generated from base commit `e6b8707e944a74f4183226012723b4ea97759e8a`:
+  `phase2_gateb_config_final.patch`

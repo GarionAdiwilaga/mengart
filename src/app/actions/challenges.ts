@@ -236,8 +236,12 @@ export async function createOrUpdateChallengeAction(formData: FormData) {
   const description = (formData.get("description") as string)?.trim();
   const promptRules = (formData.get("promptRules") as string)?.trim();
   const awardMode = (formData.get("awardMode") as any) || "vote_and_jury";
-  const starsPerMember = parseInt(formData.get("starsPerMember") as string, 10) || 3;
-  const quorumRequirement = parseInt(formData.get("quorumRequirement") as string, 10) || 0;
+  const rawStars = formData.get("starsPerMember");
+  const parsedStars =
+    rawStars !== null && rawStars !== undefined && rawStars !== ""
+      ? parseInt(rawStars as string, 10)
+      : 1;
+  const starsPerMember = Number.isInteger(parsedStars) && parsedStars >= 1 ? parsedStars : 1;
   const allowRevisions = formData.get("allowRevisions") === "true";
 
   const subStartsRaw = formData.get("submissionStartsAt") as string;
@@ -266,7 +270,6 @@ export async function createOrUpdateChallengeAction(formData: FormData) {
         promptRules,
         awardMode,
         starsPerMember,
-        quorumRequirement,
         allowRevisions,
         submissionStartsAt,
         submissionDeadline,
@@ -291,7 +294,6 @@ export async function createOrUpdateChallengeAction(formData: FormData) {
         status: "scheduled",
         awardMode,
         starsPerMember,
-        quorumRequirement,
         allowRevisions,
         submissionStartsAt,
         submissionDeadline,
