@@ -20,6 +20,7 @@ import {
   publishChallengeResultsService,
   materializeScheduledTransitionsService,
 } from "@/lib/services/challengeService";
+import { finalizeVotingRoundService } from "@/lib/services/votingService";
 import { getEffectiveChallengeStatus } from "@/lib/challenges";
 import { getChallengeResultsData, getModeratorReviewResultsData } from "@/lib/voting";
 
@@ -68,14 +69,40 @@ async function runPhase1LifecycleTests() {
     })
     .returning();
 
-  // Draft -> Scheduled -> Submission Open -> Submission Locked -> Jury Selection Open
+  // Draft -> Scheduled -> Submission Open
   await transitionChallengeStatusService(db, adminCtx, juryChallenge.id, "scheduled");
   await transitionChallengeStatusService(db, adminCtx, juryChallenge.id, "submission_open");
-  await transitionChallengeStatusService(db, adminCtx, juryChallenge.id, "submission_locked");
   
-  // Valid transition for jury_only
-  await transitionChallengeStatusService(db, adminCtx, juryChallenge.id, "jury_selection_open");
-  console.log("✓ Jury-only mode transitioned submission_locked -> jury_selection_open successfully.");
+  // Generic transition to submission_locked must be rejected per Blueprint 2.2.1
+  let manualLockRejected = false;
+  try {
+    await transitionChallengeStatusService(db, adminCtx, juryChallenge.id, "submission_locked");
+  } catch (err: any) {
+    manualLockRejected = true;
+  }
+  if (!manualLockRejected) {
+    throw new Error("Direct generic transition to submission_locked was unexpectedly allowed!");
+  }
+  console.log("✓ Manual generic transition to submission_locked safely rejected.");
+
+  // Insert 2 submissions and let scheduler lock submissions and transition jury_only to jury_selection_open
+  await db.insert(challengeSubmissions).values([
+    { challengeId: juryChallenge.id, userId: member.id, profileId: prof.id, submissionStatus: "submitted" },
+    { challengeId: juryChallenge.id, userId: admin.id, profileId: prof.id, submissionStatus: "submitted" },
+  ]);
+
+  await db
+    .update(challenges)
+    .set({ submissionDeadline: new Date(Date.now() - 60000) })
+    .where(eq(challenges.id, juryChallenge.id));
+
+  await materializeScheduledTransitionsService(db, new Date());
+
+  const [juryRow] = await db.select().from(challenges).where(eq(challenges.id, juryChallenge.id));
+  if (juryRow.status !== "jury_selection_open") {
+    throw new Error(`Expected jury_selection_open from scheduler, got "${juryRow.status}"`);
+  }
+  console.log("✓ Jury-only mode transitioned submission_open -> submission_locked -> jury_selection_open via scheduler.");
 
   // Illegal transition attempt: voting_open in jury_only mode
   let illegalTransitionBlocked = false;
@@ -170,6 +197,7 @@ async function runPhase1LifecycleTests() {
       roundSequence: 1,
       status: "open",
       startsAt: new Date(Date.now() - 3600000),
+      deadline: new Date(Date.now() - 1000),
       starsPerMember: 3,
     })
     .returning();
@@ -196,43 +224,10 @@ async function runPhase1LifecycleTests() {
     starsCount: 3,
   });
 
-  // Step 1: Compute Results -> Status moves to REVIEW
-  const computeRes = await computeChallengeResultsService(db, adminCtx, finChallenge.id);
-  if (computeRes.outcome !== "review_ready") {
-    throw new Error(`Expected review_ready, got ${computeRes.outcome}`);
-  }
-
-  const [reviewRow] = await db.select().from(challenges).where(eq(challenges.id, finChallenge.id));
-  if (reviewRow.status !== "review") {
-    throw new Error(`Challenge status should be "review", got "${reviewRow.status}"`);
-  }
-
-  const computedResults = await db
-    .select()
-    .from(challengeResults)
-    .where(eq(challengeResults.challengeId, finChallenge.id));
-
-  if (computedResults.length !== 1 || computedResults[0].isPublished !== false) {
-    throw new Error("Computed results should exist and remain unpublished during review stage!");
-  }
-  console.log("✓ Stage 1 (Compute Results) completed: Challenge in 'review' status with unpublished results.");
-
-  // Direct finalize from member must fail
-  let unauthorizedPublishBlocked = false;
-  try {
-    await publishChallengeResultsService(db, memberCtx, finChallenge.id);
-  } catch (err: any) {
-    unauthorizedPublishBlocked = true;
-  }
-  if (!unauthorizedPublishBlocked) {
-    throw new Error("Unauthorized publish by non-admin was not blocked!");
-  }
-  console.log("✓ Non-admin publication safely blocked.");
-
-  // Step 2: Publish Results -> Status moves to FINISHED
-  const pubRes = await publishChallengeResultsService(db, adminCtx, finChallenge.id);
-  if (pubRes.outcome !== "published" || !pubRes.pendingNotifications || pubRes.pendingNotifications.length === 0) {
-    throw new Error(`Expected published with pendingNotifications, got ${JSON.stringify(pubRes)}`);
+  // Finalize Voting Round -> Unique winner transitions directly to FINISHED (Blueprint 2.2.1)
+  const finalizeRes = await finalizeVotingRoundService(db, adminCtx, { votingRoundId: finRound.id });
+  if (finalizeRes.outcome !== "winner_resolved") {
+    throw new Error(`Expected winner_resolved, got ${finalizeRes.outcome}`);
   }
 
   const [finishedRow] = await db.select().from(challenges).where(eq(challenges.id, finChallenge.id));
@@ -245,10 +240,22 @@ async function runPhase1LifecycleTests() {
     .from(challengeResults)
     .where(eq(challengeResults.challengeId, finChallenge.id));
 
-  if (publishedResults[0].isPublished !== true) {
-    throw new Error("Results should now be marked isPublished = true!");
+  if (publishedResults.length !== 1 || publishedResults[0].awardType !== "community_vote_winner" || publishedResults[0].isPublished !== true) {
+    throw new Error("Community winner result should exist, have awardType community_vote_winner, and be isPublished = true!");
   }
-  console.log("✓ Stage 2 (Publish Results) completed: Challenge in 'finished' status and results published.");
+  console.log("✓ Vote-only challenge finalized directly to 'finished' with canonical community_vote_winner.");
+
+  // Direct finalize/publish from non-admin/moderator must fail
+  let unauthorizedPublishBlocked = false;
+  try {
+    await publishChallengeResultsService(db, memberCtx, finChallenge.id);
+  } catch (err: any) {
+    unauthorizedPublishBlocked = true;
+  }
+  if (!unauthorizedPublishBlocked) {
+    throw new Error("Unauthorized publish by non-admin was not blocked!");
+  }
+  console.log("✓ Non-admin publication safely blocked.");
 
   // 5. Results Revocation & Snapshot Preservation (QA-P1-008)
   console.log("\n[Test 5] Testing Results Revocation & Snapshot Preservation (QA-P1-008)...");
@@ -267,6 +274,22 @@ async function runPhase1LifecycleTests() {
 
   if (revokedResults[0].isPublished !== false) {
     throw new Error("Revoking results must set isPublished = false!");
+  }
+
+  // Verify transition from results_revoked to review and re-publish
+  await transitionChallengeStatusService(db, adminCtx, finChallenge.id, "review");
+  const [reviewAgain] = await db.select().from(challenges).where(eq(challenges.id, finChallenge.id));
+  if (reviewAgain.status !== "review") {
+    throw new Error(`Expected status review, got "${reviewAgain.status}"`);
+  }
+
+  const republishRes = await publishChallengeResultsService(db, adminCtx, finChallenge.id);
+  if (republishRes.outcome !== "published") {
+    throw new Error(`Expected published, got ${republishRes.outcome}`);
+  }
+  const [republishedRow] = await db.select().from(challenges).where(eq(challenges.id, finChallenge.id));
+  if (republishedRow.status !== "finished") {
+    throw new Error(`Expected status finished, got "${republishedRow.status}"`);
   }
 
   // Verify Snapshot in Audit Log
@@ -362,10 +385,7 @@ async function runPhase1LifecycleTests() {
   // 7. Compute Blocked on FINISHED Challenge (Must Revoke First)
   console.log("\n[Test 7] Testing Compute Results Blocked on FINISHED Challenge...");
   
-  // Transition from results_revoked -> review -> publish
-  await transitionChallengeStatusService(db, adminCtx, finChallenge.id, "review");
-  await publishChallengeResultsService(db, adminCtx, finChallenge.id);
-
+  // finChallenge is in 'finished' status from Test 5 republish
   let finishedComputeBlocked = false;
   try {
     await computeChallengeResultsService(db, adminCtx, finChallenge.id);

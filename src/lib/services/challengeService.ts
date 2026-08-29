@@ -58,7 +58,7 @@ export const LEGAL_TRANSITIONS: Record<string, Record<string, string[]>> = {
   vote_and_jury: {
     draft: ["scheduled", "cancelled"],
     scheduled: ["submission_open", "cancelled"],
-    submission_open: ["submission_locked", "cancelled"],
+    submission_open: ["cancelled"],
     submission_locked: ["cancelled"],
     voting_open: ["cancelled"],
     tie_pending: ["cancelled"],
@@ -74,7 +74,7 @@ export const LEGAL_TRANSITIONS: Record<string, Record<string, string[]>> = {
   vote_only: {
     draft: ["scheduled", "cancelled"],
     scheduled: ["submission_open", "cancelled"],
-    submission_open: ["submission_locked", "cancelled"],
+    submission_open: ["cancelled"],
     submission_locked: ["cancelled"],
     voting_open: ["cancelled"],
     tie_pending: ["cancelled"],
@@ -89,7 +89,7 @@ export const LEGAL_TRANSITIONS: Record<string, Record<string, string[]>> = {
   jury_only: {
     draft: ["scheduled", "cancelled"],
     scheduled: ["submission_open", "cancelled"],
-    submission_open: ["submission_locked", "cancelled"],
+    submission_open: ["cancelled"],
     submission_locked: ["jury_selection_open", "cancelled"],
     jury_selection_open: ["review", "cancelled"],
     review: ["finished", "cancelled"],
@@ -102,7 +102,7 @@ export const LEGAL_TRANSITIONS: Record<string, Record<string, string[]>> = {
   showcase_only: {
     draft: ["scheduled", "cancelled"],
     scheduled: ["submission_open", "cancelled"],
-    submission_open: ["submission_locked", "cancelled"],
+    submission_open: ["cancelled"],
     submission_locked: ["review", "finished", "cancelled"],
     review: ["finished", "cancelled"],
     finished: ["results_revoked"],
@@ -169,6 +169,11 @@ export async function transitionChallengeStatusService(
       "Transisi langsung ke 'voting_open' dilarang. Pembukaan babak voting harus dilakukan secara otomatis oleh scheduler saat votingStartsAt tercapai."
     );
   }
+  if (newStatus === "submission_locked") {
+    throw new Error(
+      "Transisi langsung ke 'submission_locked' dilarang. Penguncian submisi harus dilakukan secara otomatis oleh scheduler saat submissionDeadline tercapai."
+    );
+  }
   if (newStatus === "paused") {
     throw new Error(
       "Status 'paused' telah dinonaktifkan dalam alur operasional Blueprint 2.2.1."
@@ -232,77 +237,6 @@ export async function transitionChallengeStatusService(
 
   if (newStatus === "cancelled") {
     updateData.cancellationReason = options?.reason || "Dibatalkan oleh moderator/admin";
-  }
-
-  // Entering SUBMISSION_LOCKED: Create & Freeze Main Voting Round Candidates for voting modes
-  if (newStatus === "submission_locked") {
-    if (challenge.awardMode === "vote_only" || challenge.awardMode === "vote_and_jury") {
-      const activeSubmissions = await dbOrTx
-        .select({ id: challengeSubmissions.id })
-        .from(challengeSubmissions)
-        .where(
-          and(
-            eq(challengeSubmissions.challengeId, challengeId),
-            eq(challengeSubmissions.submissionStatus, "submitted")
-          )
-        );
-
-      if (activeSubmissions.length === 0) {
-        updateData.status = "cancelled";
-        updateData.cancellationReason = "Tidak ada submisi karya yang valid saat batas waktu submisi berakhir.";
-      } else if (activeSubmissions.length === 1) {
-        const singleSub = activeSubmissions[0];
-        await dbOrTx.insert(challengeResults).values({
-          challengeId: challenge.id,
-          submissionId: singleSub.id,
-          finalRank: 1,
-          awardType: "community_vote_winner",
-          totalCommunityStars: 0,
-          resolutionMethod: "automatic_single_submission",
-          isPublished: true,
-        });
-        updateData.status = "finished";
-      } else {
-        const existingRounds = await dbOrTx
-          .select()
-          .from(challengeVotingRounds)
-          .where(
-            and(
-              eq(challengeVotingRounds.challengeId, challengeId),
-              eq(challengeVotingRounds.roundType, "main")
-            )
-          );
-
-        let roundId: string;
-        if (existingRounds.length === 0) {
-          const [mainRound] = await dbOrTx
-            .insert(challengeVotingRounds)
-            .values({
-              challengeId,
-              roundType: "main",
-              roundSequence: 1,
-              status: "pending",
-              startsAt: challenge.votingStartsAt,
-              deadline: challenge.votingDeadline,
-              starsPerMember: challenge.starsPerMember,
-            })
-            .returning();
-          roundId = mainRound.id;
-        } else {
-          roundId = existingRounds[0].id;
-        }
-
-        for (const sub of activeSubmissions) {
-          await dbOrTx
-            .insert(challengeVotingRoundCandidates)
-            .values({
-              votingRoundId: roundId,
-              submissionId: sub.id,
-            })
-            .onConflictDoNothing();
-        }
-      }
-    }
   }
 
   // Update Challenge
@@ -418,15 +352,15 @@ export async function computeChallengeResultsService(
     );
   }
 
-  // Allow computation from voting_open, tiebreak_open, jury_selection_open, submission_locked, review, or results_revoked
-  const allowedStatuses = [
-    "voting_open",
-    "tiebreak_open",
-    "jury_selection_open",
-    "submission_locked",
-    "review",
-    "results_revoked",
-  ];
+  // Strictly reject live voting/tie states - voting results are managed solely by finalizeVotingRoundService / TIE_PENDING
+  if (["submission_locked", "voting_open", "tie_pending", "tiebreak_open"].includes(challenge.status)) {
+    throw new Error(
+      `Penghitungan hasil manual tidak diizinkan pada status "${challenge.status}". Hasil voting komunitas dikelola secara otoritatif melalui finalizeVotingRoundService dan alur TIE_PENDING.`
+    );
+  }
+
+  // Only allowed during non-live-voting result stages (e.g. jury_selection_open, review, results_revoked)
+  const allowedStatuses = ["jury_selection_open", "review", "results_revoked"];
   if (!allowedStatuses.includes(challenge.status)) {
     throw new Error(`Hasil tidak dapat dihitung pada status "${challenge.status}".`);
   }
@@ -438,7 +372,6 @@ export async function computeChallengeResultsService(
     .where(eq(challengeWinnerSlots.challengeId, challengeId))
     .orderBy(asc(challengeWinnerSlots.displayOrder), asc(challengeWinnerSlots.rank));
 
-  const communitySlots = winnerSlots.filter((s: any) => s.slotType === "community_vote");
   const jurySlots = winnerSlots.filter((s: any) => s.slotType === "jury_award");
 
   // 3. Required Jury Slots Completion Check for jury-enabled modes
@@ -459,116 +392,19 @@ export async function computeChallengeResultsService(
     }
   }
 
-  // 4. Tabulate Main & Tiebreak Stars Deterministically
-  const starTallies = await dbOrTx
-    .select({
-      submissionId: challengeSubmissions.id,
-      artistUserId: challengeSubmissions.userId,
-      createdAt: challengeSubmissions.createdAt,
-      totalMainStars: sql<number>`COALESCE(SUM(CASE WHEN ${challengeBallots.roundType} = 'main' THEN ${challengeBallotStars.starsCount} ELSE 0 END), 0)::int`,
-      totalTiebreakStars: sql<number>`COALESCE(SUM(CASE WHEN ${challengeBallots.roundType} = 'tiebreak' THEN ${challengeBallotStars.starsCount} ELSE 0 END), 0)::int`,
-    })
-    .from(challengeSubmissions)
-    .leftJoin(challengeBallotStars, eq(challengeBallotStars.submissionId, challengeSubmissions.id))
-    .leftJoin(challengeBallots, eq(challengeBallots.id, challengeBallotStars.ballotId))
+  // 4. Preserve existing authoritative Community Winner if already resolved in Gate B
+  const [existingCommunityWinner] = await dbOrTx
+    .select()
+    .from(challengeResults)
     .where(
       and(
-        eq(challengeSubmissions.challengeId, challengeId),
-        eq(challengeSubmissions.submissionStatus, "submitted")
+        eq(challengeResults.challengeId, challengeId),
+        eq(challengeResults.awardType, "community_vote_winner")
       )
     )
-    .groupBy(challengeSubmissions.id, challengeSubmissions.userId, challengeSubmissions.createdAt)
-    .orderBy(
-      desc(sql`COALESCE(SUM(CASE WHEN ${challengeBallots.roundType} = 'main' THEN ${challengeBallotStars.starsCount} ELSE 0 END), 0)::int`),
-      desc(sql`COALESCE(SUM(CASE WHEN ${challengeBallots.roundType} = 'tiebreak' THEN ${challengeBallotStars.starsCount} ELSE 0 END), 0)::int`),
-      asc(challengeSubmissions.createdAt),
-      asc(challengeSubmissions.id)
-    );
+    .limit(1);
 
-  // 5. Detect Cutoff Ties for Community Vote Challenges
-  const communityCutoffCount = communitySlots.length;
-  if (
-    communityCutoffCount > 0 &&
-    starTallies.length > communityCutoffCount &&
-    challenge.tieStrategy === "tiebreak_round" &&
-    challenge.status !== "tiebreak_open" &&
-    challenge.status !== "review"
-  ) {
-    const cutoffSub = starTallies[communityCutoffCount - 1];
-    const nextSub = starTallies[communityCutoffCount];
-
-    if (cutoffSub.totalMainStars === nextSub.totalMainStars && cutoffSub.totalMainStars > 0) {
-      // Find all tied entries at this exact cutoff score
-      const tiedScore = cutoffSub.totalMainStars;
-      const tiedCandidates = starTallies.filter((s: any) => s.totalMainStars === tiedScore);
-
-      // Close the main round
-      await dbOrTx
-        .update(challengeVotingRounds)
-        .set({ status: "closed", finalizedAt: new Date(), updatedAt: new Date() })
-        .where(
-          and(
-            eq(challengeVotingRounds.challengeId, challengeId),
-            eq(challengeVotingRounds.roundType, "main")
-          )
-        );
-
-      // Determine next sequence number
-      const existingRounds = await dbOrTx
-        .select()
-        .from(challengeVotingRounds)
-        .where(eq(challengeVotingRounds.challengeId, challengeId));
-
-      const maxSeq = existingRounds.reduce((max: number, r: any) => Math.max(max, r.roundSequence), 1);
-      const nextSeq = maxSeq + 1;
-
-      // Create Tiebreak Voting Round
-      const tiebreakDeadline = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours default
-      const [tiebreakRound] = await dbOrTx
-        .insert(challengeVotingRounds)
-        .values({
-          challengeId,
-          roundType: "tiebreak",
-          roundSequence: nextSeq,
-          status: "open",
-          startsAt: new Date(),
-          deadline: tiebreakDeadline,
-          starsPerMember: 1,
-        })
-        .returning();
-
-      // Freeze Tied Candidates
-      await dbOrTx.insert(challengeVotingRoundCandidates).values(
-        tiedCandidates.map((tc: any) => ({
-          votingRoundId: tiebreakRound.id,
-          submissionId: tc.submissionId,
-        }))
-      );
-
-      // Transition challenge to tiebreak_open cleanly and COMMIT transaction
-      await dbOrTx
-        .update(challenges)
-        .set({ status: "tiebreak_open", updatedAt: new Date() })
-        .where(eq(challenges.id, challengeId));
-
-      await dbOrTx.insert(auditLogs).values({
-        actorId: actor.userId,
-        action: "challenge.tiebreak_created",
-        targetType: "challenge",
-        targetId: challengeId,
-        reason: `Tiebreak round #${nextSeq} dibuat untuk ${tiedCandidates.length} karya dengan skor sama (${tiedScore} Stars).`,
-      });
-
-      return {
-        success: true,
-        outcome: "tiebreak_created" as const,
-        votingRoundId: tiebreakRound.id,
-        tiedCandidatesCount: tiedCandidates.length,
-      };
-    }
-  }
-
-  // 6. Snapshot and Persist Calculated Results (ONLY for Configured Winner Slots)
+  // 5. Snapshot previous results before update
   const previousResults = await dbOrTx
     .select()
     .from(challengeResults)
@@ -588,46 +424,42 @@ export async function computeChallengeResultsService(
     });
   }
 
+  // Delete only previous results and re-insert preserved authoritative community winner + jury results
   await dbOrTx.delete(challengeResults).where(eq(challengeResults.challengeId, challengeId));
 
-  const championSubmissionId = starTallies[0]?.submissionId;
-
-  // A. Persist Community Podium Ranks
-  for (let i = 0; i < communitySlots.length; i++) {
-    const slot = communitySlots[i];
-    const sub = starTallies[i];
-    if (sub) {
-      await dbOrTx.insert(challengeResults).values({
-        challengeId,
-        submissionId: sub.submissionId,
-        winnerSlotId: slot.id,
-        finalRank: slot.rank || (i + 1),
-        awardType: (slot.rank === 1 || i === 0) ? "community_vote_winner" : "community_rank",
-        resolutionMethod: "unique_main_vote",
-        totalCommunityStars: sub.totalMainStars + sub.totalTiebreakStars,
-        isPublished: false, // Hidden until explicit review publication
-      });
-    }
+  if (existingCommunityWinner) {
+    await dbOrTx.insert(challengeResults).values({
+      challengeId,
+      submissionId: existingCommunityWinner.submissionId,
+      winnerSlotId: existingCommunityWinner.winnerSlotId,
+      finalRank: 1,
+      awardType: "community_vote_winner",
+      resolutionMethod: existingCommunityWinner.resolutionMethod,
+      sourceVotingRoundId: existingCommunityWinner.sourceVotingRoundId,
+      totalCommunityStars: existingCommunityWinner.totalCommunityStars,
+      isPublished: false,
+    });
   }
 
-  // B. Persist Jury Award Slots (finalRank remains NULL)
+  const championSubmissionId = existingCommunityWinner?.submissionId;
+
+  // Persist Jury Award Slots (finalRank remains NULL)
   for (const ja of juryAssignments) {
-    const sub = starTallies.find((s: any) => s.submissionId === ja.submissionId);
-    // Anti-Champion rule: Champion cannot take a jury award
+    // Community Winner excluded from jury awards
     if (ja.submissionId !== championSubmissionId) {
       await dbOrTx.insert(challengeResults).values({
         challengeId,
         submissionId: ja.submissionId,
         winnerSlotId: ja.winnerSlotId,
-        finalRank: null, // Nullable for non-ranked jury award winners
+        finalRank: null,
         awardType: "jury_award",
-        totalCommunityStars: sub ? sub.totalMainStars + sub.totalTiebreakStars : 0,
+        totalCommunityStars: 0,
         isPublished: false,
       });
     }
   }
 
-  // 7. Transition Challenge to REVIEW stage (Stage 1 Complete)
+  // 6. Transition Challenge to REVIEW stage
   await dbOrTx
     .update(challenges)
     .set({ status: "review", updatedAt: new Date() })

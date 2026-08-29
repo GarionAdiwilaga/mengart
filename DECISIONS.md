@@ -260,3 +260,14 @@
 8. **Comprehensive 15-Scenario Test Matrix:** Validated single winner, zero votes, tiebreak flow, tiebreak 0-vote manual resolve, membership auth, malformed negative star bypass rejection, reset ballot, voter anonymity, per-round ballot uniqueness, finalize checks, scheduler system actor null check, mode-specific branching, concurrency tests (manual vs manual, manual vs tiebreak start), and generic lifecycle bypass rejections.
 **Business Rule:** All mutations enforce active membership and allocation bounds. Database migrations fail closed without deleting unreconciled ballots.
 **Reason:** Addressed independent QA review findings for Gate B / Phase 2.
+
+### Blueprint 2.2.1 Gate B / Phase 2: Final Compatibility Cleanup & Voting Authority Consolidation
+**Decision:** Fully unified voting and lifecycle result authority under Blueprint 2.2.1:
+1. **Single Voting Authority:** Deactivated legacy result-computation and tiebreak-creation branches from `computeChallengeResultsService`. The service strictly rejects live voting/tie states (`submission_locked`, `voting_open`, `tie_pending`, `tiebreak_open`). All live Community voting results and tiebreak rounds are solely managed by `finalizeVotingRoundService`, `TIE_PENDING`, `startTiebreakService`, and `resolveTieManuallyService`. Existing `community_vote_winner` rows are preserved as authoritative.
+2. **Removed Reachable Legacy UI Voting Actions:** Removed manual "Hitung Hasil" action and obsolete podium tiebreak notices from `voting_open` and `tiebreak_open` views in `ChallengeTransitionButtons.tsx`.
+3. **Scheduler-Authoritative Submission Locking:** Removed manual "Kunci Submisi" action and rejected direct generic transitions to `submission_locked`. Submission locking and candidate snapshot freezing are exclusively scheduler-driven when `submissionDeadline` is reached.
+4. **Aligned Mutation Operating Windows:** Aligned `resetBallotService` with `castOrUpdateBallotService` to require round status `'open'`, matching challenge status, `now >= startsAt`, and strict rejection at or after deadline (`now >= deadline`).
+5. **Expanded Verification Matrix:** Added Tests 16, 17, and 18 to `testPhase2VotingAndTiebreak.ts`, bringing the suite to 18 complete passing scenarios.
+**Business Rule:** `finalizeVotingRoundService` and scheduler materialization are the exclusive authorities for voting results and submission locking.
+**Reason:** Final compatibility cleanup requested by independent QA review.
+

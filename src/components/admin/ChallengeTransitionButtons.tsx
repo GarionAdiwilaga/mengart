@@ -12,9 +12,6 @@ import {
 import {
   Loader2,
   Play,
-  Lock,
-  Vote,
-  Pause,
   XCircle,
   Sparkles,
   Calendar,
@@ -54,11 +51,7 @@ export function ChallengeTransitionButtons({
     setIsLoading(true);
     try {
       const res = await computeChallengeResultsAction(challengeId);
-      if (res.outcome === "tiebreak_created") {
-        alert("Terdeteksi skor imbang pada batas podium. Ronde tiebreak otomatis dibuka.");
-      } else {
-        alert("Hasil berhasil dihitung dan masuk ke tahap Review.");
-      }
+      alert("Hasil berhasil dihitung dan masuk ke tahap Review.");
     } catch (err: any) {
       alert(err?.message || "Gagal menghitung hasil.");
     } finally {
@@ -126,18 +119,6 @@ export function ChallengeTransitionButtons({
         </button>
       ) : null}
 
-      {/* Submission Open -> Submission Locked */}
-      {currentStatus === "submission_open" ? (
-        <button
-          onClick={() => handleTransition("submission_locked")}
-          title="Kunci Submisi (Tutup Pendaftaran)"
-          className="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-xs font-mono transition-colors flex items-center gap-1 cursor-pointer"
-        >
-          <Lock className="h-3 w-3" />
-          <span>Kunci Submisi</span>
-        </button>
-      ) : null}
-
       {/* Submission Locked -> Award Mode Aware Next Stage */}
       {currentStatus === "submission_locked" ? (
         awardMode === "jury_only" ? (
@@ -158,23 +139,14 @@ export function ChallengeTransitionButtons({
             <Sparkles className="h-3 w-3" />
             <span>Masuk Review</span>
           </button>
-        ) : (
-          <button
-            onClick={() => handleTransition("voting_open")}
-            title="Buka Babak Voting Komunitas"
-            className="p-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black text-xs font-mono font-bold transition-all flex items-center gap-1 cursor-pointer"
-          >
-            <Vote className="h-3 w-3" />
-            <span>Buka Voting</span>
-          </button>
-        )
+        ) : null
       ) : null}
 
-      {/* Voting Open -> Compute Results & Transition to Review */}
-      {currentStatus === "voting_open" || currentStatus === "jury_selection_open" || currentStatus === "tiebreak_open" ? (
+      {/* Jury Selection Open -> Compute Results & Transition to Review */}
+      {currentStatus === "jury_selection_open" ? (
         <button
           onClick={handleCompute}
-          title="Kunci & Hitung Hasil (Masuk Review)"
+          title="Kunci Penilaian Juri & Hitung Hasil (Masuk Review)"
           className="p-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 text-xs font-mono font-bold transition-all flex items-center gap-1 cursor-pointer"
         >
           <Sparkles className="h-3 w-3" />

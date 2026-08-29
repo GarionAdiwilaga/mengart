@@ -31,6 +31,7 @@ import {
 import {
   transitionChallengeStatusService,
   materializeScheduledTransitionsService,
+  computeChallengeResultsService,
 } from "@/lib/services/challengeService";
 
 dotenv.config({ path: ".env.local" });
@@ -1266,6 +1267,264 @@ async function runTests() {
     if (!finishedRejected) throw new Error("Expected direct transition to finished to be blocked!");
 
     console.log("✓ Test 15 Passed: Generic protected lifecycle bypass attempts strictly blocked.\n");
+
+    // --------------------------------------------------------------------------
+    // TEST 16: COMPUTE RESULTS SERVICE STRICTLY BLOCKED ON LIVE VOTING / TIE STATES
+    // --------------------------------------------------------------------------
+    console.log("-> [Test 16] Negative Test: computeChallengeResultsService strictly blocked on live voting/tie states...");
+    
+    // 1. Blocked on submission_locked
+    const [ch16SubLocked] = await db
+      .insert(challenges)
+      .values({
+        title: "Ch 16 Sub Locked",
+        slug: `ch16-sublock-${Date.now()}`,
+        theme: "Theme",
+        description: "Desc",
+        promptRules: "Rules",
+        status: "submission_locked",
+        awardMode: "vote_only",
+        createdByUserId: adminUser.id,
+      })
+      .returning();
+
+    let computeSubLockedBlocked = false;
+    try {
+      await computeChallengeResultsService(db, adminCtx, ch16SubLocked.id);
+    } catch (err: any) {
+      if (err.message.includes("Penghitungan hasil manual tidak diizinkan pada status \"submission_locked\"")) {
+        computeSubLockedBlocked = true;
+      }
+    }
+    if (!computeSubLockedBlocked) {
+      throw new Error("Expected computeChallengeResultsService on submission_locked to be blocked!");
+    }
+
+    // 2. Blocked on voting_open
+    const [ch16VotingOpen] = await db
+      .insert(challenges)
+      .values({
+        title: "Ch 16 Voting Open",
+        slug: `ch16-voteopen-${Date.now()}`,
+        theme: "Theme",
+        description: "Desc",
+        promptRules: "Rules",
+        status: "voting_open",
+        awardMode: "vote_only",
+        createdByUserId: adminUser.id,
+      })
+      .returning();
+
+    let computeVotingOpenBlocked = false;
+    try {
+      await computeChallengeResultsService(db, adminCtx, ch16VotingOpen.id);
+    } catch (err: any) {
+      if (err.message.includes("Penghitungan hasil manual tidak diizinkan pada status \"voting_open\"")) {
+        computeVotingOpenBlocked = true;
+      }
+    }
+    if (!computeVotingOpenBlocked) {
+      throw new Error("Expected computeChallengeResultsService on voting_open to be blocked!");
+    }
+
+    // 3. Blocked on tie_pending
+    const [ch16TiePending] = await db
+      .insert(challenges)
+      .values({
+        title: "Ch 16 Tie Pending",
+        slug: `ch16-tiepend-${Date.now()}`,
+        theme: "Theme",
+        description: "Desc",
+        promptRules: "Rules",
+        status: "tie_pending",
+        awardMode: "vote_only",
+        createdByUserId: adminUser.id,
+      })
+      .returning();
+
+    let computeTiePendingBlocked = false;
+    try {
+      await computeChallengeResultsService(db, adminCtx, ch16TiePending.id);
+    } catch (err: any) {
+      if (err.message.includes("Penghitungan hasil manual tidak diizinkan pada status \"tie_pending\"")) {
+        computeTiePendingBlocked = true;
+      }
+    }
+    if (!computeTiePendingBlocked) {
+      throw new Error("Expected computeChallengeResultsService on tie_pending to be blocked!");
+    }
+
+    // 4. Blocked on tiebreak_open
+    const [ch16TiebreakOpen] = await db
+      .insert(challenges)
+      .values({
+        title: "Ch 16 Tiebreak Open",
+        slug: `ch16-tieopen-${Date.now()}`,
+        theme: "Theme",
+        description: "Desc",
+        promptRules: "Rules",
+        status: "tiebreak_open",
+        awardMode: "vote_only",
+        createdByUserId: adminUser.id,
+      })
+      .returning();
+
+    let computeTiebreakOpenBlocked = false;
+    try {
+      await computeChallengeResultsService(db, adminCtx, ch16TiebreakOpen.id);
+    } catch (err: any) {
+      if (err.message.includes("Penghitungan hasil manual tidak diizinkan pada status \"tiebreak_open\"")) {
+        computeTiebreakOpenBlocked = true;
+      }
+    }
+    if (!computeTiebreakOpenBlocked) {
+      throw new Error("Expected computeChallengeResultsService on tiebreak_open to be blocked!");
+    }
+    console.log("✓ Test 16 Passed: computeChallengeResultsService cannot alter challenge or create tiebreak during live voting states.\n");
+
+    // --------------------------------------------------------------------------
+    // TEST 17: SUBMISSION LOCKING IS SCHEDULER-AUTHORITATIVE
+    // --------------------------------------------------------------------------
+    console.log("-> [Test 17] Negative Test: submission_open before deadline + generic transition to submission_locked is rejected...");
+    const [ch17] = await db
+      .insert(challenges)
+      .values({
+        title: "Challenge 17 - Scheduler Authoritative Lock",
+        slug: `ch17-${Date.now()}`,
+        theme: "Theme",
+        description: "Desc",
+        promptRules: "Rules",
+        status: "submission_open",
+        submissionDeadline: new Date(Date.now() + 86400 * 1000), // In future
+        awardMode: "vote_only",
+        createdByUserId: adminUser.id,
+      })
+      .returning();
+
+    let manualLockBlocked = false;
+    try {
+      await transitionChallengeStatusService(db, adminCtx, ch17.id, "submission_locked");
+    } catch (err: any) {
+      if (err.message.includes("Transisi langsung ke 'submission_locked' dilarang")) {
+        manualLockBlocked = true;
+      }
+    }
+    if (!manualLockBlocked) {
+      throw new Error("Expected direct transition to submission_locked to be blocked!");
+    }
+    console.log("✓ Test 17 Passed: Generic transition to submission_locked safely rejected; scheduler is authoritative.\n");
+
+    // --------------------------------------------------------------------------
+    // TEST 18: OPERATIONAL WINDOW & DEADLINE REJECTIONS FOR CAST & RESET
+    // --------------------------------------------------------------------------
+    console.log("-> [Test 18] Operational window checks (startsAt, challenge status, now >= deadline) for cast & reset...");
+    
+    // 1. Reset before startsAt rejected
+    const [ch18] = await db
+      .insert(challenges)
+      .values({
+        title: "Challenge 18 - Time Window Checks",
+        slug: `ch18-${Date.now()}`,
+        theme: "Theme",
+        description: "Desc",
+        promptRules: "Rules",
+        status: "voting_open",
+        awardMode: "vote_only",
+        createdByUserId: adminUser.id,
+      })
+      .returning();
+    const sub18A = await createSubmission(ch18.id, artist1, prof1, "Art 18A");
+
+    const [round18Future] = await db
+      .insert(challengeVotingRounds)
+      .values({
+        challengeId: ch18.id,
+        roundType: "main",
+        roundSequence: 1,
+        status: "open",
+        startsAt: new Date(Date.now() + 3600 * 1000), // starts in 1 hour
+        deadline: new Date(Date.now() + 7200 * 1000),
+        starsPerMember: 3,
+      })
+      .returning();
+    await db.insert(challengeVotingRoundCandidates).values([
+      { votingRoundId: round18Future.id, submissionId: sub18A.id },
+    ]);
+
+    let resetBeforeStartsAtBlocked = false;
+    try {
+      await resetBallotService(db, voter1Ctx, { votingRoundId: round18Future.id });
+    } catch (err: any) {
+      if (err.message.includes("Babak pemungutan suara belum dimulai")) {
+        resetBeforeStartsAtBlocked = true;
+      }
+    }
+    if (!resetBeforeStartsAtBlocked) {
+      throw new Error("Expected resetBallotService before startsAt to be rejected!");
+    }
+
+    let castBeforeStartsAtBlocked = false;
+    try {
+      await castOrUpdateBallotService(db, voter1Ctx, {
+        votingRoundId: round18Future.id,
+        votes: [{ submissionId: sub18A.id, starsCount: 1 }],
+      });
+    } catch (err: any) {
+      if (err.message.includes("Babak pemungutan suara belum dimulai")) {
+        castBeforeStartsAtBlocked = true;
+      }
+    }
+    if (!castBeforeStartsAtBlocked) {
+      throw new Error("Expected castOrUpdateBallotService before startsAt to be rejected!");
+    }
+
+    // 2. Reset under mismatched challenge status rejected
+    await db.update(challenges).set({ status: "submission_locked" }).where(eq(challenges.id, ch18.id));
+    await db.update(challengeVotingRounds).set({ startsAt: new Date(Date.now() - 3600 * 1000) }).where(eq(challengeVotingRounds.id, round18Future.id));
+
+    let resetMismatchedStatusBlocked = false;
+    try {
+      await resetBallotService(db, voter1Ctx, { votingRoundId: round18Future.id });
+    } catch (err: any) {
+      if (err.message.includes("tidak mengizinkan reset suara")) {
+        resetMismatchedStatusBlocked = true;
+      }
+    }
+    if (!resetMismatchedStatusBlocked) {
+      throw new Error("Expected resetBallotService under mismatched status to be rejected!");
+    }
+
+    // 3. Cast & Reset at or after deadline (now >= deadline) rejected
+    await db.update(challenges).set({ status: "voting_open" }).where(eq(challenges.id, ch18.id));
+    await db.update(challengeVotingRounds).set({ deadline: new Date(Date.now() - 1000) }).where(eq(challengeVotingRounds.id, round18Future.id));
+
+    let castAfterDeadlineBlocked = false;
+    try {
+      await castOrUpdateBallotService(db, voter1Ctx, {
+        votingRoundId: round18Future.id,
+        votes: [{ submissionId: sub18A.id, starsCount: 1 }],
+      });
+    } catch (err: any) {
+      if (err.message.includes("Batas waktu pemungutan suara telah berakhir")) {
+        castAfterDeadlineBlocked = true;
+      }
+    }
+    if (!castAfterDeadlineBlocked) {
+      throw new Error("Expected castOrUpdateBallotService at or after deadline to be rejected!");
+    }
+
+    let resetAfterDeadlineBlocked = false;
+    try {
+      await resetBallotService(db, voter1Ctx, { votingRoundId: round18Future.id });
+    } catch (err: any) {
+      if (err.message.includes("Batas waktu voting telah terlewati")) {
+        resetAfterDeadlineBlocked = true;
+      }
+    }
+    if (!resetAfterDeadlineBlocked) {
+      throw new Error("Expected resetBallotService at or after deadline to be rejected!");
+    }
+    console.log("✓ Test 18 Passed: Operational window and deadline boundaries strictly enforced for both cast and reset mutations.\n");
 
     console.log("=================================================================");
     console.log("🎉 ALL GATE B / PHASE 2 TEST SCENARIOS PASSED WITH FULL INTEGRITY!");

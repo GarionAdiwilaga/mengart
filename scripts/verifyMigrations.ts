@@ -517,26 +517,34 @@ async function runMigrationVerification() {
       RETURNING id;
     `;
 
-    // Execute actual production service transitions: submission_open -> submission_locked -> voting_open
     const adminCtx = {
       userId: userA.id,
       role: "admin" as const,
       email: "legacy_admin@mengart.local",
     };
 
-    const lockResult = await transitionChallengeStatusService(
-      upgradeDrizzle,
-      adminCtx,
-      openChallenge.id,
-      "submission_locked"
-    );
-    if (!lockResult.success) {
-      throw new Error("Production transition to submission_locked failed");
+    // Assert that manual/generic transition to submission_locked is rejected
+    let manualLockRejected = false;
+    try {
+      await transitionChallengeStatusService(
+        upgradeDrizzle,
+        adminCtx,
+        openChallenge.id,
+        "submission_locked"
+      );
+    } catch (err: any) {
+      manualLockRejected = true;
+    }
+    if (!manualLockRejected) {
+      throw new Error("Direct generic transition to submission_locked was unexpectedly allowed!");
     }
 
-    // Set votingStartsAt in the past so scheduler transitions submission_locked to voting_open
+    // Set submissionDeadline and votingStartsAt in the past so scheduler transitions submission_open -> submission_locked -> voting_open
     await upgradeClient`
-      UPDATE challenges SET voting_starts_at = now() - interval '1 minute' WHERE id = ${openChallenge.id};
+      UPDATE challenges 
+      SET submission_deadline = now() - interval '2 minutes',
+          voting_starts_at = now() - interval '1 minute' 
+      WHERE id = ${openChallenge.id};
     `;
 
     const { materializeScheduledTransitionsService } = await import("../src/lib/services/challengeService");
@@ -559,7 +567,7 @@ async function runMigrationVerification() {
     if (!futureCandIds.includes(openSub1.id) || !futureCandIds.includes(openSub2.id)) {
       throw new Error(`Production service failed to freeze complete candidate set! Expected both [${openSub1.id}, ${openSub2.id}], got ${JSON.stringify(futureCandIds)}`);
     }
-    console.log(`✓ Invariant 6 Passed: Production transitionChallengeStatusService successfully created round and froze both pre-migration (${openSub1.id}) and post-migration (${openSub2.id}) submissions (${futureCandIds.length} candidates).`);
+    console.log(`✓ Invariant 6 Passed: Production scheduler materialized transitions, created round, and froze both pre-migration (${openSub1.id}) and post-migration (${openSub2.id}) submissions (${futureCandIds.length} candidates).`);
 
     // Invariant 7: Verified Cleanup of Malformed Orphan Result Rows by Migration 0007 itself
     console.log("-> Verifying cleanup of malformed result rows (winner_slot_id IS NULL AND final_rank IS NULL) by migration 0007...");

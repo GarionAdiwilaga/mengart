@@ -463,7 +463,7 @@ export async function castOrUpdateBallotService(
   if (round.startsAt && now < round.startsAt) {
     throw new Error("Babak pemungutan suara belum dimulai.");
   }
-  if (round.deadline && now > round.deadline) {
+  if (round.deadline && now >= round.deadline) {
     throw new Error("Batas waktu pemungutan suara telah berakhir.");
   }
 
@@ -626,11 +626,21 @@ export async function resetBallotService(
   }
 
   if (round.status !== "open") {
-    throw new Error("Reset suara ditolak: Babak voting sedang tidak dibuka.");
+    throw new Error(`Reset suara ditolak: Babak voting sedang tidak dibuka (Status saat ini: "${round.status}").`);
+  }
+
+  const expectedChallengeStatus = round.roundType === "main" ? "voting_open" : "tiebreak_open";
+  if (challenge.status !== expectedChallengeStatus) {
+    throw new Error(
+      `Reset suara ditolak: Status challenge ("${challenge.status}") tidak mengizinkan reset suara untuk babak ${round.roundType}.`
+    );
   }
 
   const now = new Date();
-  if (round.deadline && now > round.deadline) {
+  if (round.startsAt && now < round.startsAt) {
+    throw new Error("Reset suara ditolak: Babak pemungutan suara belum dimulai.");
+  }
+  if (round.deadline && now >= round.deadline) {
     throw new Error("Reset suara ditolak: Batas waktu voting telah terlewati.");
   }
 
