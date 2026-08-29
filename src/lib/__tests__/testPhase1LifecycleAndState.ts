@@ -181,10 +181,27 @@ async function runPhase1LifecycleTests() {
     })
     .returning();
 
+  const [finRound] = await db
+    .insert(challengeVotingRounds)
+    .values({
+      challengeId: finChallenge.id,
+      roundType: "main",
+      roundSequence: 1,
+      status: "open",
+      startsAt: new Date(Date.now() - 3600000),
+      starsPerMember: 3,
+    })
+    .returning();
+
+  await db.insert(challengeVotingRoundCandidates).values([
+    { votingRoundId: finRound.id, submissionId: subA.id },
+  ]);
+
   const [ballot] = await db
     .insert(challengeBallots)
     .values({
       challengeId: finChallenge.id,
+      votingRoundId: finRound.id,
       userId: admin.id,
       roundType: "main",
       starsAllocated: 3,

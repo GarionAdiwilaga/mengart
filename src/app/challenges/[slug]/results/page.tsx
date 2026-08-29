@@ -10,7 +10,6 @@ import {
   Star,
   Award,
   Crown,
-  Medal,
   User,
   Image as ImageIcon,
   AlertTriangle,
@@ -45,8 +44,11 @@ export default async function ChallengeResultsPage({ params }: ResultsPageProps)
   const isRevoked = challenge.status === "results_revoked";
   const isReview = challenge.status === "review";
 
-  const topWinners = results.slice(0, 3);
-  const otherRanks = results.slice(3);
+  const communityWinner = results.find(
+    (r) => r.awardType === "community_vote_winner" || (r.awardType === "community_rank" && r.finalRank === 1)
+  );
+
+  const juryWinners = results.filter((r) => r.awardType === "jury_award");
 
   const storyWinners = isFinished
     ? results.map((r, idx) => ({
@@ -56,7 +58,7 @@ export default async function ChallengeResultsPage({ params }: ResultsPageProps)
         artistSlug: r.artistSlug || "",
         starsCount: r.totalCommunityStars,
         imageUrl: r.thumbnailStorageKey ? `/api/media/public/${r.thumbnailStorageKey}` : null,
-        awardTitle: r.slotTitle || undefined,
+        awardTitle: r.slotTitle || (r.awardType === "community_vote_winner" ? "Pemenang Komunitas" : undefined),
       }))
     : [];
 
@@ -193,125 +195,124 @@ export default async function ChallengeResultsPage({ params }: ResultsPageProps)
               <p className="text-xs sm:text-sm text-zinc-400 font-sans leading-relaxed">
                 {isReview
                   ? "Berikut adalah konfigurasi pemenang terhitung berdasarkan akumulasi Stars dan slot juri sebelum publikasi resmi."
-                  : "Selamat kepada seluruh artist pemenang voting komunitas dan pilihan juri kurator atas karya luar biasa yang telah dipublikasikan!"}
+                  : "Selamat kepada seluruh artist peraih penghargaan resmi komunitas dan pilihan juri atas karya luar biasa yang telah dipublikasikan!"}
               </p>
             </div>
           </section>
 
-          {/* Podium Showcase (Top 3 Winners) */}
-          {topWinners.length > 0 ? (
+          {/* Official Community Vote Winner Card (Blueprint 2.2.1 Single Community Winner) */}
+          {communityWinner ? (
             <section className="flex flex-col gap-6">
               <h2 className="font-display font-bold text-2xl text-[#f6f2e9] flex items-center gap-2">
-                <Award className="h-6 w-6 text-amber-400" />
-                <span>Podium Pemenang Utama</span>
+                <Crown className="h-6 w-6 text-amber-400" />
+                <span>Pemenang Voting Komunitas (Juara 1)</span>
               </h2>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {topWinners.map((winner) => {
-                  const rank = winner.finalRank;
-                  const isFirst = rank === 1;
+              <div className="glass-panel rounded-3xl overflow-hidden p-6 sm:p-8 border border-amber-400/80 shadow-2xl shadow-amber-500/20 ring-1 ring-amber-400/40 flex flex-col md:flex-row gap-8 items-center bg-gradient-to-br from-amber-500/[0.04] to-transparent">
+                <div className="w-full md:w-1/2 aspect-[4/3] bg-black/40 rounded-2xl overflow-hidden flex items-center justify-center border border-white/5 shrink-0">
+                  {communityWinner.thumbnailStorageKey ? (
+                    <img
+                      src={`/api/media/public/${communityWinner.thumbnailStorageKey}`}
+                      alt={communityWinner.title || "Karya Pemenang Komunitas"}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <ImageIcon className="h-12 w-12 text-zinc-700" />
+                  )}
+                </div>
 
-                  return (
-                    <div
-                      key={winner.resultId}
-                      className={`glass-panel rounded-3xl overflow-hidden flex flex-col justify-between p-6 gap-5 transition-all ${
-                        isFirst
-                          ? "border-amber-400/80 shadow-2xl shadow-amber-500/20 md:-translate-y-2 ring-1 ring-amber-400/40"
-                          : "border-white/10"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-mono font-bold flex items-center gap-1.5 ${
-                            isFirst
-                              ? "bg-amber-400 text-black shadow-lg"
-                              : rank === 2
-                              ? "bg-zinc-300 text-black"
-                              : rank === 3
-                              ? "bg-amber-700 text-white"
-                              : "bg-purple-900/50 text-purple-300 border border-purple-500/30"
-                          }`}
-                        >
-                          {isFirst ? <Crown className="h-3.5 w-3.5" /> : rank ? <Medal className="h-3.5 w-3.5" /> : <Award className="h-3.5 w-3.5" />}
-                          <span>{rank ? `JUARA #${rank}` : (winner.slotTitle || "PILIHAN JURI")}</span>
-                        </span>
+                <div className="w-full md:w-1/2 flex flex-col justify-between gap-6">
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-amber-400 text-black flex items-center gap-1.5 shadow-lg">
+                        <Crown className="h-3.5 w-3.5" />
+                        <span>JUARA 1 KOMUNITAS</span>
+                      </span>
 
-                        <div className="flex items-center gap-1 font-mono text-xs font-bold text-amber-400">
-                          <Star className="h-4 w-4 fill-amber-400" />
-                          <span>{winner.totalCommunityStars} Stars</span>
-                        </div>
-                      </div>
-
-                      <div className="aspect-[4/3] bg-black/40 rounded-2xl overflow-hidden flex items-center justify-center border border-white/5">
-                        {winner.thumbnailStorageKey ? (
-                          <img
-                            src={`/api/media/public/${winner.thumbnailStorageKey}`}
-                            alt={winner.title || "Karya Pemenang"}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <ImageIcon className="h-8 w-8 text-zinc-700" />
-                        )}
-                      </div>
-
-                      <div className="flex flex-col gap-1">
-                        <span className="text-[11px] font-mono text-amber-400 uppercase">
-                          {winner.slotTitle || (winner.awardType === "jury_award" ? "Pilihan Juri" : "Pemenang Komunitas")}
-                        </span>
-                        <h3 className="font-display font-bold text-lg text-[#f6f2e9]">{winner.title || "Karya Pemenang"}</h3>
-                        <Link
-                          href={`/artists/${winner.artistSlug || ""}`}
-                          className="text-xs text-zinc-400 hover:text-white transition-colors inline-flex items-center gap-1"
-                        >
-                          <User className="h-3.5 w-3.5 text-amber-400" />
-                          <span>oleh {winner.artistName || "Artist Atelier"}</span>
-                        </Link>
+                      <div className="flex items-center gap-1 font-mono text-xs font-bold text-amber-400 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/30">
+                        <Star className="h-4 w-4 fill-amber-400" />
+                        <span>{communityWinner.totalCommunityStars} Stars</span>
                       </div>
                     </div>
-                  );
-                })}
+
+                    <h3 className="font-display font-extrabold text-2xl text-[#f6f2e9]">
+                      {communityWinner.title || "Karya Pemenang"}
+                    </h3>
+
+                    {communityWinner.description ? (
+                      <p className="text-xs text-zinc-400 font-sans leading-relaxed line-clamp-3">
+                        {communityWinner.description}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div className="pt-4 border-t border-white/10 flex items-center justify-between">
+                    <Link
+                      href={`/artists/${communityWinner.artistSlug || ""}`}
+                      className="text-xs text-zinc-300 hover:text-white transition-colors inline-flex items-center gap-2"
+                    >
+                      <div className="h-7 w-7 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                        <User className="h-4 w-4" />
+                      </div>
+                      <span className="font-bold">oleh {communityWinner.artistName || "Artist Atelier"}</span>
+                    </Link>
+
+                    {communityWinner.resolutionMethod ? (
+                      <span className="text-[10px] font-mono text-zinc-500">
+                        Metode: {communityWinner.resolutionMethod}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
               </div>
             </section>
           ) : null}
 
-          {/* Full Rankings Table */}
-          {otherRanks.length > 0 ? (
-            <section className="flex flex-col gap-4 pt-4 border-t border-white/10">
-              <h3 className="font-display font-bold text-xl text-[#f6f2e9]">Peringkat Seluruh Peserta</h3>
+          {/* Jury Award Winners */}
+          {juryWinners.length > 0 ? (
+            <section className="flex flex-col gap-6 pt-6 border-t border-white/10">
+              <h2 className="font-display font-bold text-2xl text-[#f6f2e9] flex items-center gap-2">
+                <Award className="h-6 w-6 text-purple-400" />
+                <span>Pemenang Pilihan Juri Kurator</span>
+              </h2>
 
-              <div className="glass-panel rounded-2xl overflow-hidden border border-white/10">
-                <table className="w-full text-left text-xs font-mono">
-                  <thead className="bg-white/5 border-b border-white/10 text-zinc-400">
-                    <tr>
-                      <th className="p-4">PERINGKAT</th>
-                      <th className="p-4">KARYA & ARTIST</th>
-                      <th className="p-4">TOTAL STARS</th>
-                      <th className="p-4 text-right">PENGHARGAAN</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5 text-zinc-300">
-                    {otherRanks.map((r) => (
-                      <tr key={r.resultId} className="hover:bg-white/[0.02] transition-colors">
-                        <td className="p-4 font-bold text-amber-400">{r.finalRank ? `#${r.finalRank}` : "-"}</td>
-                        <td className="p-4">
-                          <span className="font-display font-bold text-sm text-[#f6f2e9] block">
-                            {r.title}
-                          </span>
-                          <span className="text-[11px] text-zinc-400">oleh {r.artistName}</span>
-                        </td>
-                        <td className="p-4">
-                          <span className="flex items-center gap-1 font-semibold text-zinc-200">
-                            <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
-                            {r.totalCommunityStars} Stars
-                          </span>
-                        </td>
-                        <td className="p-4 text-right text-zinc-400">
-                          {r.slotTitle || "Peserta Terdaftar"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                {juryWinners.map((winner) => (
+                  <div
+                    key={winner.resultId}
+                    className="glass-panel rounded-3xl overflow-hidden flex flex-col justify-between p-6 gap-5 border border-purple-500/20 bg-purple-950/[0.05]"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-purple-900/50 text-purple-300 border border-purple-500/30 flex items-center gap-1.5">
+                        <Award className="h-3.5 w-3.5" />
+                        <span>{winner.slotTitle || "PILIHAN JURI"}</span>
+                      </span>
+                    </div>
+
+                    <div className="aspect-[4/3] bg-black/40 rounded-2xl overflow-hidden flex items-center justify-center border border-white/5">
+                      {winner.thumbnailStorageKey ? (
+                        <img
+                          src={`/api/media/public/${winner.thumbnailStorageKey}`}
+                          alt={winner.title || "Karya Pilihan Juri"}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <ImageIcon className="h-8 w-8 text-zinc-700" />
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <h3 className="font-display font-bold text-lg text-[#f6f2e9]">{winner.title || "Karya Pemenang"}</h3>
+                      <Link
+                        href={`/artists/${winner.artistSlug || ""}`}
+                        className="text-xs text-zinc-400 hover:text-white transition-colors inline-flex items-center gap-1"
+                      >
+                        <User className="h-3.5 w-3.5 text-purple-400" />
+                        <span>oleh {winner.artistName || "Artist Atelier"}</span>
+                      </Link>
+                    </div>
+                  </div>
+                ))}
               </div>
             </section>
           ) : null}
@@ -320,3 +321,4 @@ export default async function ChallengeResultsPage({ params }: ResultsPageProps)
     </main>
   );
 }
+

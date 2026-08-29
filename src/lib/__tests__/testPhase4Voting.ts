@@ -8,6 +8,8 @@ import {
   challengeWinnerSlots,
   challengeSubmissions,
   challengeSubmissionVersions,
+  challengeVotingRounds,
+  challengeVotingRoundCandidates,
   challengeBallots,
   challengeBallotStars,
   challengeResults,
@@ -217,11 +219,31 @@ async function runPhase4Tests() {
 
   // Test 5: Casting Anonymous Ballots
   console.log("\n[Test 5] Casting Star ballots from multiple voters...");
+  const [votingRound] = await db
+    .insert(challengeVotingRounds)
+    .values({
+      challengeId: challenge.id,
+      roundType: "main",
+      roundSequence: 1,
+      status: "open",
+      startsAt: new Date(Date.now() - 3600000),
+      starsPerMember: 3,
+    })
+    .returning();
+
+  await db.insert(challengeVotingRoundCandidates).values(
+    submissionIds.map((sId) => ({
+      votingRoundId: votingRound.id,
+      submissionId: sId,
+    }))
+  );
+
   // Voter 1 (Artist 1) votes for Artist 2 (2 Stars) and Artist 3 (1 Star) = 3 Stars total
   const [ballot1] = await db
     .insert(challengeBallots)
     .values({
       challengeId: challenge.id,
+      votingRoundId: votingRound.id,
       userId: artists[0].user.id,
       roundType: "main",
       starsAllocated: 3,
@@ -239,6 +261,7 @@ async function runPhase4Tests() {
     .insert(challengeBallots)
     .values({
       challengeId: challenge.id,
+      votingRoundId: votingRound.id,
       userId: artists[1].user.id,
       roundType: "main",
       starsAllocated: 1,
@@ -277,22 +300,9 @@ async function runPhase4Tests() {
       submissionId: submissionIds[1],
       winnerSlotId: slot1.id,
       finalRank: 1,
+      awardType: "community_vote_winner",
+      resolutionMethod: "unique_main_vote",
       totalCommunityStars: 2,
-      isPublished: true,
-    },
-    {
-      challengeId: challenge.id,
-      submissionId: submissionIds[2],
-      winnerSlotId: slot2.id,
-      finalRank: 2,
-      totalCommunityStars: 2,
-      isPublished: true,
-    },
-    {
-      challengeId: challenge.id,
-      submissionId: submissionIds[0],
-      finalRank: 3,
-      totalCommunityStars: 0,
       isPublished: true,
     },
   ]);

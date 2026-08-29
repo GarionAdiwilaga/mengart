@@ -10,6 +10,7 @@ import {
   pgEnum,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { users } from "./users";
 import { profiles } from "./profiles";
 import { artworkVersions } from "./artworks";
@@ -22,6 +23,7 @@ export const challengeStatusEnum = pgEnum("challenge_status", [
   "submission_locked",
   "voting_open",
   "tiebreak_open",
+  "tie_pending",
   "jury_selection_open",
   "review",
   "finished",
@@ -239,6 +241,15 @@ export const challengeVotingRounds = pgTable(
   (table) => [
     index("idx_voting_rounds_challenge_id").on(table.challengeId),
     uniqueIndex("uniq_challenge_round_sequence").on(table.challengeId, table.roundSequence),
+    uniqueIndex("uniq_challenge_main_round")
+      .on(table.challengeId)
+      .where(sql`"round_type" = 'main'`),
+    uniqueIndex("uniq_challenge_tiebreak_round")
+      .on(table.challengeId)
+      .where(sql`"round_type" = 'tiebreak'`),
+    uniqueIndex("uniq_challenge_open_round")
+      .on(table.challengeId)
+      .where(sql`"status" = 'open'`),
   ]
 );
 

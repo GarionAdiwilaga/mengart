@@ -31,7 +31,7 @@ async function runMigrationVerification() {
 
   try {
     // --------------------------------------------------------------------------
-    // SCENARIO 1: FRESH EMPTY DATABASE -> ALL COMMITTED MIGRATIONS (0000 -> 0007)
+    // SCENARIO 1: FRESH EMPTY DATABASE -> ALL COMMITTED MIGRATIONS (0000 -> 0008)
     // --------------------------------------------------------------------------
     console.log(`[Scenario 1] Creating fresh empty database: ${freshDbName}...`);
     await adminClient.unsafe(`CREATE DATABASE "${freshDbName}";`);
@@ -40,9 +40,9 @@ async function runMigrationVerification() {
     const freshClient = postgres(freshDbUrl, { max: 1 });
     const freshDrizzle = drizzle(freshClient, { schema });
 
-    console.log("-> Running all committed migrations (0000 -> 0007) on fresh database via Drizzle migrator...");
+    console.log("-> Running all committed migrations (0000 -> 0008) on fresh database via Drizzle migrator...");
     await migrate(freshDrizzle, { migrationsFolder: "./drizzle" });
-    console.log("✓ Migration 0000 -> 0007 succeeded on fresh empty database!");
+    console.log("✓ Migration 0000 -> 0008 succeeded on fresh empty database!");
 
     // Verify critical tables exist in fresh database
     const freshTables = await freshClient`
@@ -63,11 +63,29 @@ async function runMigrationVerification() {
       throw new Error(`Expected 6 core challenge tables on fresh database, found ${freshTables.length}`);
     }
     console.log("✓ All 6 core challenge tables verified in fresh database schema.");
+
+    // Verify unique indexes and new columns exist
+    const freshIndexes = await freshClient`
+      SELECT indexname FROM pg_indexes 
+      WHERE schemaname = 'public' 
+        AND indexname IN (
+          'uniq_ballot_round_user', 
+          'uniq_challenge_community_winner', 
+          'uniq_challenge_main_round', 
+          'uniq_challenge_tiebreak_round', 
+          'uniq_challenge_open_round'
+        );
+    `;
+    if (freshIndexes.length !== 5) {
+      throw new Error(`Expected 5 unique partial indexes in fresh database, found ${freshIndexes.length}`);
+    }
+    console.log("✓ All 5 partial unique indexes verified in fresh database schema.");
+
     await freshClient.end();
     console.log("🎉 SCENARIO 1 (FRESH DATABASE) PASSED!\n");
 
     // --------------------------------------------------------------------------
-    // SCENARIO 2: UPGRADE PRE-REMEDIATION SCHEMA (0006) -> DRIZZLE MIGRATE (0007)
+    // SCENARIO 2: UPGRADE PRE-REMEDIATION SCHEMA (0006) -> DRIZZLE MIGRATE (0007 -> 0008)
     // --------------------------------------------------------------------------
     console.log(`[Scenario 2] Creating legacy upgrade database: ${upgradeDbName}...`);
     await adminClient.unsafe(`CREATE DATABASE "${upgradeDbName}";`);
@@ -353,17 +371,17 @@ async function runMigrationVerification() {
 
     console.log("✓ Pre-remediation data populated cleanly.");
 
-    // Now execute real Drizzle migration 0006 -> 0007 upgrade!
-    console.log("-> Applying real Drizzle upgrade migration (0006 -> 0007) with automatic SQL backfill...");
+    // Now execute real Drizzle migration 0006 -> 0008 upgrade!
+    console.log("-> Applying real Drizzle upgrade migration (0006 -> 0008) with automatic SQL backfill...");
     await migrate(upgradeDrizzle, { migrationsFolder: "./drizzle" });
-    console.log("✓ Production Drizzle migrator successfully applied migration 0007!");
+    console.log("✓ Production Drizzle migrator successfully applied migrations 0007 & 0008!");
 
     // --------------------------------------------------------------------------
     // STRENGTHENED MIGRATION INVARIANT ASSERTIONS (QA Acceptance Gate)
     // --------------------------------------------------------------------------
     console.log("-> Verifying strengthened migration invariants on upgraded database...");
 
-    // Invariant 1: challenge_results.award_type deterministic backfill
+    // Invariant 1: challenge_results.award_type deterministic backfill & 0008 reconciliation
     const resultsRows = await upgradeClient`
       SELECT cr.id, cr.submission_id, cr.winner_slot_id, cr.final_rank, cr.award_type, ws.slot_type
       FROM challenge_results cr
@@ -379,8 +397,8 @@ async function runMigrationVerification() {
     const juryRes = resultsRows.find((r: any) => r.submission_id === subB.id && r.winner_slot_id === jurySlot.id);
     const unassignedRes = resultsRows.find((r: any) => r.winner_slot_id === null && r.final_rank === 3);
 
-    if (!commRes || commRes.award_type !== "community_rank") {
-      throw new Error(`Expected subA award_type = 'community_rank', got '${commRes?.award_type}'`);
+    if (!commRes || commRes.award_type !== "community_vote_winner") {
+      throw new Error(`Expected subA award_type = 'community_vote_winner', got '${commRes?.award_type}'`);
     }
     if (!juryRes || juryRes.award_type !== "jury_award") {
       throw new Error(`Expected subB award_type = 'jury_award', got '${juryRes?.award_type}'`);
@@ -388,7 +406,7 @@ async function runMigrationVerification() {
     if (!unassignedRes || unassignedRes.award_type !== "community_rank") {
       throw new Error(`Expected unassigned result award_type = 'community_rank', got '${unassignedRes?.award_type}'`);
     }
-    console.log("✓ Invariant 1 Passed: challenge_results.award_type deterministically backfilled from slot_type & final_rank.");
+    console.log("✓ Invariant 1 Passed: Rank 1 community result reconciled to 'community_vote_winner', rank 3 remains 'community_rank', jury remains 'jury_award'.");
 
     // Invariant 2: Preserved Main & Tiebreak Rounds for Finished Challenge
     const finishedRounds = await upgradeClient`

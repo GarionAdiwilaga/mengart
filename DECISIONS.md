@@ -227,6 +227,23 @@
 **Business Rule:** Only first-place ties trigger tiebreak rounds. Migration must never promote untied candidates or fabricate deadlines.
 **Reason:** Authoritative product-rule alignment across all challenge award modes.
 
+### Blueprint 2.2.1 Gate B / Phase 2: Voting & Tie Resolution Architecture
+**Decision:** Fully implement and verify Gate B (Phase 2: Voting & Tie Resolution) under Blueprint 2.2.1:
+1. **Canonical Community Winner Award Type:** Transitioned official Community Winner from legacy `community_rank` to `community_vote_winner` with at most 1 winner per challenge (`uniq_challenge_community_winner` partial unique index). No official #2, #3 podium ranks exist in Blueprint 2.2.1. Lower legacy ranks are preserved for historical record only.
+2. **Authoritative Mutation Identity (`votingRoundId`):** All ballot mutations (`castOrUpdateBallotService`, `resetBallotService`, `finalizeVotingRoundService`) operate on `votingRoundId` as primary identity, locking `challenge_voting_rounds` and parent `challenges` `FOR UPDATE` and deriving challenge metadata, allowed stars, and active status server-side.
+3. **Separated Zero-Vote Logic:**
+   - Main round with 0 total stars transitions `vote_only` -> `finished` and `vote_and_jury` -> `jury_selection_open` with 0 winners.
+   - Tiebreak round with 0 total stars transitions to `tie_pending` with all frozen tiebreak candidates remaining the tied set, requiring manual curator resolution.
+4. **Positive Tie Handling & Tie Pending State:**
+   - Main round tie at first place transitions challenge to `tie_pending` (does not automatically spawn a tiebreak round).
+   - Staff/Moderator may either trigger an explicit tiebreak round (`startTiebreakService`, seq 2, 1 Star/member, +24h editable deadline, frozen tied candidates) or manually pick a winner (`resolveTieManuallyService` with >= 5 char reason and audit log).
+   - Enforced single tiebreak round limit: attempting to start a 2nd tiebreak is rejected.
+5. **Mode-Specific Submission Lock Branching:** Scheduler materializer branches on submission deadline: 0 subs -> `cancelled`; 1 sub -> auto winner -> `finished` (vote_only, vote_and_jury, showcase_only) or `jury_selection_open` (jury_only); 2+ subs -> freezes candidate snapshot -> `submission_locked` -> `voting_open`.
+6. **Protected Lifecycle Transitions:** Blocked direct public transitions into/out of voting result states via `transitionChallengeStatusService`; voting operations utilize `internalTransitionChallengeStatus`.
+7. **Migration 0008 Data Integrity:** Backfilled legacy `community_rank` rows where `final_rank = 1` to `community_vote_winner`, dropped legacy `uniq_challenge_user_ballot`, made `voting_round_id` NOT NULL on `challenge_ballots`, added `uniq_ballot_round_user (voting_round_id, user_id)` and 4 partial unique indexes (`uniq_challenge_community_winner`, `uniq_challenge_main_round`, `uniq_challenge_tiebreak_round`, `uniq_challenge_open_round`).
+**Business Rule:** A challenge has at most 1 official Community Winner (`awardType = 'community_vote_winner'`). All live round operations lock parent records and validate deadlines before closing.
+**Reason:** Strict compliance with Blueprint 2.2.1 and Gate B / Phase 2 specifications.
+
 
 
 

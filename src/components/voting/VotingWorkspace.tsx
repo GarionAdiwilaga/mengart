@@ -24,6 +24,8 @@ interface VotingWorkspaceProps {
   challengeId: string;
   challengeTitle: string;
   challengeSlug: string;
+  votingRoundId?: string;
+  roundType?: "main" | "tiebreak";
   candidates: CandidateArtwork[];
   initialAllocations: { [submissionId: string]: number };
   maxStars: number;
@@ -35,6 +37,8 @@ export function VotingWorkspace({
   challengeId,
   challengeTitle,
   challengeSlug,
+  votingRoundId,
+  roundType = "main",
   candidates,
   initialAllocations,
   maxStars,
@@ -86,10 +90,14 @@ export function VotingWorkspace({
   }, [isLoggedIn, candidates, allocations, remainingStars, maxStars]);
 
   const handleReset = async () => {
-    if (!confirm("Reset seluruh alokasi Stars Anda untuk challenge ini?")) return;
+    if (!confirm("Reset seluruh alokasi Stars Anda untuk babak voting ini?")) return;
     setIsLoading(true);
     try {
-      await resetBallotAction(challengeId);
+      if (votingRoundId) {
+        await resetBallotAction({ votingRoundId });
+      } else {
+        await resetBallotAction(challengeId, roundType);
+      }
       setAllocations({});
       setRemainingStars(maxStars);
       setFeedback({ type: "success", text: "Alokasi Stars berhasil direset." });
@@ -109,11 +117,16 @@ export function VotingWorkspace({
       .map(([submissionId, starsCount]) => ({ submissionId, starsCount }));
 
     try {
-      const res = await castOrUpdateBallotAction(challengeId, activeList, "main");
+      let res;
+      if (votingRoundId) {
+        res = await castOrUpdateBallotAction({ votingRoundId, votes: activeList });
+      } else {
+        res = await castOrUpdateBallotAction(challengeId, activeList, roundType);
+      }
       if (res.success) {
         setFeedback({
           type: "success",
-          text: "Suara berhasil disimpan! Anda tetap dapat mengubah alokasi hingga deadline voting.",
+          text: "Suara berhasil disimpan! Anda tetap dapat mengubah alokasi hingga batas waktu voting berakhir.",
         });
       }
     } catch (err: any) {

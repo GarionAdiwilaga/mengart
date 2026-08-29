@@ -23,6 +23,15 @@ import { canVoteInChallenge, canSubmitJuryScore } from "@/lib/policy";
 import { createNotification } from "@/lib/notifications";
 import { checkRateLimit } from "@/lib/rateLimit";
 
+import {
+  getAuthoritativeVotingRoundData,
+  castOrUpdateBallotService,
+  resetBallotService,
+  finalizeVotingRoundService,
+  startTiebreakService,
+  resolveTieManuallyService,
+} from "@/lib/services/votingService";
+
 /**
  * Fetch challenge candidates and user's ballot for a specific voting round
  */
@@ -31,113 +40,17 @@ export async function getChallengeVotingData(
   userId?: string | null,
   roundType: "main" | "tiebreak" = "main"
 ) {
-  const [challenge] = await db
-    .select()
-    .from(challenges)
-    .where(eq(challenges.id, challengeId))
-    .limit(1);
-
-  if (!challenge) throw new Error("Challenge tidak ditemukan.");
-
-  // Fetch or resolve active voting round
-  const [votingRound] = await db
-    .select()
-    .from(challengeVotingRounds)
-    .where(
-      and(
-        eq(challengeVotingRounds.challengeId, challengeId),
-        eq(challengeVotingRounds.roundType, roundType)
-      )
-    )
-    .orderBy(desc(challengeVotingRounds.roundSequence))
-    .limit(1);
-
-  // If frozen candidates table exists for this round, load strictly from it
-  let candidateSubmissions: any[] = [];
-  if (votingRound) {
-    const frozenCandidates = await db
-      .select({
-        submissionId: challengeVotingRoundCandidates.submissionId,
-      })
-      .from(challengeVotingRoundCandidates)
-      .where(eq(challengeVotingRoundCandidates.votingRoundId, votingRound.id));
-
-    const candidateIds = frozenCandidates.map((fc) => fc.submissionId);
-    if (candidateIds.length > 0) {
-      candidateSubmissions = await db
-        .select({
-          submissionId: challengeSubmissions.id,
-          userId: challengeSubmissions.userId,
-          createdAt: challengeSubmissions.createdAt,
-        })
-        .from(challengeSubmissions)
-        .where(inArray(challengeSubmissions.id, candidateIds));
-    }
-  } else {
-    // Fallback: all active submitted entries
-    candidateSubmissions = await db
-      .select({
-        submissionId: challengeSubmissions.id,
-        userId: challengeSubmissions.userId,
-        createdAt: challengeSubmissions.createdAt,
-      })
-      .from(challengeSubmissions)
-      .where(
-        and(
-          eq(challengeSubmissions.challengeId, challengeId),
-          eq(challengeSubmissions.submissionStatus, "submitted")
-        )
-      );
-  }
-
-  // Fetch current user's ballot for this round
-  let userBallot = null;
-  let allocatedStars: Record<string, number> = {};
-
-  if (userId) {
-    const [existingBallot] = await db
-      .select()
-      .from(challengeBallots)
-      .where(
-        and(
-          eq(challengeBallots.challengeId, challengeId),
-          eq(challengeBallots.userId, userId),
-          eq(challengeBallots.roundType, roundType)
-        )
-      )
-      .limit(1);
-
-    if (existingBallot) {
-      userBallot = existingBallot;
-      const starsList = await db
-        .select()
-        .from(challengeBallotStars)
-        .where(eq(challengeBallotStars.ballotId, existingBallot.id));
-
-      for (const item of starsList) {
-        allocatedStars[item.submissionId] = item.starsCount;
-      }
-    }
-  }
-
-  return {
-    challenge,
-    votingRound,
-    roundType,
-    candidates: candidateSubmissions,
-    userBallot,
-    allocatedStars,
-    starsAllowance: votingRound?.starsPerMember || challenge.starsPerMember,
-  };
+  return await getAuthoritativeVotingRoundData(challengeId, userId);
 }
 
 /**
  * Cast or Update Ballot for a Challenge Voting Round
+ * Operates authoritatively on votingRoundId
  */
 export async function castOrUpdateBallotAction(
-  challengeId: string,
-  votes: Array<{ submissionId: string; starsCount: number }>,
-  roundType: "main" | "tiebreak" = "main"
+  arg1: string | { votingRoundId: string; votes: Array<{ submissionId: string; starsCount: number }> },
+  arg2?: Array<{ submissionId: string; starsCount: number }>,
+  arg3: "main" | "tiebreak" = "main"
 ) {
   const user = await requireAuth("/login");
 
@@ -147,26 +60,20 @@ export async function castOrUpdateBallotAction(
     throw new Error("Terlalu banyak permintaan pemungutan suara. Harap tunggu beberapa saat.");
   }
 
-  return db.transaction(async (tx) => {
-    // 1. Lock challenge parent row
-    const [challenge] = await tx
-      .select()
-      .from(challenges)
-      .where(eq(challenges.id, challengeId))
-      .for("update")
-      .limit(1);
+  let votingRoundId: string;
+  let votes: Array<{ submissionId: string; starsCount: number }>;
 
-    if (!challenge) throw new Error("Challenge tidak ditemukan.");
+  if (typeof arg1 === "object" && "votingRoundId" in arg1) {
+    votingRoundId = arg1.votingRoundId;
+    votes = arg1.votes;
+  } else {
+    // Legacy positional signature: (challengeId, votes, roundType)
+    const challengeId = arg1 as string;
+    votes = arg2 || [];
+    const roundType = arg3;
 
-    // 2. Authoritative Policy Verification
-    const votePolicy = canVoteInChallenge(user as any, challenge as any, roundType);
-    if (!votePolicy.allowed) {
-      throw new Error(votePolicy.reason || "Pemungutan suara tidak diizinkan saat ini.");
-    }
-
-    // 3. Resolve active voting round
-    const [votingRound] = await tx
-      .select()
+    const [round] = await db
+      .select({ id: challengeVotingRounds.id })
       .from(challengeVotingRounds)
       .where(
         and(
@@ -174,149 +81,212 @@ export async function castOrUpdateBallotAction(
           eq(challengeVotingRounds.roundType, roundType)
         )
       )
-      .for("update")
+      .orderBy(desc(challengeVotingRounds.roundSequence))
       .limit(1);
 
-    const maxStars = votingRound?.starsPerMember || challenge.starsPerMember;
-    const totalAllocated = votes.reduce((sum, v) => sum + v.starsCount, 0);
-
-    if (totalAllocated > maxStars) {
-      throw new Error(`Total Stars melebihi alokasi maksimal (${maxStars} Stars).`);
+    if (!round) {
+      throw new Error(`Babak pemungutan suara ${roundType} tidak ditemukan untuk challenge ini.`);
     }
+    votingRoundId = round.id;
+  }
 
-    // 4. Validate Candidate Eligibility & Anti-Self Voting
-    const activeSubmissions = await tx
-      .select()
-      .from(challengeSubmissions)
-      .where(
-        and(
-          eq(challengeSubmissions.challengeId, challengeId),
-          eq(challengeSubmissions.submissionStatus, "submitted")
-        )
-      );
-
-    const validSubmissionMap = new Map(activeSubmissions.map((s) => [s.id, s]));
-
-    for (const vote of votes) {
-      if (vote.starsCount <= 0) continue;
-      const sub = validSubmissionMap.get(vote.submissionId);
-      if (!sub) {
-        throw new Error("Submisi karya tidak valid atau tidak terdaftar pada challenge ini.");
-      }
-      if (sub.userId === user.id) {
-        throw new Error("Self-voting dilarang dalam aturan atelier.");
-      }
-    }
-
-    // 5. Upsert Ballot with Parent Lock
-    const [existingBallot] = await tx
-      .select()
-      .from(challengeBallots)
-      .where(
-        and(
-          eq(challengeBallots.challengeId, challengeId),
-          eq(challengeBallots.userId, user.id),
-          eq(challengeBallots.roundType, roundType)
-        )
-      )
-      .for("update")
-      .limit(1);
-
-    let ballotId = existingBallot?.id;
-
-    if (!existingBallot) {
-      const [newBallot] = await tx
-        .insert(challengeBallots)
-        .values({
-          challengeId,
-          votingRoundId: votingRound?.id || null,
-          userId: user.id,
-          roundType,
-          starsAllocated: totalAllocated,
-          isFinalized: false,
-        })
-        .returning();
-      ballotId = newBallot.id;
-    } else {
-      await tx
-        .update(challengeBallots)
-        .set({
-          votingRoundId: votingRound?.id || existingBallot.votingRoundId,
-          starsAllocated: totalAllocated,
-          updatedAt: new Date(),
-        })
-        .where(eq(challengeBallots.id, ballotId!));
-
-      await tx
-        .delete(challengeBallotStars)
-        .where(eq(challengeBallotStars.ballotId, ballotId!));
-    }
-
-    // 6. Insert new star allocations
-    const activeStars = votes.filter((v) => v.starsCount > 0);
-    if (activeStars.length > 0) {
-      await tx.insert(challengeBallotStars).values(
-        activeStars.map((v) => ({
-          ballotId: ballotId!,
-          submissionId: v.submissionId,
-          starsCount: v.starsCount,
-        }))
-      );
-    }
-
-    revalidatePath(`/challenges/${challenge.slug}/voting`);
-    return { success: true, ballotId };
+  const result = await db.transaction(async (tx) => {
+    return await castOrUpdateBallotService(
+      tx,
+      { userId: user.id, role: user.role },
+      { votingRoundId, votes }
+    );
   });
+
+  // Revalidate voting page
+  const [targetRound] = await db
+    .select({ challengeId: challengeVotingRounds.challengeId })
+    .from(challengeVotingRounds)
+    .where(eq(challengeVotingRounds.id, votingRoundId))
+    .limit(1);
+
+  if (targetRound) {
+    const [challenge] = await db
+      .select({ slug: challenges.slug })
+      .from(challenges)
+      .where(eq(challenges.id, targetRound.challengeId))
+      .limit(1);
+
+    if (challenge) {
+      revalidatePath(`/challenges/${challenge.slug}/voting`);
+      revalidatePath(`/challenges/${challenge.slug}`);
+    }
+  }
+
+  return result;
 }
 
 /**
  * Reset Ballot Action
+ * Operates authoritatively on votingRoundId
  */
 export async function resetBallotAction(
-  challengeId: string,
-  roundType: "main" | "tiebreak" = "main"
+  arg1: string | { votingRoundId: string },
+  arg2: "main" | "tiebreak" = "main"
 ) {
   const user = await requireAuth("/login");
 
-  return db.transaction(async (tx) => {
-    const [challenge] = await tx
-      .select()
-      .from(challenges)
-      .where(eq(challenges.id, challengeId))
-      .for("update")
-      .limit(1);
+  let votingRoundId: string;
 
-    if (!challenge) throw new Error("Challenge tidak ditemukan.");
+  if (typeof arg1 === "object" && "votingRoundId" in arg1) {
+    votingRoundId = arg1.votingRoundId;
+  } else {
+    const challengeId = arg1 as string;
+    const roundType = arg2;
 
-    const votePolicy = canVoteInChallenge(user as any, challenge as any, roundType);
-    if (!votePolicy.allowed) {
-      throw new Error(votePolicy.reason || "Reset suara tidak diizinkan.");
-    }
-
-    const [ballot] = await tx
-      .select()
-      .from(challengeBallots)
+    const [round] = await db
+      .select({ id: challengeVotingRounds.id })
+      .from(challengeVotingRounds)
       .where(
         and(
-          eq(challengeBallots.challengeId, challengeId),
-          eq(challengeBallots.userId, user.id),
-          eq(challengeBallots.roundType, roundType)
+          eq(challengeVotingRounds.challengeId, challengeId),
+          eq(challengeVotingRounds.roundType, roundType)
         )
       )
-      .for("update")
+      .orderBy(desc(challengeVotingRounds.roundSequence))
       .limit(1);
 
-    if (ballot) {
-      await tx.delete(challengeBallotStars).where(eq(challengeBallotStars.ballotId, ballot.id));
-      await tx
-        .update(challengeBallots)
-        .set({ starsAllocated: 0, updatedAt: new Date() })
-        .where(eq(challengeBallots.id, ballot.id));
+    if (!round) {
+      throw new Error(`Babak pemungutan suara ${roundType} tidak ditemukan.`);
     }
+    votingRoundId = round.id;
+  }
 
-    revalidatePath(`/challenges/${challenge.slug}/voting`);
-    return { success: true };
+  const result = await db.transaction(async (tx) => {
+    return await resetBallotService(tx, { userId: user.id, role: user.role }, { votingRoundId });
   });
+
+  const [targetRound] = await db
+    .select({ challengeId: challengeVotingRounds.challengeId })
+    .from(challengeVotingRounds)
+    .where(eq(challengeVotingRounds.id, votingRoundId))
+    .limit(1);
+
+  if (targetRound) {
+    const [challenge] = await db
+      .select({ slug: challenges.slug })
+      .from(challenges)
+      .where(eq(challenges.id, targetRound.challengeId))
+      .limit(1);
+
+    if (challenge) {
+      revalidatePath(`/challenges/${challenge.slug}/voting`);
+      revalidatePath(`/challenges/${challenge.slug}`);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Finalize Voting Round Action (Staff or Recovery)
+ * Enforces deadline check before closing an open round.
+ */
+export async function finalizeVotingRoundAction(params: { votingRoundId: string }) {
+  const user = await requireModerator("/dashboard");
+
+  const result = await db.transaction(async (tx) => {
+    return await finalizeVotingRoundService(
+      tx,
+      { userId: user.id, role: user.role },
+      { votingRoundId: params.votingRoundId }
+    );
+  });
+
+  const [targetRound] = await db
+    .select({ challengeId: challengeVotingRounds.challengeId })
+    .from(challengeVotingRounds)
+    .where(eq(challengeVotingRounds.id, params.votingRoundId))
+    .limit(1);
+
+  if (targetRound) {
+    const [challenge] = await db
+      .select({ slug: challenges.slug })
+      .from(challenges)
+      .where(eq(challenges.id, targetRound.challengeId))
+      .limit(1);
+
+    if (challenge) {
+      revalidatePath(`/challenges/${challenge.slug}`);
+      revalidatePath(`/challenges/${challenge.slug}/voting`);
+      revalidatePath(`/challenges/${challenge.slug}/results`);
+    }
+  }
+  revalidatePath("/admin/challenges");
+
+  return result;
+}
+
+/**
+ * Start Tiebreak Action (Admin/Moderator only from TIE_PENDING)
+ */
+export async function startTiebreakAction(params: {
+  challengeId: string;
+  deadline?: string;
+}) {
+  const user = await requireModerator("/dashboard");
+
+  const result = await db.transaction(async (tx) => {
+    return await startTiebreakService(
+      tx,
+      { userId: user.id, role: user.role },
+      { challengeId: params.challengeId, deadline: params.deadline }
+    );
+  });
+
+  const [challenge] = await db
+    .select({ slug: challenges.slug })
+    .from(challenges)
+    .where(eq(challenges.id, params.challengeId))
+    .limit(1);
+
+  if (challenge) {
+    revalidatePath(`/challenges/${challenge.slug}`);
+    revalidatePath(`/challenges/${challenge.slug}/voting`);
+    revalidatePath(`/challenges/${challenge.slug}/results`);
+  }
+  revalidatePath("/admin/challenges");
+
+  return result;
+}
+
+/**
+ * Resolve Tie Manually Action (Admin/Moderator only from TIE_PENDING)
+ */
+export async function resolveTieManuallyAction(params: {
+  challengeId: string;
+  submissionId: string;
+  reason: string;
+}) {
+  const user = await requireModerator("/dashboard");
+
+  const result = await db.transaction(async (tx) => {
+    return await resolveTieManuallyService(
+      tx,
+      { userId: user.id, role: user.role },
+      params
+    );
+  });
+
+  const [challenge] = await db
+    .select({ slug: challenges.slug })
+    .from(challenges)
+    .where(eq(challenges.id, params.challengeId))
+    .limit(1);
+
+  if (challenge) {
+    revalidatePath(`/challenges/${challenge.slug}`);
+    revalidatePath(`/challenges/${challenge.slug}/voting`);
+    revalidatePath(`/challenges/${challenge.slug}/results`);
+  }
+  revalidatePath("/admin/challenges");
+
+  return result;
 }
 
 /**

@@ -19,6 +19,7 @@ export type EffectiveChallengeStatus =
   | "submission_locked"
   | "voting_open"
   | "tiebreak_open"
+  | "tie_pending"
   | "jury_selection_open"
   | "review"
   | "finished"

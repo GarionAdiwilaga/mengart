@@ -21,7 +21,37 @@ export interface ServiceContext {
 }
 
 /**
- * Blueprint 2.1 Configuration-Aware Legal Transition Matrix
+ * Internal/trusted status transition helper used by domain services.
+ */
+export async function internalTransitionChallengeStatus(
+  dbOrTx: any,
+  actor: ServiceContext | { userId?: string | null; role?: string },
+  challengeId: string,
+  newStatus: EffectiveChallengeStatus,
+  reason: string
+) {
+  const [challenge] = await dbOrTx
+    .update(challenges)
+    .set({
+      status: newStatus,
+      updatedAt: new Date(),
+    })
+    .where(eq(challenges.id, challengeId))
+    .returning();
+
+  await dbOrTx.insert(auditLogs).values({
+    actorId: actor?.userId || null,
+    action: "challenge.transition_status",
+    targetType: "challenge",
+    targetId: challengeId,
+    reason,
+  });
+
+  return challenge;
+}
+
+/**
+ * Blueprint 2.2.1 Configuration-Aware Legal Transition Matrix
  */
 export const LEGAL_TRANSITIONS: Record<string, Record<string, string[]>> = {
   // Mode: vote_and_jury (Standard Community Voting + Jury Awards)
@@ -30,8 +60,9 @@ export const LEGAL_TRANSITIONS: Record<string, Record<string, string[]>> = {
     scheduled: ["submission_open", "cancelled", "paused"],
     submission_open: ["submission_locked", "cancelled", "paused"],
     submission_locked: ["voting_open", "cancelled", "paused"],
-    voting_open: ["tiebreak_open", "jury_selection_open", "review", "cancelled", "paused"],
-    tiebreak_open: ["jury_selection_open", "review", "cancelled", "paused"],
+    voting_open: ["tie_pending", "tiebreak_open", "jury_selection_open", "review", "cancelled", "paused"],
+    tie_pending: ["tiebreak_open", "jury_selection_open", "cancelled", "paused"],
+    tiebreak_open: ["tie_pending", "jury_selection_open", "review", "cancelled", "paused"],
     jury_selection_open: ["review", "cancelled", "paused"],
     review: ["finished", "cancelled", "paused"],
     finished: ["results_revoked"],
@@ -46,8 +77,9 @@ export const LEGAL_TRANSITIONS: Record<string, Record<string, string[]>> = {
     scheduled: ["submission_open", "cancelled", "paused"],
     submission_open: ["submission_locked", "cancelled", "paused"],
     submission_locked: ["voting_open", "cancelled", "paused"],
-    voting_open: ["tiebreak_open", "review", "cancelled", "paused"],
-    tiebreak_open: ["review", "cancelled", "paused"],
+    voting_open: ["tie_pending", "tiebreak_open", "review", "finished", "cancelled", "paused"],
+    tie_pending: ["tiebreak_open", "finished", "cancelled", "paused"],
+    tiebreak_open: ["tie_pending", "review", "finished", "cancelled", "paused"],
     review: ["finished", "cancelled", "paused"],
     finished: ["results_revoked"],
     results_revoked: ["review", "cancelled"],
@@ -74,7 +106,7 @@ export const LEGAL_TRANSITIONS: Record<string, Record<string, string[]>> = {
     draft: ["scheduled", "cancelled"],
     scheduled: ["submission_open", "cancelled", "paused"],
     submission_open: ["submission_locked", "cancelled", "paused"],
-    submission_locked: ["review", "cancelled", "paused"],
+    submission_locked: ["review", "finished", "cancelled", "paused"],
     review: ["finished", "cancelled", "paused"],
     finished: ["results_revoked"],
     results_revoked: ["review", "cancelled"],
@@ -121,12 +153,19 @@ export async function transitionChallengeStatusService(
   // Protected Transitions: REVIEW -> FINISHED and FINISHED -> RESULTS_REVOKED must go through their dedicated services
   if (newStatus === "finished") {
     throw new Error(
-      "Transisi langsung ke 'finished' dilarang. Gunakan layanan publishChallengeResultsService untuk mempublikasikan hasil secara resmi."
+      "Transisi langsung ke 'finished' dilarang. Gunakan layanan publishChallengeResultsService atau finalizeVotingRoundService untuk menyelesaikan challenge."
     );
   }
   if (newStatus === "results_revoked") {
     throw new Error(
       "Transisi langsung ke 'results_revoked' dilarang. Gunakan layanan revokeChallengeResultsService untuk mencabut hasil dengan alasan dan audit log yang valid."
+    );
+  }
+
+  // Protected Voting & Tie Resolution Transitions
+  if (["tie_pending", "tiebreak_open"].includes(newStatus)) {
+    throw new Error(
+      `Transisi langsung ke '${newStatus}' dilarang melalui aksi umum. Gunakan finalizeVotingRoundService atau startTiebreakService.`
     );
   }
 
@@ -140,6 +179,16 @@ export async function transitionChallengeStatusService(
   if (!challenge) throw new Error("Challenge tidak ditemukan.");
 
   const currentStatus = challenge.status;
+
+  if (
+    ["voting_open", "tiebreak_open", "tie_pending"].includes(currentStatus) &&
+    ["finished", "jury_selection_open", "tie_pending", "tiebreak_open"].includes(newStatus)
+  ) {
+    throw new Error(
+      `Transisi dari '${currentStatus}' ke '${newStatus}' dilarang melalui aksi umum. Gunakan finalizeVotingRoundService atau resolveTieManuallyService.`
+    );
+  }
+
   const allowedTransitions = getLegalTransitionsForChallenge(
     challenge.awardMode,
     currentStatus,
@@ -584,7 +633,8 @@ export async function computeChallengeResultsService(
         submissionId: sub.submissionId,
         winnerSlotId: slot.id,
         finalRank: slot.rank || (i + 1),
-        awardType: "community_rank",
+        awardType: (slot.rank === 1 || i === 0) ? "community_vote_winner" : "community_rank",
+        resolutionMethod: "unique_main_vote",
         totalCommunityStars: sub.totalMainStars + sub.totalTiebreakStars,
         isPublished: false, // Hidden until explicit review publication
       });
@@ -725,9 +775,11 @@ export async function publishChallengeResultsService(
   };
 }
 
+import { finalizeVotingRoundService } from "./votingService";
+
 /**
  * Service: Materialize Scheduled Status Transitions (Automated Scheduler / Cron)
- * Materializes SCHEDULED -> SUBMISSION_OPEN and SUBMISSION_OPEN -> SUBMISSION_LOCKED based on persisted timestamps.
+ * Materializes scheduled transitions and automated round handling under Blueprint 2.2.1.
  */
 export async function materializeScheduledTransitionsService(
   dbOrTx: any = defaultDb,
@@ -783,12 +835,9 @@ export async function materializeScheduledTransitionsService(
     }
   }
 
-  // 2. Submission Open -> Submission Locked
+  // 2. Submission Open -> Submission Locked / Mode Branching
   const openChallenges = await dbOrTx
-    .select({
-      id: challenges.id,
-      submissionDeadline: challenges.submissionDeadline,
-    })
+    .select()
     .from(challenges)
     .where(
       and(
@@ -799,35 +848,299 @@ export async function materializeScheduledTransitionsService(
 
   for (const ch of openChallenges) {
     const performLockTransition = async (tx: any) => {
-      const updated = await tx
-        .update(challenges)
-        .set({ status: "submission_locked", updatedAt: now })
+      // Re-verify challenge is still submission_open under parent lock
+      const [challenge] = await tx
+        .select()
+        .from(challenges)
         .where(
           and(
             eq(challenges.id, ch.id),
-            eq(challenges.status, "submission_open") // Concurrency conditional check
+            eq(challenges.status, "submission_open")
           )
         )
-        .returning({ id: challenges.id });
+        .for("update")
+        .limit(1);
 
-      if (updated.length > 0) {
+      if (!challenge) return null;
+
+      // Count valid submissions
+      const validSubmissions = await tx
+        .select({
+          id: challengeSubmissions.id,
+          userId: challengeSubmissions.userId,
+        })
+        .from(challengeSubmissions)
+        .where(
+          and(
+            eq(challengeSubmissions.challengeId, challenge.id),
+            eq(challengeSubmissions.submissionStatus, "submitted")
+          )
+        )
+        .orderBy(asc(challengeSubmissions.createdAt));
+
+      const subCount = validSubmissions.length;
+      let targetStatus: EffectiveChallengeStatus = "submission_locked";
+
+      if (subCount === 0) {
+        // Zero submissions -> Cancelled
+        targetStatus = "cancelled";
+        await tx
+          .update(challenges)
+          .set({ status: targetStatus, cancellationReason: "Otomatis dibatalkan: Tidak ada karya yang disubmit.", updatedAt: now })
+          .where(eq(challenges.id, challenge.id));
+
         await tx.insert(auditLogs).values({
-          action: "scheduler.challenge_submission_locked",
+          action: "scheduler.challenge_cancelled_no_submissions",
           targetType: "challenge",
-          targetId: ch.id,
-          reason: `Otomatis mengunci submisi karena batas waktu (${ch.submissionDeadline?.toISOString()}) telah tercapai.`,
+          targetId: challenge.id,
+          reason: "Challenge dibatalkan otomatis karena tidak memiliki submisi valid pada batas waktu pengumpulan.",
         });
-        return true;
+      } else if (subCount === 1) {
+        if (challenge.awardMode === "vote_only" || challenge.awardMode === "vote_and_jury") {
+          // Exactly 1 submission in voting-enabled mode -> automatic Community Winner -> FINISHED
+          targetStatus = "finished";
+          const singleSub = validSubmissions[0];
+
+          await tx
+            .delete(challengeResults)
+            .where(
+              and(
+                eq(challengeResults.challengeId, challenge.id),
+                eq(challengeResults.awardType, "community_vote_winner")
+              )
+            );
+
+          await tx.insert(challengeResults).values({
+            challengeId: challenge.id,
+            submissionId: singleSub.id,
+            finalRank: 1,
+            awardType: "community_vote_winner",
+            totalCommunityStars: 0,
+            resolutionMethod: "automatic_single_submission",
+            isPublished: true,
+          });
+
+          await tx
+            .update(challenges)
+            .set({ status: targetStatus, updatedAt: now })
+            .where(eq(challenges.id, challenge.id));
+
+          await tx.insert(auditLogs).values({
+            action: "scheduler.challenge_single_submission_winner",
+            targetType: "challenge",
+            targetId: challenge.id,
+            reason: "Pemenang komunitas tunggal ditetapkan secara otomatis karena hanya terdapat 1 karya submisi valid.",
+          });
+        } else if (challenge.awardMode === "jury_only") {
+          targetStatus = "jury_selection_open";
+          await tx
+            .update(challenges)
+            .set({ status: targetStatus, updatedAt: now })
+            .where(eq(challenges.id, challenge.id));
+
+          await tx.insert(auditLogs).values({
+            action: "scheduler.challenge_jury_selection_opened",
+            targetType: "challenge",
+            targetId: challenge.id,
+            reason: "Submisi ditutup, lanjut ke tahap penjurian (jury_only).",
+          });
+        } else if (challenge.awardMode === "showcase_only") {
+          targetStatus = "finished";
+          await tx
+            .update(challenges)
+            .set({ status: targetStatus, updatedAt: now })
+            .where(eq(challenges.id, challenge.id));
+
+          await tx.insert(auditLogs).values({
+            action: "scheduler.challenge_finished_showcase",
+            targetType: "challenge",
+            targetId: challenge.id,
+            reason: "Submisi ditutup, challenge showcase_only otomatis selesai.",
+          });
+        }
+      } else {
+        // subCount >= 2
+        if (challenge.awardMode === "jury_only") {
+          targetStatus = "jury_selection_open";
+          await tx
+            .update(challenges)
+            .set({ status: targetStatus, updatedAt: now })
+            .where(eq(challenges.id, challenge.id));
+        } else if (challenge.awardMode === "showcase_only") {
+          targetStatus = "finished";
+          await tx
+            .update(challenges)
+            .set({ status: targetStatus, updatedAt: now })
+            .where(eq(challenges.id, challenge.id));
+        } else {
+          // vote_only or vote_and_jury with >= 2 submissions
+          targetStatus = "submission_locked";
+          await tx
+            .update(challenges)
+            .set({ status: targetStatus, updatedAt: now })
+            .where(eq(challenges.id, challenge.id));
+
+          // Create Main Voting Round & Freeze Candidates Snapshot
+          const [existingRound] = await tx
+            .select()
+            .from(challengeVotingRounds)
+            .where(
+              and(
+                eq(challengeVotingRounds.challengeId, challenge.id),
+                eq(challengeVotingRounds.roundType, "main")
+              )
+            )
+            .limit(1);
+
+          let roundId = existingRound?.id;
+          if (!existingRound) {
+            const [newRound] = await tx
+              .insert(challengeVotingRounds)
+              .values({
+                challengeId: challenge.id,
+                roundType: "main",
+                roundSequence: 1,
+                status: "pending",
+                startsAt: challenge.votingStartsAt || now,
+                deadline: challenge.votingDeadline,
+                starsPerMember: challenge.starsPerMember || 1,
+              })
+              .returning();
+            roundId = newRound.id;
+          }
+
+          if (roundId) {
+            for (const sub of validSubmissions) {
+              await tx
+                .insert(challengeVotingRoundCandidates)
+                .values({
+                  votingRoundId: roundId,
+                  submissionId: sub.id,
+                })
+                .onConflictDoNothing();
+            }
+          }
+
+          await tx.insert(auditLogs).values({
+            action: "scheduler.challenge_submission_locked",
+            targetType: "challenge",
+            targetId: challenge.id,
+            reason: `Otomatis mengunci submisi dan membekukan ${subCount} kandidat karya untuk voting.`,
+          });
+        }
       }
-      return false;
+
+      return targetStatus;
     };
 
-    const succeeded = typeof dbOrTx.transaction === "function"
+    const targetStatus = typeof dbOrTx.transaction === "function"
       ? await dbOrTx.transaction(async (tx: any) => performLockTransition(tx))
       : await performLockTransition(dbOrTx);
 
-    if (succeeded) {
-      transitions.push({ challengeId: ch.id, from: "submission_open", to: "submission_locked" });
+    if (targetStatus) {
+      transitions.push({ challengeId: ch.id, from: "submission_open", to: targetStatus });
+    }
+  }
+
+  // 3. Submission Locked -> Voting Open (when votingStartsAt <= now)
+  const lockedChallenges = await dbOrTx
+    .select()
+    .from(challenges)
+    .where(
+      and(
+        eq(challenges.status, "submission_locked"),
+        lte(challenges.votingStartsAt, now)
+      )
+    );
+
+  for (const ch of lockedChallenges) {
+    if (ch.awardMode === "vote_only" || ch.awardMode === "vote_and_jury") {
+      const performVotingOpen = async (tx: any) => {
+        const [challenge] = await tx
+          .select()
+          .from(challenges)
+          .where(
+            and(
+              eq(challenges.id, ch.id),
+              eq(challenges.status, "submission_locked")
+            )
+          )
+          .for("update")
+          .limit(1);
+
+        if (!challenge) return false;
+
+        // Open main round
+        await tx
+          .update(challengeVotingRounds)
+          .set({ status: "open", startsAt: challenge.votingStartsAt || now, updatedAt: now })
+          .where(
+            and(
+              eq(challengeVotingRounds.challengeId, challenge.id),
+              eq(challengeVotingRounds.roundType, "main")
+            )
+          );
+
+        await tx
+          .update(challenges)
+          .set({ status: "voting_open", updatedAt: now })
+          .where(eq(challenges.id, challenge.id));
+
+        await tx.insert(auditLogs).values({
+          action: "scheduler.challenge_voting_opened",
+          targetType: "challenge",
+          targetId: challenge.id,
+          reason: "Babak voting komunitas dibuka secara otomatis sesuai jadwal.",
+        });
+
+        return true;
+      };
+
+      const succeeded = typeof dbOrTx.transaction === "function"
+        ? await dbOrTx.transaction(async (tx: any) => performVotingOpen(tx))
+        : await performVotingOpen(dbOrTx);
+
+      if (succeeded) {
+        transitions.push({ challengeId: ch.id, from: "submission_locked", to: "voting_open" });
+      }
+    }
+  }
+
+  // 4. Open Voting Rounds -> Finalize at Deadline
+  const expiredOpenRounds = await dbOrTx
+    .select({
+      id: challengeVotingRounds.id,
+      challengeId: challengeVotingRounds.challengeId,
+      roundType: challengeVotingRounds.roundType,
+      deadline: challengeVotingRounds.deadline,
+    })
+    .from(challengeVotingRounds)
+    .where(
+      and(
+        eq(challengeVotingRounds.status, "open"),
+        lte(challengeVotingRounds.deadline, now)
+      )
+    );
+
+  for (const round of expiredOpenRounds) {
+    const performFinalize = async (tx: any) => {
+      return await finalizeVotingRoundService(
+        tx,
+        { userId: "system", role: "admin" },
+        { votingRoundId: round.id }
+      );
+    };
+
+    const res = typeof dbOrTx.transaction === "function"
+      ? await dbOrTx.transaction(async (tx: any) => performFinalize(tx))
+      : await performFinalize(dbOrTx);
+
+    if (res?.success) {
+      transitions.push({
+        challengeId: round.challengeId,
+        from: `round_${round.roundType}_open`,
+        to: res.outcome,
+      });
     }
   }
 
@@ -836,3 +1149,4 @@ export async function materializeScheduledTransitionsService(
     transitions,
   };
 }
+

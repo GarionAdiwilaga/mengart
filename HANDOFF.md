@@ -1,37 +1,31 @@
-# Handoff Context — Phase 1 Tiebreak Reconciliation & Authoritative Rules Complete
+# Handoff Context — Phase 2: Voting & Tie Resolution (Gate B Against Blueprint 2.2.1)
 
 **Date:** 2026-08-29
+**Base Historical Commit:** `15459ecfdb2e4bf2f22b16464b383ddf55e08c1c`
 
 ## Session Summary
-- **Authoritative Winner & Tiebreak Rules Implemented:**
-  1. **Rank #1 Tiebreak Scope in Migration 0007 (`drizzle/0007_perfect_sunspot.sql`):**
-     - Active tiebreak candidate set is reconstructed strictly from submissions tied for **Community rank #1** (maximum Star total from main ballots).
-     - Ties below #1 (e.g. $A=30, B=20, C=20$) in `tiebreak_open` fail closed with `RAISE EXCEPTION 'Legacy tiebreak reconciliation required...'`.
-     - Submissions referenced in historical tiebreak ballots are validated as a subset of first-place tied candidates ($A, B, C$); referencing an untied submission ($D$) fails closed.
-     - Active tiebreak timing is strictly validated (`starts_at < deadline` and `deadline > now()`); missing/expired deadlines fail closed.
-  2. **Migration Regression Fixtures (`scripts/verifyMigrations.ts`):**
-     - **Scenario 1:** Fresh DB 0000 -> 0007.
-     - **Scenario 2:** 7 Invariants on 0006 -> 0007 upgrade (A/B/C tied at 20 stars frozen, D at 15 stars excluded, timing valid, pre-migration malformed row purged).
-     - **Scenario 3:** Fail-closed reconciliation test when a tiebreak ballot references non-first-place submission D.
-     - **Scenario 4:** Fail-closed reconciliation test when tie is below first place (A=30, B=20, C=20) in `tiebreak_open`.
-  3. **Architectural Rules Recorded in `DECISIONS.md`:**
-     - **Phase 2:** Community tiebreak applies only to rank #1 ties; lower-rank ties preserved without rounds; replace composite unique index with `(voting_round_id, user_id)`.
-     - **Phase 3:** Community/Vote Winner excluded from judge winner categories in `vote_and_jury`; `jury_only` uses only configured judge categories without synthetic community ranks.
+- **Migration 0008 Implemented & Backfilled (`0008_round_ballot_uniqueness_and_tie_pending.sql`):**
+  - Added `tie_pending` to `challenge_status` enum.
+  - Added `resolution_method` (text) and `source_voting_round_id` (uuid FK) to `challenge_results`.
+  - Canonical Community Winner: Backfilled legacy `community_rank` rows with `final_rank = 1` $\rightarrow$ `award_type = 'community_vote_winner'`.
+  - Uniqueness & Constraints: Dropped legacy `uniq_challenge_user_ballot`, set `voting_round_id` NOT NULL on `challenge_ballots`, added `uniq_ballot_round_user (voting_round_id, user_id)` and 4 partial unique indexes (`uniq_challenge_community_winner`, `uniq_challenge_main_round`, `uniq_challenge_tiebreak_round`, `uniq_challenge_open_round`).
+- **Domain Services Extracted & Production Hardened (`src/lib/services/votingService.ts`):**
+  - All ballot mutations and finalizations operate on authoritative `votingRoundId` with parent row locking (`FOR UPDATE`).
+  - Separated zero-vote handling (Main 0 stars $\rightarrow$ FINISHED / JURY_SELECTION_OPEN with 0 winners; Tiebreak 0 stars $\rightarrow$ TIE_PENDING with frozen tied candidates retained for manual resolve).
+  - Staff actions in `TIE_PENDING`: `startTiebreakService` (enforcing max 1 tiebreak round) and `resolveTieManuallyService` (strictly validating selection from authoritative tied candidates with $\ge 5$ char reason and audit logging).
+  - Deterministic anti-bias voter shuffle (`getDeterministicVoterCandidateOrder`).
+- **Scheduler & Lifecycle Updates (`src/lib/services/challengeService.ts`):**
+  - Mode-specific submission lock branching in scheduler (0 subs $\rightarrow$ cancelled, 1 sub $\rightarrow$ auto winner, 2+ subs $\rightarrow$ freeze candidates).
+  - Protected lifecycle transitions blocking direct public mutations to voting result states.
+- **UI & Components:**
+  - `VotingWorkspace.tsx` updated with `votingRoundId` mutation identity.
+  - `TiePendingAdminPanel.tsx` created for moderator start tiebreak & manual resolve workflows.
+  - `voting/page.tsx` and `results/page.tsx` updated for single Community Winner card under Blueprint 2.2.1.
+- **Automated Verification:**
+  - `src/lib/__tests__/testPhase2VotingAndTiebreak.ts`: 10 comprehensive scenarios passing 100% clean on isolated PostgreSQL.
+  - `npm run test:all`: All migration, concurrency, security, and lifecycle test suites pass with code 0.
+  - `npm run lint`: 0 ESLint errors.
+  - `npm run build`: Production Next.js build and worker bundle compiled cleanly.
 
-## Build & Verification Status
-- `npm run test:migrate`: 100% Passed (Scenarios 1 to 4 clean).
-- `npx tsx src/lib/__tests__/testPhase1LifecycleAndState.ts`: 100% Passed (11 test suites).
-- `npm run test:all`: 100% Passed (all 13 test suites).
-- `npm run lint`: 100% Clean (0 errors, 0 warnings).
-- `npm run build`: 100% Clean (all 32 routes and worker bundle compiled with exit code 0).
-
-## Changed Files
-- `drizzle/0007_perfect_sunspot.sql`
-- `scripts/verifyMigrations.ts`
-- `CURRENT_STATUS.md`
-- `DECISIONS.md`
-- `HANDOFF.md`
-
-## Next Steps
-- Generate `phase1_migration_reconciliation_final.patch` from `d6f1a1d2679a9459bda2755e881d14c035c41326..NEW_COMMIT_SHA`.
-- Awaiting independent QA review and approval for Phase 1. Do not begin Phase 2 until this final Phase 1 patch is approved.
+## Verification Artifact
+- Single Git patch generated: `phase2.patch` from base commit `15459ecfdb2e4bf2f22b16464b383ddf55e08c1c`.
