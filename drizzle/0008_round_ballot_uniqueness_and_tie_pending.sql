@@ -143,8 +143,3 @@ CREATE UNIQUE INDEX IF NOT EXISTS "uniq_challenge_tiebreak_round"
 CREATE UNIQUE INDEX IF NOT EXISTS "uniq_challenge_open_round" 
   ON "challenge_voting_rounds" ("challenge_id") 
   WHERE ("status" = 'open');
-
--- 9. Update default stars_per_member to 1 for future rows (Blueprint 2.2.1)
-ALTER TABLE "challenges" ALTER COLUMN "stars_per_member" SET DEFAULT 1;
-ALTER TABLE "challenge_voting_rounds" ALTER COLUMN "stars_per_member" SET DEFAULT 1;
-

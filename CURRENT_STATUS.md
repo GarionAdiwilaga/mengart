@@ -45,7 +45,8 @@
     - `resolveTieManuallyService`: Moderator manual tiebreak resolve with $\ge 5$ char reason and audit log, picking strictly from authoritative tied candidates.
   - Quorum Removal & Star Default Configuration:
     - Removed quorum input, state, and serialization from `ChallengeCreateForm.tsx` and `createOrUpdateChallengeAction`. Neutral DB default preserved for backward compatibility.
-    - Changed configurable Star default from 3 to 1 in `ChallengeCreateForm.tsx`, `createOrUpdateChallengeAction`, Drizzle schema (`challenges` & `challengeVotingRounds`), and migration `0008` column defaults.
+    - Changed configurable Star default from 3 to 1 in `ChallengeCreateForm.tsx`, `createOrUpdateChallengeAction`, and Drizzle schema (`challenges` & `challengeVotingRounds`).
+    - Migration Immutability & Forward Migration 0009: Restored `0008` to exact base commit state; created `drizzle/0009_default_stars_per_member_one.sql` executing `ALTER COLUMN stars_per_member SET DEFAULT 1` for `challenges` and `challenge_voting_rounds`.
     - Main voting round inherits challenge's configured Star allowance (default 1, or explicit custom values like 3). Single tiebreak round strictly enforces `starsPerMember = 1`.
   - UI & Components:
     - Cleaned `ChallengeTransitionButtons.tsx`: Removed manual "Hitung Hasil" and "Buka Voting" during voting states; removed "Kunci Submisi"; cleaned obsolete podium tiebreak text.
@@ -55,7 +56,7 @@
     - `voting/page.tsx` and `results/page.tsx` updated for single Community Winner card under Blueprint 2.2.1.
   - Test Suite (`src/lib/__tests__/testPhase2VotingAndTiebreak.ts` & `scripts/verifyMigrations.ts`):
     - Verified all 20 test scenarios under isolated PostgreSQL database: single Community Winner, zero-vote transitions, main tie $\rightarrow$ `tie_pending` $\rightarrow$ tiebreak $\rightarrow$ tiebreak winner, tiebreak 0-votes $\rightarrow$ manual resolve with audit, membership status auth, malformed negative Star bypass prevention, reset ballot, voter anonymity, per-round ballot uniqueness, finalize checks, scheduler system actor null check, mode-specific branching, concurrency tests, protected lifecycle bypass rejections, negative compute on live voting rejection, negative manual submission lock rejection, mutation operating window boundary validations, quorum removal verification, and Star defaults/inheritance/tiebreak 1-star enforcement.
-    - Migration Scenario 5 verified fail-closed unreconciled ballot exception.
+    - Migration Suite (`npm run test:migrate`): 6/6 scenarios passed, including Scenario 5 (fail-closed unreconciled ballot) and Scenario 6 (0008 to 0009 upgrade regression verifying column default transition 3 -> 1 and preservation of existing explicit 3-star rows).
     - All test suites passing in `npm run test:all`, `npm run test:migrate`, `npm run lint` (0 errors), and `npm run build` (clean compilation).
 - **Phase 3: Release Gate C (Simplified Jury & Result Model):** READY FOR IMPLEMENTATION
 - **Phase 4: Release Gate D (Authentication, Invitations & Roles):** PENDING REVIEW

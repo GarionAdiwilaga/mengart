@@ -272,13 +272,13 @@
 
 ## 2026-08-30
 
-### Blueprint 2.2.1 Gate B / Phase 2: Quorum Removal & Star Default Configuration
-**Decision:** Updated challenge configuration to match Blueprint 2.2.1:
-1. **Quorum Removal from Active Configuration:** Removed `quorumRequirement` state, UI input (`KUORUM MINIMAL VOTER`), and formData serialization from `ChallengeCreateForm.tsx`. Removed `quorumRequirement` parsing and persisting from `createOrUpdateChallengeAction` in `challenges.ts`. Legacy DB column preserved with neutral default `0` for backward compatibility without active product behavior.
-2. **Configurable Star Default Changed from 3 to 1:** Updated default Star allocation from 3 to 1 in `ChallengeCreateForm.tsx` (`useState(1)`), `createOrUpdateChallengeAction` (validated integer $\ge 1$, default 1), Drizzle schema (`challenges.starsPerMember` and `challengeVotingRounds.starsPerMember` default 1), and migration `0008` column default alteration.
-3. **Round Inheritance & Strict Tiebreak Rule:** Main voting round inherits challenge's configured value (e.g. 1 by default, or explicit custom values like 3). Single tiebreak round strictly enforces `starsPerMember = 1` regardless of main round allowance.
-4. **Verification:** Added Tests 19 and 20 to `testPhase2VotingAndTiebreak.ts`, bringing total test matrix to 20/20 passed scenarios.
-**Business Rule:** Default star allowance is 1 per member for community voting; tiebreak rounds are always exactly 1 star. Quorum is completely removed from live configuration.
-**Reason:** Strict compliance with Blueprint 2.2.1 requirements.
+### Blueprint 2.2.1 Gate B / Phase 2: Migration Immutability & Forward Migration 0009
+**Decision:** Preserved historical migration immutability by reverting `0008` to its exact pre-correction state and creating dedicated forward migration `drizzle/0009_default_stars_per_member_one.sql`:
+1. **Migration 0008 Restoration:** Restored `0008_round_ballot_uniqueness_and_tie_pending.sql` to its exact commit state at `e6b8707e944a74f4183226012723b4ea97759e8a` with 0 modified statements.
+2. **Forward Migration 0009:** Created `0009_default_stars_per_member_one.sql` executing `ALTER COLUMN stars_per_member SET DEFAULT 1` for `challenges` and `challenge_voting_rounds`. Registered in `_journal.json`.
+3. **Upgrade Path Test Coverage:** Added Scenario 6 to `scripts/verifyMigrations.ts` verifying upgrade from pre-correction 0008 (defaults = 3, existing rows = 3) to 0009 (defaults = 1, existing rows preserved at 3, new DEFAULT rows = 1).
+**Business Rule:** Committed migrations are strictly immutable; schema default alterations must proceed via forward migrations.
+**Reason:** Prevent migration checksum/drift failure on existing databases that already ran migration 0008.
+
 
 

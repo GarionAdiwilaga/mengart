@@ -25,14 +25,16 @@ async function runMigrationVerification() {
 
   const freshDbName = `mengart_test_fresh_${Date.now()}`;
   const upgradeDbName = `mengart_test_upgrade_${Date.now()}`;
+  const upgradeDbName0008 = `mengart_test_upgrade_0008_${Date.now()}`;
   const failDbName1 = `mengart_test_fail1_${Date.now()}`;
   const failDbName2 = `mengart_test_fail2_${Date.now()}`;
   const failDbName3 = `mengart_test_fail3_${Date.now()}`;
   const temp0006Dir = path.resolve("./.tmp_drizzle_0006");
+  const temp0008Dir = path.resolve("./.tmp_drizzle_0008");
 
   try {
     // --------------------------------------------------------------------------
-    // SCENARIO 1: FRESH EMPTY DATABASE -> ALL COMMITTED MIGRATIONS (0000 -> 0008)
+    // SCENARIO 1: FRESH EMPTY DATABASE -> ALL COMMITTED MIGRATIONS (0000 -> 0009)
     // --------------------------------------------------------------------------
     console.log(`[Scenario 1] Creating fresh empty database: ${freshDbName}...`);
     await adminClient.unsafe(`CREATE DATABASE "${freshDbName}";`);
@@ -41,9 +43,9 @@ async function runMigrationVerification() {
     const freshClient = postgres(freshDbUrl, { max: 1 });
     const freshDrizzle = drizzle(freshClient, { schema });
 
-    console.log("-> Running all committed migrations (0000 -> 0008) on fresh database via Drizzle migrator...");
+    console.log("-> Running all committed migrations (0000 -> 0009) on fresh database via Drizzle migrator...");
     await migrate(freshDrizzle, { migrationsFolder: "./drizzle" });
-    console.log("✓ Migration 0000 -> 0008 succeeded on fresh empty database!");
+    console.log("✓ Migration 0000 -> 0009 succeeded on fresh empty database!");
 
     // Verify critical tables exist in fresh database
     const freshTables = await freshClient`
@@ -712,6 +714,124 @@ async function runMigrationVerification() {
     await failClient3.end();
     console.log("🎉 SCENARIO 5 (FAIL-CLOSED UNRECONCILED BALLOT) PASSED!\n");
 
+    // --------------------------------------------------------------------------
+    // SCENARIO 6: MIGRATION 0008 -> 0009 UPGRADE PATH (STAR DEFAULTS 3 -> 1 PRESERVING EXISTING ROWS)
+    // --------------------------------------------------------------------------
+    console.log(`[Scenario 6] Testing upgrade path from pre-correction 0008 to 0009: ${upgradeDbName0008}...`);
+    await adminClient.unsafe(`CREATE DATABASE "${upgradeDbName0008}";`);
+    const upgradeClient0008 = postgres(`${urlObj.protocol}//${urlObj.username}:${urlObj.password}@${urlObj.host}/${upgradeDbName0008}`, { max: 1 });
+    const upgradeDrizzle0008 = drizzle(upgradeClient0008, { schema });
+
+    // Build temporary 0008-only migration directory (migrations 0000 -> 0008)
+    await fs.mkdir(temp0008Dir, { recursive: true });
+    await fs.mkdir(path.join(temp0008Dir, "meta"), { recursive: true });
+
+    for (let i = 0; i <= 8; i++) {
+      const migFiles = await fs.readdir("./drizzle");
+      const targetFile = migFiles.find((f) => f.startsWith(`000${i}_`));
+      if (targetFile) {
+        await fs.copyFile(path.join("./drizzle", targetFile), path.join(temp0008Dir, targetFile));
+      }
+    }
+
+    const journalContent0008 = {
+      version: "7",
+      dialect: "postgresql",
+      entries: (await fs.readFile("./drizzle/meta/_journal.json", "utf-8").then(JSON.parse)).entries.slice(0, 9),
+    };
+    await fs.writeFile(path.join(temp0008Dir, "meta", "_journal.json"), JSON.stringify(journalContent0008, null, 2));
+
+    // 1. Migrate database up to 0008
+    console.log("-> Migrating test database up to original 0008...");
+    await migrate(upgradeDrizzle0008, { migrationsFolder: temp0008Dir });
+    console.log("✓ Database successfully migrated up to 0008.");
+
+    // 2. Verify pre-0009 column defaults are 3
+    const [chColPre] = await upgradeClient0008`
+      SELECT column_default 
+      FROM information_schema.columns 
+      WHERE table_name = 'challenges' AND column_name = 'stars_per_member';
+    `;
+    const [roundColPre] = await upgradeClient0008`
+      SELECT column_default 
+      FROM information_schema.columns 
+      WHERE table_name = 'challenge_voting_rounds' AND column_name = 'stars_per_member';
+    `;
+
+    if (!chColPre?.column_default?.includes("3") || !roundColPre?.column_default?.includes("3")) {
+      throw new Error(`Expected pre-0009 column defaults to be 3, got challenges: ${chColPre?.column_default}, rounds: ${roundColPre?.column_default}`);
+    }
+    console.log("✓ Verified pre-0009 column defaults are 3 (challenges: '3', challenge_voting_rounds: '3').");
+
+    // 3. Insert existing rows with explicit values (challenge A = 3, round A = 3)
+    const [user6] = await upgradeClient0008`INSERT INTO users (email, role) VALUES ('upgrade0008@mengart.local', 'admin') RETURNING id;`;
+    const [ch6A] = await upgradeClient0008`
+      INSERT INTO challenges (title, slug, theme, description, prompt_rules, status, award_mode, stars_per_member, created_by_user_id)
+      VALUES ('Challenge 6A', 'ch-6a', 'Theme', 'Desc', 'Rules', 'draft', 'vote_only', 3, ${user6.id})
+      RETURNING id, stars_per_member;
+    `;
+    const [round6A] = await upgradeClient0008`
+      INSERT INTO challenge_voting_rounds (challenge_id, round_type, round_sequence, status, stars_per_member)
+      VALUES (${ch6A.id}, 'main', 1, 'pending', 3)
+      RETURNING id, stars_per_member;
+    `;
+
+    if (ch6A.stars_per_member !== 3 || round6A.stars_per_member !== 3) {
+      throw new Error(`Expected existing rows to have stars_per_member = 3, got challenge: ${ch6A.stars_per_member}, round: ${round6A.stars_per_member}`);
+    }
+    console.log("✓ Existing pre-0009 rows inserted with explicit stars_per_member = 3.");
+
+    // 4. Apply forward migration 0009
+    console.log("-> Applying forward migration 0009 via Drizzle migrator...");
+    await migrate(upgradeDrizzle0008, { migrationsFolder: "./drizzle" });
+    console.log("✓ Migration 0009 applied cleanly.");
+
+    // 5. Verify post-0009 column defaults are 1
+    const [chColPost] = await upgradeClient0008`
+      SELECT column_default 
+      FROM information_schema.columns 
+      WHERE table_name = 'challenges' AND column_name = 'stars_per_member';
+    `;
+    const [roundColPost] = await upgradeClient0008`
+      SELECT column_default 
+      FROM information_schema.columns 
+      WHERE table_name = 'challenge_voting_rounds' AND column_name = 'stars_per_member';
+    `;
+
+    if (!chColPost?.column_default?.includes("1") || !roundColPost?.column_default?.includes("1")) {
+      throw new Error(`Expected post-0009 column defaults to be 1, got challenges: ${chColPost?.column_default}, rounds: ${roundColPost?.column_default}`);
+    }
+    console.log("✓ Verified post-0009 column defaults are 1 (challenges: '1', challenge_voting_rounds: '1').");
+
+    // 6. Verify existing rows remain untouched (challenge A = 3, round A = 3)
+    const [ch6AAfter] = await upgradeClient0008`SELECT stars_per_member FROM challenges WHERE id = ${ch6A.id};`;
+    const [round6AAfter] = await upgradeClient0008`SELECT stars_per_member FROM challenge_voting_rounds WHERE id = ${round6A.id};`;
+
+    if (ch6AAfter.stars_per_member !== 3 || round6AAfter.stars_per_member !== 3) {
+      throw new Error(`Expected existing rows to remain 3 after 0009, got challenge: ${ch6AAfter.stars_per_member}, round: ${round6AAfter.stars_per_member}`);
+    }
+    console.log("✓ Verified existing pre-0009 rows preserved their explicit value 3 without unwanted mutation.");
+
+    // 7. Verify new rows inserted with DEFAULT receive 1
+    const [ch6B] = await upgradeClient0008`
+      INSERT INTO challenges (title, slug, theme, description, prompt_rules, status, award_mode, created_by_user_id)
+      VALUES ('Challenge 6B', 'ch-6b', 'Theme', 'Desc', 'Rules', 'draft', 'vote_only', ${user6.id})
+      RETURNING id, stars_per_member;
+    `;
+    const [round6B] = await upgradeClient0008`
+      INSERT INTO challenge_voting_rounds (challenge_id, round_type, round_sequence, status)
+      VALUES (${ch6B.id}, 'main', 1, 'pending')
+      RETURNING id, stars_per_member;
+    `;
+
+    if (ch6B.stars_per_member !== 1 || round6B.stars_per_member !== 1) {
+      throw new Error(`Expected new DEFAULT rows after 0009 to receive 1, got challenge: ${ch6B.stars_per_member}, round: ${round6B.stars_per_member}`);
+    }
+    console.log("✓ Verified new post-0009 rows with DEFAULT receive stars_per_member = 1.");
+
+    await upgradeClient0008.end();
+    console.log("🎉 SCENARIO 6 (FORWARD MIGRATION 0008 -> 0009 UPGRADE PATH) PASSED!\n");
+
     console.log("=================================================================");
     console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A & B)");
     console.log("=================================================================\n");
@@ -720,6 +840,7 @@ async function runMigrationVerification() {
     // Clean up temporary files and databases
     try {
       await fs.rm(temp0006Dir, { recursive: true, force: true });
+      await fs.rm(temp0008Dir, { recursive: true, force: true });
     } catch (_e) {
       // Ignored cleanup error
     }
@@ -727,6 +848,7 @@ async function runMigrationVerification() {
     try {
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${freshDbName}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName}";`);
+      await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0008}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName1}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName2}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName3}";`);

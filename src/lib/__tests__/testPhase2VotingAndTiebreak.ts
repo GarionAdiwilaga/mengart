@@ -56,9 +56,9 @@ async function runTests() {
   const db = drizzle(testClient, { schema });
 
   try {
-    console.log("-> Running migrations 0000 -> 0008 on test database...");
+    console.log("-> Running migrations 0000 -> 0009 on test database...");
     await migrate(db, { migrationsFolder: "./drizzle" });
-    console.log("✓ Database migrated to 0008.\n");
+    console.log("✓ Database migrated to 0009.\n");
 
     // Setup basic actors
     const [adminUser] = await db
