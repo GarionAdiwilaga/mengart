@@ -232,24 +232,63 @@ export async function createMembershipInvite(
 }
 
 /**
+ * Authoritative deterministic invite code lookup (Blueprint 2.2.2 Item 2):
+ * 1. Exact match first
+ * 2. If exact exists -> return exact record
+ * 3. Only if exact does not exist and input is not already lowercase, check lowercase fallback
+ * 4. Never allow ambiguous multi-row or lookup
+ */
+export async function findInviteByCode(
+  txOrDb: any,
+  rawCode: string,
+  forUpdate = false
+) {
+  const cleanCode = extractInviteCode(rawCode);
+  if (!cleanCode || cleanCode.length === 0) return null;
+
+  // 1. Exact match first
+  let query = txOrDb
+    .select()
+    .from(membershipInvites)
+    .where(eq(membershipInvites.code, cleanCode))
+    .limit(1);
+
+  if (forUpdate) {
+    query = query.for("update");
+  }
+
+  const [exactMatch] = await query;
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  // 2. Lowercase fallback only if cleanCode is not already lowercase
+  const lowerCode = cleanCode.toLowerCase();
+  if (lowerCode !== cleanCode) {
+    let lowerQuery = txOrDb
+      .select()
+      .from(membershipInvites)
+      .where(eq(membershipInvites.code, lowerCode))
+      .limit(1);
+
+    if (forUpdate) {
+      lowerQuery = lowerQuery.for("update");
+    }
+
+    const [lowerMatch] = await lowerQuery;
+    if (lowerMatch) {
+      return lowerMatch;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Validate an invitation code without redeeming it
  */
 export async function validateInviteCode(rawInput: string) {
-  const cleanCode = extractInviteCode(rawInput);
-  if (!cleanCode || cleanCode.length === 0) {
-    return { isValid: false, reason: "not_found" as const, invite: null };
-  }
-
-  const [invite] = await db
-    .select()
-    .from(membershipInvites)
-    .where(
-      or(
-        eq(membershipInvites.code, cleanCode),
-        eq(membershipInvites.code, cleanCode.toLowerCase())
-      )
-    )
-    .limit(1);
+  const invite = await findInviteByCode(db, rawInput, false);
 
   if (!invite) {
     return { isValid: false, reason: "not_found" as const, invite: null };
@@ -287,7 +326,6 @@ export async function redeemInviteService(
     userAgent?: string;
   }
 ) {
-  const cleanCode = extractInviteCode(params.code);
   const now = new Date();
 
   return await dbOrTx.transaction(async (tx: any) => {
@@ -321,17 +359,8 @@ export async function redeemInviteService(
       throw new Error("Akun telah dihapus.");
     }
 
-    // 2. Lock target invite row FOR UPDATE by direct code
-    const [invite] = await tx
-      .select()
-      .from(membershipInvites)
-      .where(
-        or(
-          eq(membershipInvites.code, cleanCode),
-          eq(membershipInvites.code, cleanCode.toLowerCase())
-        )
-      )
-      .for("update");
+    // 2. Lock target invite row FOR UPDATE by deterministic code lookup
+    const invite = await findInviteByCode(tx, params.code, true);
 
     if (!invite) {
       throw new Error("Undangan tidak valid atau tidak ditemukan.");

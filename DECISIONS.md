@@ -328,5 +328,11 @@
 **Business Rule:** Plaintext codes are unique in the database and visible to Admins. Onboarding codes are carried exclusively via HttpOnly cookies without URL query token leaks. Profile privacy is preserved across suspension cycles.
 **Reason:** Authoritative product requirement under Blueprint 2.2.2 for Gate D.
 
-
-
+### Blueprint 2.2.2 Gate D: Elimination of Moderation Suspension Bypass, Deterministic Lookup & Legacy Token Revocation
+**Decision:** Applied final focused corrections to Gate D under Blueprint 2.2.2:
+1. **Canonical Membership Transition Domain Service (`updateUserMembershipStatusService`):** Extracted unified domain service in `src/lib/services/userService.ts` handling all membership status mutations across `updateUserStatusAction` and `resolveReportAction(..., "suspend_user")`. Enforces transition matrix (`NULL -> ACTIVE` blocked outside `redeemInviteService`, `NULL -> SUSPENDED` blocked, `DELETED` terminal), role authority boundaries (Moderators restricted to ordinary members, cannot suspend Moderators/Admins, cannot delete users), Last-Active-Admin invariant via `pg_advisory_xact_lock(4281729)`, and profile privacy preservation.
+2. **Deterministic Invitation Code Resolution (`findInviteByCode`):** Implemented exact-match-first resolver that queries exact `membership_invites.code` match first, and only falls back to lowercase if exact match is absent, preventing multi-row ambiguity when mixed-case and lowercase codes coexist.
+3. **Migration 0011 Legacy Token Revocation:** Updated `0011_gate_d_auth_roles_membership.sql` to explicitly mark unrecoverable legacy hash-only invitations as revoked (`revoked_at = COALESCE(revoked_at, NOW())`) with surrogate codes (`legacy-revoked-<id>`), preserving redemption history without creating active 32-character hash-derived bearer credentials.
+4. **Exhaustive 22-Scenario Test Suite:** Replaced simulated tests with production-path assertions for status transitions, suspension/reactivation profile privacy, immediate staff suspension authority loss, sole active admin protection, concurrent admin removal, revoke-vs-redeem race final state, moderator invite administration denial, all 8 OAuth continuation terminal outcomes, and clean master media ACL enforcement.
+**Business Rule:** All status mutations must flow through canonical `updateUserMembershipStatusService`. Invitations resolve deterministically. Legacy hash-only tokens are revoked fail-closed.
+**Reason:** Addressed independent QA review findings for Gate D / Blueprint 2.2.2 final focused corrections.

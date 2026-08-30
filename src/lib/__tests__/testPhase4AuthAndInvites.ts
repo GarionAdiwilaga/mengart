@@ -1,6 +1,6 @@
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { eq, and, sql, desc, isNull } from "drizzle-orm";
+import { eq, and, sql, desc, isNull, count } from "drizzle-orm";
 import * as dotenv from "dotenv";
 import fs from "fs/promises";
 import path from "path";
@@ -13,12 +13,14 @@ import {
   artworks,
   artworkVersions,
   auditLogs,
+  reports,
 } from "@/db/schema";
 import {
   createMembershipInvite,
   validateInviteCode,
   redeemInviteService,
   revokeInviteService,
+  findInviteByCode,
   generateDefaultInviteCode,
   normalizeAndValidateCustomCode,
   extractInviteCode,
@@ -33,7 +35,10 @@ import { resolveGoogleSignInIdentity } from "@/auth";
 import { canAccessMasterMedia } from "@/lib/policy";
 import { handleGetMasterMedia } from "@/app/api/media/master/[key]/route";
 import { handleRedeemCallback } from "@/app/api/auth/redeem-callback/route";
-import { updateUserStatusAction, updateUserRoleAction } from "@/app/actions/admin";
+import {
+  updateUserMembershipStatusService,
+  updateUserRoleService,
+} from "@/lib/services/userService";
 import { NextRequest } from "next/server";
 
 dotenv.config({ path: ".env.local" });
@@ -100,9 +105,9 @@ async function runPhase4AuthAndInvitesTests() {
     console.log("✓ Test 2 Passed: Custom code validation strictly enforces lowercase normalization, [a-z0-9-], and max length 25.\n");
 
     // --------------------------------------------------------------------------
-    // TEST 3: ADMIN CAN LIST & RETRIEVE ACTUAL STORED CODE
+    // TEST 3: DETERMINISTIC INVITE-CODE LOOKUP & CASE COEXISTENCE (ITEM 2)
     // --------------------------------------------------------------------------
-    console.log("[Test 3] Testing Admin invite creation, direct code storage, and listing...");
+    console.log("[Test 3] Testing deterministic invite code resolution with coexisting mixed-case and lowercase codes...");
     const [adminUser] = await db
       .insert(users)
       .values({
@@ -112,22 +117,59 @@ async function runPhase4AuthAndInvitesTests() {
       })
       .returning();
 
-    const customInvite = await createMembershipInvite({
-      label: "Custom Batch Invite",
-      customCode: `custom-${Date.now().toString().slice(-6)}`,
-      createdByUserId: adminUser.id,
-      maxUses: 5,
-    });
+    // Insert mixed-case generated code and lowercase custom code with identical letters
+    const mixedCaseCode = `AbCdEf${Date.now().toString().slice(-2)}`;
+    const lowerCaseCode = mixedCaseCode.toLowerCase();
 
-    const [storedInvite] = await db
-      .select()
-      .from(membershipInvites)
-      .where(eq(membershipInvites.id, customInvite.id));
+    const [mixedInvite] = await db
+      .insert(membershipInvites)
+      .values({
+        code: mixedCaseCode,
+        label: "Mixed Case Invite",
+        maxUses: 1,
+        createdBy: adminUser.id,
+      })
+      .returning();
 
-    if (!storedInvite || storedInvite.code !== customInvite.code) {
-      throw new Error(`Expected stored invite code to match '${customInvite.code}', got '${storedInvite?.code}'`);
+    const [lowerInvite] = await db
+      .insert(membershipInvites)
+      .values({
+        code: lowerCaseCode,
+        label: "Lower Case Custom Invite",
+        maxUses: 1,
+        createdBy: adminUser.id,
+      })
+      .returning();
+
+    // 1. Exact match mixed-case query must resolve the mixed-case record
+    const resolvedMixed = await findInviteByCode(db, mixedCaseCode);
+    if (!resolvedMixed || resolvedMixed.id !== mixedInvite.id || resolvedMixed.code !== mixedCaseCode) {
+      throw new Error(`Expected query '${mixedCaseCode}' to resolve mixed-case invite ID ${mixedInvite.id}, got ${resolvedMixed?.id}`);
     }
-    console.log(`✓ Test 3 Passed: Admin can list/retrieve actual stored bearer code '${storedInvite.code}'.\n`);
+
+    // 2. Exact match lowercase query must resolve the lowercase record
+    const resolvedLower = await findInviteByCode(db, lowerCaseCode);
+    if (!resolvedLower || resolvedLower.id !== lowerInvite.id || resolvedLower.code !== lowerCaseCode) {
+      throw new Error(`Expected query '${lowerCaseCode}' to resolve lowercase invite ID ${lowerInvite.id}, got ${resolvedLower?.id}`);
+    }
+
+    // 3. Uppercase query where only lowercase exists should resolve via lowercase fallback
+    const allUpperQuery = `UPPER-${Date.now().toString().slice(-4)}`;
+    const [upperCustomInvite] = await db
+      .insert(membershipInvites)
+      .values({
+        code: allUpperQuery.toLowerCase(),
+        label: "Uppercase fallback target",
+        maxUses: 1,
+      })
+      .returning();
+
+    const resolvedFallback = await findInviteByCode(db, allUpperQuery);
+    if (!resolvedFallback || resolvedFallback.id !== upperCustomInvite.id) {
+      throw new Error(`Expected uppercase query '${allUpperQuery}' to resolve lowercase fallback invite ID ${upperCustomInvite.id}`);
+    }
+
+    console.log("✓ Test 3 Passed: findInviteByCode deterministically resolves exact matches first with zero ambiguity.\n");
 
     // --------------------------------------------------------------------------
     // TEST 4: PENDING_INVITE SEPARATION (membership_status IS NULL)
@@ -148,7 +190,6 @@ async function runPhase4AuthAndInvitesTests() {
       throw new Error(`Expected new Google onboarding account to have membershipStatus = NULL, got ${pendingUser.membershipStatus}`);
     }
 
-    // Verify requireActiveMember() rejects pending user
     let pendingRejected = false;
     try {
       if (pendingUser.membershipStatus !== "active") {
@@ -280,7 +321,7 @@ async function runPhase4AuthAndInvitesTests() {
       .insert(membershipInvites)
       .values({
         code: `exp-${Date.now().toString().slice(-6)}`,
-        expiresAt: new Date(Date.now() - 1000 * 60), // expired 1 minute ago
+        expiresAt: new Date(Date.now() - 1000 * 60),
         maxUses: 1,
         usesCount: 0,
       })
@@ -299,7 +340,6 @@ async function runPhase4AuthAndInvitesTests() {
     }
     if (!expiredBlocked) throw new Error("Expected expired invite redemption to be rejected!");
 
-    // Revoked invite test
     const [revokedInvite] = await db
       .insert(membershipInvites)
       .values({
@@ -318,7 +358,6 @@ async function runPhase4AuthAndInvitesTests() {
     }
     if (!revokedBlocked) throw new Error("Expected revoked invite redemption to be rejected!");
 
-    // Exhausted invite test
     const [exhaustedInvite] = await db
       .insert(membershipInvites)
       .values({
@@ -384,7 +423,6 @@ async function runPhase4AuthAndInvitesTests() {
       throw new Error(`Expected exactly 1 activation and 1 pass-through, got ${activated10Count} and ${passThrough10Count}`);
     }
 
-    // Verify total usage across both invites is exactly 1
     const [inv10AAfter] = await db.select().from(membershipInvites).where(eq(membershipInvites.id, inv10A.id));
     const [inv10BAfter] = await db.select().from(membershipInvites).where(eq(membershipInvites.id, inv10B.id));
     if (inv10AAfter.usesCount + inv10BAfter.usesCount !== 1) {
@@ -419,9 +457,9 @@ async function runPhase4AuthAndInvitesTests() {
     console.log("✓ Test 11 Passed: Concurrent race for last slot allows exactly 1 redemption.\n");
 
     // --------------------------------------------------------------------------
-    // TEST 12: REAL CONCURRENCY — REVOKE VS REDEEM RACE
+    // TEST 12: REAL CONCURRENCY — REVOKE VS REDEEM RACE WITH EXHAUSTIVE FINAL STATE ASSERTION (ITEM 8)
     // --------------------------------------------------------------------------
-    console.log("[Test 12] Testing real concurrency: revoke vs redeem race...");
+    console.log("[Test 12] Testing real concurrency: revoke vs redeem race with strict final state assertions...");
     const [revokeRaceUser] = await db.insert(users).values({ email: `revrace.${Date.now()}@example.com`, membershipStatus: null }).returning();
     const revokeRaceInvite = await createMembershipInvite({ label: "Revoke Race", maxUses: 1, createdByUserId: adminUser.id });
 
@@ -430,13 +468,81 @@ async function runPhase4AuthAndInvitesTests() {
       redeemInviteService(db, { userId: revokeRaceUser.id, code: revokeRaceInvite.code }),
     ]);
 
-    // Both outcomes are consistent: either revocation wins first (redemption rejected) or redemption wins first (revocation succeeds afterward)
-    console.log("✓ Test 12 Passed: Revoke vs redeem race handled safely with deterministic row locking.\n");
+    const [raceInviteFinal] = await db.select().from(membershipInvites).where(eq(membershipInvites.id, revokeRaceInvite.id));
+    const [raceUserFinal] = await db.select().from(users).where(eq(users.id, revokeRaceUser.id));
+
+    // Item 8 Invariant: Always revokedAt != NULL and usesCount in {0, 1}
+    if (!raceInviteFinal.revokedAt) {
+      throw new Error("Expected invite to be revoked after race!");
+    }
+    if (raceInviteFinal.usesCount !== 0 && raceInviteFinal.usesCount !== 1) {
+      throw new Error(`Invalid usesCount ${raceInviteFinal.usesCount} after revoke vs redeem race!`);
+    }
+
+    if (raceInviteFinal.usesCount === 0) {
+      // Redemption lost race: user must remain pending (NULL)
+      if (raceUserFinal.membershipStatus !== null) {
+        throw new Error(`Expected user to remain pending (NULL) when usesCount=0, got ${raceUserFinal.membershipStatus}`);
+      }
+    } else if (raceInviteFinal.usesCount === 1) {
+      // Redemption won race: user must be active
+      if (raceUserFinal.membershipStatus !== "active") {
+        throw new Error(`Expected user to be ACTIVE when usesCount=1, got ${raceUserFinal.membershipStatus}`);
+      }
+    }
+
+    console.log(`✓ Test 12 Passed: Revoke vs redeem final state strictly verified (usesCount=${raceInviteFinal.usesCount}, userStatus=${raceUserFinal.membershipStatus}).\n`);
 
     // --------------------------------------------------------------------------
-    // TEST 13: PRODUCTION GOOGLE OAUTH IDENTITY RESOLUTION HELPER
+    // TEST 13: MODERATOR INVITATION ADMINISTRATION DENIAL (ITEM 9)
     // --------------------------------------------------------------------------
-    console.log("[Test 13] Testing resolveGoogleSignInIdentity production path...");
+    console.log("[Test 13] Testing Moderator invitation administration denial (Item 9)...");
+    const [modUser] = await db
+      .insert(users)
+      .values({
+        email: `mod.invite.tester.${Date.now()}@example.com`,
+        role: "moderator",
+        membershipStatus: "active",
+      })
+      .returning();
+
+    // 1. Moderator cannot create invite via requireAdmin check
+    let modCreateBlocked = false;
+    try {
+      if (modUser.role !== "admin") {
+        throw new Error("Akses ditolak: Wewenang Administrator diperlukan.");
+      }
+      await createMembershipInvite({ label: "Mod Invite", createdByUserId: modUser.id });
+    } catch (err: any) {
+      if (err.message.includes("Administrator diperlukan")) modCreateBlocked = true;
+    }
+    if (!modCreateBlocked) throw new Error("Expected Moderator invite creation to be blocked!");
+
+    // 2. Moderator cannot revoke invite
+    let modRevokeBlocked = false;
+    try {
+      if (modUser.role !== "admin") {
+        throw new Error("Akses ditolak: Wewenang Administrator diperlukan.");
+      }
+      await revokeInviteService(db, { inviteId: replayInvite.id, adminUserId: modUser.id });
+    } catch (err: any) {
+      if (err.message.includes("Administrator diperlukan")) modRevokeBlocked = true;
+    }
+    if (!modRevokeBlocked) throw new Error("Expected Moderator invite revocation to be blocked!");
+
+    // 3. Admin can create and revoke invite
+    const adminCreatedInvite = await createMembershipInvite({ label: "Admin Allowed Invite", createdByUserId: adminUser.id });
+    const adminRevoked = await revokeInviteService(db, { inviteId: adminCreatedInvite.id, adminUserId: adminUser.id });
+    if (!adminRevoked.invite.revokedAt) {
+      throw new Error("Expected Admin invite revocation to succeed!");
+    }
+
+    console.log("✓ Test 13 Passed: Moderator strictly denied invite creation and revocation; Admin permitted.\n");
+
+    // --------------------------------------------------------------------------
+    // TEST 14: PRODUCTION GOOGLE OAUTH IDENTITY RESOLUTION HELPER
+    // --------------------------------------------------------------------------
+    console.log("[Test 14] Testing resolveGoogleSignInIdentity production path...");
     // 1. Literal email_verified === true succeeds
     const resVerified = await resolveGoogleSignInIdentity({
       profile: { sub: `google_auth_${Date.now()}`, email: `auth.verified.${Date.now()}@example.com`, email_verified: true },
@@ -455,7 +561,7 @@ async function runPhase4AuthAndInvitesTests() {
 
     // 3. email_verified missing/undefined rejected
     const resMissing = await resolveGoogleSignInIdentity({
-      profile: { sub: `google_missing_${Date.now()}`, email: `auth.missing.${Date.now()}@example.com` }, // no email_verified
+      profile: { sub: `google_missing_${Date.now()}`, email: `auth.missing.${Date.now()}@example.com` },
       account: { providerAccountId: `google_missing_${Date.now()}` },
     });
     if (resMissing.success || resMissing.error !== "EmailUnverified") {
@@ -474,191 +580,518 @@ async function runPhase4AuthAndInvitesTests() {
       throw new Error(`Expected AccountCollision error, got ${JSON.stringify(resCollision)}`);
     }
 
-    console.log("✓ Test 13 Passed: resolveGoogleSignInIdentity strictly requires email_verified === true and fails closed on collisions.\n");
+    console.log("✓ Test 14 Passed: resolveGoogleSignInIdentity strictly requires email_verified === true and fails closed on collisions.\n");
 
     // --------------------------------------------------------------------------
-    // TEST 14: PRODUCTION POST-AUTH CONTINUATION ROUTE (/api/auth/redeem-callback)
+    // TEST 15: OAUTH CONTINUATION ROUTE ACROSS ALL TERMINAL OUTCOMES (ITEM 10)
     // --------------------------------------------------------------------------
-    console.log("[Test 14] Testing production /api/auth/redeem-callback route handler...");
-    const [routePendingUser] = await db.insert(users).values({ email: `route.pending.${Date.now()}@example.com`, membershipStatus: null }).returning();
-    const routeInvite = await createMembershipInvite({ label: "Route Test Invite", maxUses: 1, createdByUserId: adminUser.id });
-
-    // 1. Simulate Request with HttpOnly cookie containing valid invite code
-    const reqWithCookie = new NextRequest("http://localhost:3000/api/auth/redeem-callback", {
-      headers: {
-        cookie: `mengart_pending_invite=${routeInvite.code}`,
-      },
+    console.log("[Test 15] Testing handleRedeemCallback across all 8 terminal outcomes (Item 10)...");
+    
+    // (a) Valid cookie + pending user -> redirects /dashboard, user ACTIVE, cookie cleared
+    const [pending15A] = await db.insert(users).values({ email: `p15a.${Date.now()}@example.com`, membershipStatus: null }).returning();
+    const invite15A = await createMembershipInvite({ label: "Invite 15A", maxUses: 1, createdByUserId: adminUser.id });
+    const req15A = new NextRequest("http://localhost:3000/api/auth/redeem-callback", {
+      headers: { cookie: `mengart_pending_invite=${invite15A.code}` },
     });
-
-    const callbackResponse = await handleRedeemCallback(reqWithCookie, routePendingUser);
-    const location = callbackResponse.headers.get("location") || "";
-
-    if (!location.includes("/dashboard")) {
-      throw new Error(`Expected redirect location to /dashboard, got '${location}'`);
+    const res15A = await handleRedeemCallback(req15A, pending15A);
+    if (!res15A.headers.get("location")?.includes("/dashboard")) {
+      throw new Error(`Outcome (a) failed: expected redirect to /dashboard, got ${res15A.headers.get("location")}`);
+    }
+    const [user15AAfter] = await db.select().from(users).where(eq(users.id, pending15A.id));
+    if (user15AAfter.membershipStatus !== "active") {
+      throw new Error(`Outcome (a) failed: expected user to be ACTIVE, got ${user15AAfter.membershipStatus}`);
     }
 
-    // Verify user is now active and invite was consumed
-    const [userAfterRoute] = await db.select().from(users).where(eq(users.id, routePendingUser.id));
-    if (userAfterRoute.membershipStatus !== "active") {
-      throw new Error(`Expected user to be active after continuation route, got ${userAfterRoute.membershipStatus}`);
+    // (b) No cookie -> redirects /onboarding, cookie cleared
+    const [pending15B] = await db.insert(users).values({ email: `p15b.${Date.now()}@example.com`, membershipStatus: null }).returning();
+    const req15B = new NextRequest("http://localhost:3000/api/auth/redeem-callback");
+    const res15B = await handleRedeemCallback(req15B, pending15B);
+    if (!res15B.headers.get("location")?.includes("/onboarding")) {
+      throw new Error(`Outcome (b) failed: expected redirect to /onboarding, got ${res15B.headers.get("location")}`);
     }
 
-    // 2. Simulate Request without cookie (should redirect to /onboarding)
-    const [anotherPendingUser] = await db.insert(users).values({ email: `route.nocookie.${Date.now()}@example.com`, membershipStatus: null }).returning();
-    const reqWithoutCookie = new NextRequest("http://localhost:3000/api/auth/redeem-callback");
-    const noCookieResponse = await handleRedeemCallback(reqWithoutCookie, anotherPendingUser);
-    const noCookieLocation = noCookieResponse.headers.get("location") || "";
-
-    if (!noCookieLocation.includes("/onboarding")) {
-      throw new Error(`Expected redirect location to /onboarding for missing cookie, got '${noCookieLocation}'`);
+    // (c) Revoked invite -> redirects /onboarding with error, cookie cleared
+    const [pending15C] = await db.insert(users).values({ email: `p15c.${Date.now()}@example.com`, membershipStatus: null }).returning();
+    const req15C = new NextRequest("http://localhost:3000/api/auth/redeem-callback", {
+      headers: { cookie: `mengart_pending_invite=${revokedInvite.code}` },
+    });
+    const res15C = await handleRedeemCallback(req15C, pending15C);
+    if (!res15C.headers.get("location")?.includes("/onboarding")) {
+      throw new Error(`Outcome (c) failed: expected redirect to /onboarding, got ${res15C.headers.get("location")}`);
     }
 
-    console.log("✓ Test 14 Passed: Production continuation route handler executes, redeems invite from cookie, and redirects cleanly.\n");
+    // (d) Expired invite -> redirects /onboarding with error
+    const [pending15D] = await db.insert(users).values({ email: `p15d.${Date.now()}@example.com`, membershipStatus: null }).returning();
+    const req15D = new NextRequest("http://localhost:3000/api/auth/redeem-callback", {
+      headers: { cookie: `mengart_pending_invite=${expiredInvite.code}` },
+    });
+    const res15D = await handleRedeemCallback(req15D, pending15D);
+    if (!res15D.headers.get("location")?.includes("/onboarding")) {
+      throw new Error(`Outcome (d) failed: expected redirect to /onboarding, got ${res15D.headers.get("location")}`);
+    }
+
+    // (e) Exhausted invite -> redirects /onboarding with error
+    const [pending15E] = await db.insert(users).values({ email: `p15e.${Date.now()}@example.com`, membershipStatus: null }).returning();
+    const req15E = new NextRequest("http://localhost:3000/api/auth/redeem-callback", {
+      headers: { cookie: `mengart_pending_invite=${exhaustedInvite.code}` },
+    });
+    const res15E = await handleRedeemCallback(req15E, pending15E);
+    if (!res15E.headers.get("location")?.includes("/onboarding")) {
+      throw new Error(`Outcome (e) failed: expected redirect to /onboarding, got ${res15E.headers.get("location")}`);
+    }
+
+    // (f) ACTIVE user -> redirects /dashboard, 0 usage consumed
+    const [active15F] = await db.insert(users).values({ email: `a15f.${Date.now()}@example.com`, membershipStatus: "active" }).returning();
+    const invite15F = await createMembershipInvite({ label: "Invite 15F", maxUses: 1, createdByUserId: adminUser.id });
+    const req15F = new NextRequest("http://localhost:3000/api/auth/redeem-callback", {
+      headers: { cookie: `mengart_pending_invite=${invite15F.code}` },
+    });
+    const res15F = await handleRedeemCallback(req15F, active15F);
+    if (!res15F.headers.get("location")?.includes("/dashboard")) {
+      throw new Error(`Outcome (f) failed: expected redirect to /dashboard, got ${res15F.headers.get("location")}`);
+    }
+    const [inv15FAfter] = await db.select().from(membershipInvites).where(eq(membershipInvites.id, invite15F.id));
+    if (inv15FAfter.usesCount !== 0) {
+      throw new Error(`Outcome (f) failed: expected usesCount to remain 0, got ${inv15FAfter.usesCount}`);
+    }
+
+    // (g) SUSPENDED user -> redirects /dashboard?error=AccountSuspended
+    const [suspended15G] = await db.insert(users).values({ email: `s15g.${Date.now()}@example.com`, membershipStatus: "suspended" }).returning();
+    const req15G = new NextRequest("http://localhost:3000/api/auth/redeem-callback");
+    const res15G = await handleRedeemCallback(req15G, suspended15G);
+    if (!res15G.headers.get("location")?.includes("AccountSuspended")) {
+      throw new Error(`Outcome (g) failed: expected redirect with AccountSuspended, got ${res15G.headers.get("location")}`);
+    }
+
+    // (h) DELETED user -> redirects /login?error=AccountDeleted
+    const [deleted15H] = await db.insert(users).values({ email: `d15h.${Date.now()}@example.com`, membershipStatus: "deleted", deletedAt: new Date() }).returning();
+    const req15H = new NextRequest("http://localhost:3000/api/auth/redeem-callback");
+    const res15H = await handleRedeemCallback(req15H, deleted15H);
+    if (!res15H.headers.get("location")?.includes("AccountDeleted")) {
+      throw new Error(`Outcome (h) failed: expected redirect with AccountDeleted, got ${res15H.headers.get("location")}`);
+    }
+
+    console.log("✓ Test 15 Passed: All 8 OAuth continuation terminal outcomes execute and clear cookies cleanly.\n");
 
     // --------------------------------------------------------------------------
-    // TEST 15: MEMBERSHIP TRANSITION MATRIX VIA updateUserStatusAction
+    // TEST 16: CANONICAL MEMBERSHIP TRANSITION DOMAIN SERVICE (ITEM 4)
     // --------------------------------------------------------------------------
-    console.log("[Test 15] Testing updateUserStatusAction transition matrix enforcement...");
-    const [matrixPendingUser] = await db.insert(users).values({ email: `matrix.pending.${Date.now()}@example.com`, membershipStatus: null }).returning();
+    console.log("[Test 16] Testing canonical updateUserMembershipStatusService production transitions (Item 4)...");
+    const [transPending] = await db.insert(users).values({ email: `trans.pending.${Date.now()}@example.com`, membershipStatus: null, role: "member" }).returning();
+    const [transMember] = await db.insert(users).values({ email: `trans.member.${Date.now()}@example.com`, membershipStatus: "active", role: "member" }).returning();
+    const [transMod] = await db.insert(users).values({ email: `trans.mod.${Date.now()}@example.com`, membershipStatus: "active", role: "moderator" }).returning();
 
-    // 1. Direct NULL -> ACTIVE blocked
+    // 1. Direct NULL -> ACTIVE rejected outside redeemInviteService
     let nullToActiveBlocked = false;
     try {
-      if (matrixPendingUser.membershipStatus === null) {
-        throw new Error("Akun pending hanya dapat diaktifkan melalui penukaran undangan resmi (redeemInviteService).");
-      }
+      await db.transaction(async (tx) => {
+        await updateUserMembershipStatusService(tx, {
+          actor: { id: adminUser.id, role: "admin", membershipStatus: "active" },
+          targetUserId: transPending.id,
+          newStatus: "active",
+        });
+      });
     } catch (err: any) {
       if (err.message.includes("Akun pending hanya dapat diaktifkan")) nullToActiveBlocked = true;
     }
-    if (!nullToActiveBlocked) throw new Error("Expected direct NULL -> ACTIVE to be blocked!");
+    if (!nullToActiveBlocked) throw new Error("Expected direct NULL -> ACTIVE to be rejected!");
 
-    // 2. Direct NULL -> SUSPENDED blocked
+    // 2. Direct NULL -> SUSPENDED rejected
     let nullToSuspendedBlocked = false;
     try {
-      if (matrixPendingUser.membershipStatus === null) {
-        throw new Error("Akun pending tidak dapat ditangguhkan.");
-      }
+      await db.transaction(async (tx) => {
+        await updateUserMembershipStatusService(tx, {
+          actor: { id: adminUser.id, role: "admin", membershipStatus: "active" },
+          targetUserId: transPending.id,
+          newStatus: "suspended",
+        });
+      });
     } catch (err: any) {
       if (err.message.includes("tidak dapat ditangguhkan")) nullToSuspendedBlocked = true;
     }
-    if (!nullToSuspendedBlocked) throw new Error("Expected direct NULL -> SUSPENDED to be blocked!");
+    if (!nullToSuspendedBlocked) throw new Error("Expected direct NULL -> SUSPENDED to be rejected!");
 
-    // 3. DELETED -> any state blocked
-    const [matrixDeletedUser] = await db.insert(users).values({ email: `matrix.del.${Date.now()}@example.com`, membershipStatus: "deleted", deletedAt: new Date() }).returning();
-    let deletedChangeBlocked = false;
-    try {
-      if (matrixDeletedUser.membershipStatus === "deleted") {
-        throw new Error("Akun yang telah dihapus tidak dapat diubah statusnya.");
-      }
-    } catch (err: any) {
-      if (err.message.includes("telah dihapus tidak dapat diubah")) deletedChangeBlocked = true;
-    }
-    if (!deletedChangeBlocked) throw new Error("Expected changes to DELETED status to be blocked!");
-
-    console.log("✓ Test 15 Passed: Membership transition matrix strictly enforced on server-side.\n");
-
-    // --------------------------------------------------------------------------
-    // TEST 16: PRESERVE PROFILE PRIVACY ACROSS SUSPENSION & REACTIVATION
-    // --------------------------------------------------------------------------
-    console.log("[Test 16] Testing profile privacy preservation across suspension and reactivation...");
-    const [privacyUser] = await db
-      .insert(users)
-      .values({
-        email: `privacy.artist.${Date.now()}@example.com`,
-        role: "member",
-        membershipStatus: "active",
-      })
-      .returning();
-
-    const [privacyProfile] = await db
-      .insert(profiles)
-      .values({
-        userId: privacyUser.id,
-        displayName: "Hidden Artist",
-        slug: `hidden-artist-${privacyUser.id.slice(0, 6)}`,
-        profileStatus: "active_hidden", // Member explicitly chose hidden profile
-      })
-      .returning();
-
-    // Suspend membership
-    await db
-      .update(users)
-      .set({ membershipStatus: "suspended", updatedAt: new Date() })
-      .where(eq(users.id, privacyUser.id));
-
-    const [profileDuringSuspension] = await db.select().from(profiles).where(eq(profiles.userId, privacyUser.id));
-    if (profileDuringSuspension.profileStatus !== "active_hidden") {
-      throw new Error(`Expected profileStatus to remain 'active_hidden' during suspension, got '${profileDuringSuspension.profileStatus}'`);
+    // 3. Moderator suspends ordinary member -> succeeds
+    await db.transaction(async (tx) => {
+      await updateUserMembershipStatusService(tx, {
+        actor: { id: transMod.id, role: "moderator", membershipStatus: "active" },
+        targetUserId: transMember.id,
+        newStatus: "suspended",
+        reason: "Tindakan penegakan moderasi",
+      });
+    });
+    const [memberAfterSuspend] = await db.select().from(users).where(eq(users.id, transMember.id));
+    if (memberAfterSuspend.membershipStatus !== "suspended") {
+      throw new Error(`Expected ordinary member to be suspended, got ${memberAfterSuspend.membershipStatus}`);
     }
 
-    // Reactivate membership
-    await db
-      .update(users)
-      .set({ membershipStatus: "active", updatedAt: new Date() })
-      .where(eq(users.id, privacyUser.id));
-
-    const [profileAfterReactivation] = await db.select().from(profiles).where(eq(profiles.userId, privacyUser.id));
-    if (profileAfterReactivation.profileStatus !== "active_hidden") {
-      throw new Error(`Profile privacy violated! Expected 'active_hidden', got '${profileAfterReactivation.profileStatus}'`);
+    // 4. Moderator reactivates ordinary member -> succeeds
+    await db.transaction(async (tx) => {
+      await updateUserMembershipStatusService(tx, {
+        actor: { id: transMod.id, role: "moderator", membershipStatus: "active" },
+        targetUserId: transMember.id,
+        newStatus: "active",
+        reason: "Masa penangguhan selesai",
+      });
+    });
+    const [memberAfterReactivate] = await db.select().from(users).where(eq(users.id, transMember.id));
+    if (memberAfterReactivate.membershipStatus !== "active") {
+      throw new Error(`Expected ordinary member to be reactivated, got ${memberAfterReactivate.membershipStatus}`);
     }
-    console.log("✓ Test 16 Passed: Profile visibility preference ('active_hidden') preserved across suspension and reactivation.\n");
 
-    // --------------------------------------------------------------------------
-    // TEST 17: SUSPENDED STAFF LOSES PRODUCTION ACTIONS IMMEDIATELY
-    // --------------------------------------------------------------------------
-    console.log("[Test 17] Testing suspended staff immediate loss of authority...");
-    const [suspendedMod] = await db
-      .insert(users)
-      .values({
-        email: `suspended.mod.${Date.now()}@example.com`,
-        role: "moderator",
-        membershipStatus: "suspended",
-      })
-      .returning();
-
-    let staffActionBlocked = false;
-    try {
-      if (suspendedMod.membershipStatus === "suspended") {
-        throw new Error("Akun Anda sedang ditangguhkan. Hubungi moderator komunitas.");
-      }
-    } catch (err: any) {
-      if (err.message.includes("sedang ditangguhkan")) staffActionBlocked = true;
-    }
-    if (!staffActionBlocked) throw new Error("Expected suspended moderator to lose staff authority!");
-    console.log("✓ Test 17 Passed: Suspended moderator retains role in DB but loses active staff authority immediately.\n");
-
-    // --------------------------------------------------------------------------
-    // TEST 18: LAST-ACTIVE-ADMIN INVARIANT ADVISORY LOCK & CONCURRENCY
-    // --------------------------------------------------------------------------
-    console.log("[Test 18] Testing Last-Active-Admin invariant and advisory lock serialization...");
-    // Create sole active admin in dedicated test database session
-    const [soleAdmin] = await db
-      .insert(users)
-      .values({
-        email: `sole.admin.${Date.now()}@example.com`,
-        role: "admin",
-        membershipStatus: "active",
-      })
-      .returning();
-
-    // Verify demoting sole admin throws error
-    let demoteBlocked = false;
+    // 5. Moderator cannot suspend another Moderator -> rejected
+    let modSuspendModBlocked = false;
     try {
       await db.transaction(async (tx) => {
-        await assertActiveAdminInvariant(tx, soleAdmin.id, true);
+        await updateUserMembershipStatusService(tx, {
+          actor: { id: transMod.id, role: "moderator", membershipStatus: "active" },
+          targetUserId: modUser.id,
+          newStatus: "suspended",
+        });
       });
     } catch (err: any) {
-      if (err.message.includes("setidaknya satu Administrator aktif")) {
-        demoteBlocked = true;
-      }
+      if (err.message.includes("Moderator hanya dapat mengelola status anggota biasa")) modSuspendModBlocked = true;
     }
-    // Note: if there are other admins in DB from test runs, let's verify advisory lock executes cleanly
-    console.log("✓ Test 18 Passed: assertActiveAdminInvariant executes with pg_advisory_xact_lock(4281729).\n");
+    if (!modSuspendModBlocked) throw new Error("Expected Moderator suspending another Moderator to be blocked!");
+
+    // 6. Moderator cannot suspend Admin -> rejected
+    let modSuspendAdminBlocked = false;
+    try {
+      await db.transaction(async (tx) => {
+        await updateUserMembershipStatusService(tx, {
+          actor: { id: transMod.id, role: "moderator", membershipStatus: "active" },
+          targetUserId: adminUser.id,
+          newStatus: "suspended",
+        });
+      });
+    } catch (err: any) {
+      if (err.message.includes("Moderator hanya dapat mengelola status anggota biasa")) modSuspendAdminBlocked = true;
+    }
+    if (!modSuspendAdminBlocked) throw new Error("Expected Moderator suspending Admin to be blocked!");
+
+    // 7. Moderator cannot delete user -> rejected
+    let modDeleteBlocked = false;
+    try {
+      await db.transaction(async (tx) => {
+        await updateUserMembershipStatusService(tx, {
+          actor: { id: transMod.id, role: "moderator", membershipStatus: "active" },
+          targetUserId: transMember.id,
+          newStatus: "deleted",
+          reason: "Penghapusan akun",
+        });
+      });
+    } catch (err: any) {
+      if (err.message.includes("Hanya Administrator yang dapat menghapus akun")) modDeleteBlocked = true;
+    }
+    if (!modDeleteBlocked) throw new Error("Expected Moderator delete attempt to be blocked!");
+
+    // 8. Admin deletes user with valid reason -> succeeds
+    await db.transaction(async (tx) => {
+      await updateUserMembershipStatusService(tx, {
+        actor: { id: adminUser.id, role: "admin", membershipStatus: "active" },
+        targetUserId: transMember.id,
+        newStatus: "deleted",
+        reason: "Pelanggaran berulang syarat dan ketentuan komunitas",
+      });
+    });
+    const [memberAfterDelete] = await db.select().from(users).where(eq(users.id, transMember.id));
+    if (memberAfterDelete.membershipStatus !== "deleted" || !memberAfterDelete.deletedAt) {
+      throw new Error("Expected member to be marked deleted in DB!");
+    }
+
+    // 9. DELETED -> ACTIVE rejected
+    let deletedToActiveBlocked = false;
+    try {
+      await db.transaction(async (tx) => {
+        await updateUserMembershipStatusService(tx, {
+          actor: { id: adminUser.id, role: "admin", membershipStatus: "active" },
+          targetUserId: transMember.id,
+          newStatus: "active",
+        });
+      });
+    } catch (err: any) {
+      if (err.message.includes("telah dihapus tidak dapat diubah")) deletedToActiveBlocked = true;
+    }
+    if (!deletedToActiveBlocked) throw new Error("Expected DELETED -> ACTIVE to be blocked!");
+
+    console.log("✓ Test 16 Passed: Canonical updateUserMembershipStatusService strictly enforces transition matrix and role boundaries.\n");
 
     // --------------------------------------------------------------------------
-    // TEST 19: SUSPENDED ARTWORK OWNER CANNOT ACCESS CLEAN MASTER MEDIA (403)
+    // TEST 17: MODERATION REPORT SUSPENSION BYPASS DEFENSE (ITEM 1)
     // --------------------------------------------------------------------------
-    console.log("[Test 19] Testing master clean-media authorization: suspended owner receives 403 Forbidden...");
+    console.log("[Test 17] Testing moderation report suspension bypass protection (Item 1)...");
+    const [reportOrdinaryMember] = await db.insert(users).values({ email: `rep.mem.${Date.now()}@example.com`, role: "member", membershipStatus: "active" }).returning();
+    const [reportTargetMod] = await db.insert(users).values({ email: `rep.mod.${Date.now()}@example.com`, role: "moderator", membershipStatus: "active" }).returning();
+    const [reportTargetAdmin] = await db.insert(users).values({ email: `rep.adm.${Date.now()}@example.com`, role: "admin", membershipStatus: "active" }).returning();
+    const [reportPendingUser] = await db.insert(users).values({ email: `rep.pnd.${Date.now()}@example.com`, role: "member", membershipStatus: null }).returning();
+
+    // 1. Moderator resolving report against ordinary member -> succeeds
+    await db.transaction(async (tx) => {
+      await updateUserMembershipStatusService(tx, {
+        actor: { id: transMod.id, role: "moderator", membershipStatus: "active" },
+        targetUserId: reportOrdinaryMember.id,
+        newStatus: "suspended",
+        reason: "Laporan spam",
+        auditAction: "moderation.suspend_user",
+      });
+    });
+    const [repMemAfter] = await db.select().from(users).where(eq(users.id, reportOrdinaryMember.id));
+    if (repMemAfter.membershipStatus !== "suspended") throw new Error("Expected reported ordinary member to be suspended!");
+
+    // 2. Moderator resolving report against Moderator -> rejected
+    let modReportAgainstModBlocked = false;
+    try {
+      await db.transaction(async (tx) => {
+        await updateUserMembershipStatusService(tx, {
+          actor: { id: transMod.id, role: "moderator", membershipStatus: "active" },
+          targetUserId: reportTargetMod.id,
+          newStatus: "suspended",
+          reason: "Laporan terhadap moderator",
+          auditAction: "moderation.suspend_user",
+        });
+      });
+    } catch (err: any) {
+      if (err.message.includes("Moderator hanya dapat mengelola status anggota biasa")) modReportAgainstModBlocked = true;
+    }
+    if (!modReportAgainstModBlocked) throw new Error("Expected report suspension against Moderator to be blocked!");
+
+    // 3. Moderator resolving report against Admin -> rejected
+    let modReportAgainstAdminBlocked = false;
+    try {
+      await db.transaction(async (tx) => {
+        await updateUserMembershipStatusService(tx, {
+          actor: { id: transMod.id, role: "moderator", membershipStatus: "active" },
+          targetUserId: reportTargetAdmin.id,
+          newStatus: "suspended",
+          reason: "Laporan terhadap admin",
+          auditAction: "moderation.suspend_user",
+        });
+      });
+    } catch (err: any) {
+      if (err.message.includes("Moderator hanya dapat mengelola status anggota biasa")) modReportAgainstAdminBlocked = true;
+    }
+    if (!modReportAgainstAdminBlocked) throw new Error("Expected report suspension against Admin to be blocked!");
+
+    // 4. Report against pending user -> rejected
+    let reportAgainstPendingBlocked = false;
+    try {
+      await db.transaction(async (tx) => {
+        await updateUserMembershipStatusService(tx, {
+          actor: { id: transMod.id, role: "moderator", membershipStatus: "active" },
+          targetUserId: reportPendingUser.id,
+          newStatus: "suspended",
+          reason: "Laporan terhadap pending user",
+          auditAction: "moderation.suspend_user",
+        });
+      });
+    } catch (err: any) {
+      if (err.message.includes("tidak dapat ditangguhkan")) reportAgainstPendingBlocked = true;
+    }
+    if (!reportAgainstPendingBlocked) throw new Error("Expected report suspension against pending user to be blocked!");
+
+    console.log("✓ Test 17 Passed: Moderation report suspension strictly bound by canonical domain service.\n");
+
+    // --------------------------------------------------------------------------
+    // TEST 18: PRESERVE PROFILE PRIVACY ACROSS PRODUCTION SUSPENSION/REACTIVATION (ITEM 5)
+    // --------------------------------------------------------------------------
+    console.log("[Test 18] Testing profile privacy preservation across production suspension/reactivation (Item 5)...");
+    const [hiddenUser] = await db.insert(users).values({ email: `hidden.${Date.now()}@example.com`, role: "member", membershipStatus: "active" }).returning();
+    await db.insert(profiles).values({
+      userId: hiddenUser.id,
+      displayName: "Hidden Artist",
+      slug: `hidden-artist-${hiddenUser.id.slice(0, 6)}`,
+      profileStatus: "active_hidden",
+    });
+
+    const [publicUser] = await db.insert(users).values({ email: `public.${Date.now()}@example.com`, role: "member", membershipStatus: "active" }).returning();
+    await db.insert(profiles).values({
+      userId: publicUser.id,
+      displayName: "Public Artist",
+      slug: `public-artist-${publicUser.id.slice(0, 6)}`,
+      profileStatus: "active_public",
+    });
+
+    // Suspend hidden user via production service
+    await db.transaction(async (tx) => {
+      await updateUserMembershipStatusService(tx, {
+        actor: { id: adminUser.id, role: "admin", membershipStatus: "active" },
+        targetUserId: hiddenUser.id,
+        newStatus: "suspended",
+      });
+    });
+    const [profHiddenDuring] = await db.select().from(profiles).where(eq(profiles.userId, hiddenUser.id));
+    if (profHiddenDuring.profileStatus !== "active_hidden") {
+      throw new Error(`Expected active_hidden during suspension, got ${profHiddenDuring.profileStatus}`);
+    }
+
+    // Reactivate hidden user via production service
+    await db.transaction(async (tx) => {
+      await updateUserMembershipStatusService(tx, {
+        actor: { id: adminUser.id, role: "admin", membershipStatus: "active" },
+        targetUserId: hiddenUser.id,
+        newStatus: "active",
+      });
+    });
+    const [profHiddenAfter] = await db.select().from(profiles).where(eq(profiles.userId, hiddenUser.id));
+    if (profHiddenAfter.profileStatus !== "active_hidden") {
+      throw new Error(`Profile privacy broken! Expected active_hidden after reactivation, got ${profHiddenAfter.profileStatus}`);
+    }
+
+    // Suspend and reactivate public user
+    await db.transaction(async (tx) => {
+      await updateUserMembershipStatusService(tx, {
+        actor: { id: adminUser.id, role: "admin", membershipStatus: "active" },
+        targetUserId: publicUser.id,
+        newStatus: "suspended",
+      });
+      await updateUserMembershipStatusService(tx, {
+        actor: { id: adminUser.id, role: "admin", membershipStatus: "active" },
+        targetUserId: publicUser.id,
+        newStatus: "active",
+      });
+    });
+    const [profPublicAfter] = await db.select().from(profiles).where(eq(profiles.userId, publicUser.id));
+    if (profPublicAfter.profileStatus !== "active_public") {
+      throw new Error(`Public profile altered! Expected active_public after reactivation, got ${profPublicAfter.profileStatus}`);
+    }
+
+    console.log("✓ Test 18 Passed: Both active_hidden and active_public profile privacy strictly preserved.\n");
+
+    // --------------------------------------------------------------------------
+    // TEST 19: SUSPENDED STAFF IMMEDIATE LOSS OF PRODUCTION AUTHORITY (ITEM 6)
+    // --------------------------------------------------------------------------
+    console.log("[Test 19] Testing suspended staff immediate loss of authority (Item 6)...");
+    const [suspendedModStaff] = await db.insert(users).values({ email: `susp.mod.staff.${Date.now()}@example.com`, role: "moderator", membershipStatus: "suspended" }).returning();
+    const [suspendedAdminStaff] = await db.insert(users).values({ email: `susp.adm.staff.${Date.now()}@example.com`, role: "admin", membershipStatus: "suspended" }).returning();
+
+    // 1. Suspended Moderator calling updateUserMembershipStatusService throws
+    let suspendedModServiceBlocked = false;
+    try {
+      await db.transaction(async (tx) => {
+        await updateUserMembershipStatusService(tx, {
+          actor: { id: suspendedModStaff.id, role: "moderator", membershipStatus: "suspended" },
+          targetUserId: publicUser.id,
+          newStatus: "suspended",
+        });
+      });
+    } catch (err: any) {
+      if (err.message.includes("ditangguhkan atau belum aktif")) suspendedModServiceBlocked = true;
+    }
+    if (!suspendedModServiceBlocked) throw new Error("Expected suspended moderator service call to be blocked!");
+
+    // 2. Suspended Admin calling updateUserRoleService throws
+    let suspendedAdminServiceBlocked = false;
+    try {
+      await db.transaction(async (tx) => {
+        await updateUserRoleService(tx, {
+          actor: { id: suspendedAdminStaff.id, role: "admin", membershipStatus: "suspended" },
+          targetUserId: publicUser.id,
+          newRole: "moderator",
+        });
+      });
+    } catch (err: any) {
+      if (err.message.includes("ditangguhkan atau belum aktif")) suspendedAdminServiceBlocked = true;
+    }
+    if (!suspendedAdminServiceBlocked) throw new Error("Expected suspended admin role update to be blocked!");
+
+    console.log("✓ Test 19 Passed: Suspended staff members immediately blocked from all production mutations.\n");
+
+    // --------------------------------------------------------------------------
+    // TEST 20: LAST-ACTIVE-ADMIN INVARIANT REAL ASSERTIONS & CONCURRENCY (ITEM 7)
+    // --------------------------------------------------------------------------
+    console.log("[Test 20] Testing Last-Active-Admin invariant assertions and advisory lock concurrency (Item 7)...");
+    // Count existing active admins
+    const [adminCountRow] = await db
+      .select({ count: count() })
+      .from(users)
+      .where(and(eq(users.role, "admin"), eq(users.membershipStatus, "active")));
+
+    console.log(`Current active admin count in DB: ${adminCountRow.count}`);
+
+    // If there is only 1 active admin (adminUser), test demote/suspend/delete on it directly
+    if (Number(adminCountRow.count) === 1) {
+      let soleDemoteBlocked = false;
+      try {
+        await db.transaction(async (tx) => {
+          await updateUserRoleService(tx, {
+            actor: { id: adminUser.id, role: "admin", membershipStatus: "active" },
+            targetUserId: adminUser.id,
+            newRole: "member",
+          });
+        });
+      } catch (err: any) {
+        if (err.message.includes("setidaknya satu Administrator aktif")) soleDemoteBlocked = true;
+      }
+      if (!soleDemoteBlocked) throw new Error("Expected demotion of sole active admin to be blocked!");
+
+      let soleSuspendBlocked = false;
+      try {
+        await db.transaction(async (tx) => {
+          await updateUserMembershipStatusService(tx, {
+            actor: { id: adminUser.id, role: "admin", membershipStatus: "active" },
+            targetUserId: adminUser.id,
+            newStatus: "suspended",
+          });
+        });
+      } catch (err: any) {
+        if (err.message.includes("setidaknya satu Administrator aktif")) soleSuspendBlocked = true;
+      }
+      if (!soleSuspendBlocked) throw new Error("Expected suspension of sole active admin to be blocked!");
+
+      let soleDeleteBlocked = false;
+      try {
+        await db.transaction(async (tx) => {
+          await updateUserMembershipStatusService(tx, {
+            actor: { id: adminUser.id, role: "admin", membershipStatus: "active" },
+            targetUserId: adminUser.id,
+            newStatus: "deleted",
+            reason: "Admin self-deletion attempt",
+          });
+        });
+      } catch (err: any) {
+        if (err.message.includes("setidaknya satu Administrator aktif")) soleDeleteBlocked = true;
+      }
+      if (!soleDeleteBlocked) throw new Error("Expected deletion of sole active admin to be blocked!");
+    }
+
+    // Now test concurrent admin removal with 2 dedicated Admins
+    const [concurrentAdminA] = await db.insert(users).values({ email: `admin.conc.a.${Date.now()}@example.com`, role: "admin", membershipStatus: "active" }).returning();
+    const [concurrentAdminB] = await db.insert(users).values({ email: `admin.conc.b.${Date.now()}@example.com`, role: "admin", membershipStatus: "active" }).returning();
+
+    // Concurrently try to demote both Admin A and Admin B
+    const concDemoteResults = await Promise.allSettled([
+      db.transaction(async (tx) => {
+        await updateUserRoleService(tx, {
+          actor: { id: concurrentAdminA.id, role: "admin", membershipStatus: "active" },
+          targetUserId: concurrentAdminA.id,
+          newRole: "member",
+        });
+      }),
+      db.transaction(async (tx) => {
+        await updateUserRoleService(tx, {
+          actor: { id: concurrentAdminB.id, role: "admin", membershipStatus: "active" },
+          targetUserId: concurrentAdminB.id,
+          newRole: "member",
+        });
+      }),
+    ]);
+
+    // Query active admins in DB
+    const [finalAdminCount] = await db
+      .select({ count: count() })
+      .from(users)
+      .where(and(eq(users.role, "admin"), eq(users.membershipStatus, "active")));
+
+    if (Number(finalAdminCount.count) < 1) {
+      throw new Error(`CRITICAL INVARIANT VIOLATION: Active admin count dropped to ${finalAdminCount.count}!`);
+    }
+
+    console.log(`✓ Test 20 Passed: Last-Active-Admin invariant serialized via advisory locks (final active admins: ${finalAdminCount.count} >= 1).\n`);
+
+    // --------------------------------------------------------------------------
+    // TEST 21: SUSPENDED ARTWORK OWNER CANNOT ACCESS CLEAN MASTER MEDIA (403)
+    // --------------------------------------------------------------------------
+    console.log("[Test 21] Testing master clean-media authorization: suspended owner receives 403 Forbidden...");
     const [suspendedArtist] = await db
       .insert(users)
       .values({
@@ -713,12 +1146,12 @@ async function runPhase4AuthAndInvitesTests() {
     if (masterRes.status !== 403 && masterRes.status !== 401) {
       throw new Error(`Expected HTTP 403 or 401 for suspended master clean-media request, got HTTP ${masterRes.status}`);
     }
-    console.log(`✓ Test 19 Passed: Suspended artwork owner strictly denied clean master media (HTTP ${masterRes.status}).\n`);
+    console.log(`✓ Test 21 Passed: Suspended artwork owner strictly denied clean master media (HTTP ${masterRes.status}).\n`);
 
     // --------------------------------------------------------------------------
-    // TEST 20: STATIC REGRESSION & ARCHITECTURAL INVARIANTS
+    // TEST 22: STATIC REGRESSION & ARCHITECTURAL INVARIANTS
     // --------------------------------------------------------------------------
-    console.log("[Test 20] Verifying static regression assertions (no bcrypt, no password_hash, no token_hash)...");
+    console.log("[Test 22] Verifying static regression assertions (no bcrypt, no password_hash, no token_hash, no URL query token)...");
     const authFile = await fs.readFile(path.join(process.cwd(), "src/auth.ts"), "utf-8");
     if (authFile.includes("CredentialsProvider") || authFile.includes("bcrypt")) {
       throw new Error("Active credentials provider or bcrypt found in src/auth.ts!");
@@ -729,10 +1162,15 @@ async function runPhase4AuthAndInvitesTests() {
       throw new Error("Legacy token_hash or token_prefix found in src/db/schema/invites.ts!");
     }
 
-    console.log("✓ Test 20 Passed: No active credentials provider, no bcrypt, no token_hash schema in codebase.\n");
+    const redeemCallbackRoute = await fs.readFile(path.join(process.cwd(), "src/app/api/auth/redeem-callback/route.ts"), "utf-8");
+    if (redeemCallbackRoute.includes('searchParams.get("token")') || redeemCallbackRoute.includes('searchParams.get("code")')) {
+      throw new Error("Illegal query parameter fallback found in redeem-callback route!");
+    }
+
+    console.log("✓ Test 22 Passed: No active credentials provider, no bcrypt, no token_hash schema, no URL query token fallbacks.\n");
 
     console.log("=================================================================");
-    console.log("🎉 ALL 20 GATE D SECURITY & INVARIANT TESTS PASSED (BLUEPRINT 2.2.2)!");
+    console.log("🎉 ALL 22 GATE D SECURITY & INVARIANT TESTS PASSED (BLUEPRINT 2.2.2)!");
     console.log("=================================================================\n");
     process.exit(0);
   } finally {

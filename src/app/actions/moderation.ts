@@ -12,6 +12,7 @@ import {
 } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { updateUserMembershipStatusService } from "@/lib/services/userService";
 
 export async function createReportAction(formData: FormData) {
   const user = await requireAuth("/login");
@@ -76,21 +77,31 @@ export async function resolveReportAction(
         .where(eq(artworks.id, report.targetId));
     } else if (enforceAction === "suspend_user") {
       const targetUserId = report.targetId;
-      await tx
-        .update(users)
-        .set({ membershipStatus: "suspended", updatedAt: new Date() })
-        .where(eq(users.id, targetUserId));
+      await updateUserMembershipStatusService(tx, {
+        actor: {
+          id: user.id,
+          role: user.role,
+          membershipStatus: user.membershipStatus,
+        },
+        targetUserId,
+        newStatus: "suspended",
+        reason: `Penangguhan akun pengguna melalui penyelesaian laporan: ${resolutionNotes}`,
+        auditAction: "moderation.suspend_user",
+        auditMetadata: { reportId, reportReason: report.reason },
+      });
     }
 
-    // 3. Record in audit logs
-    await tx.insert(auditLogs).values({
-      actorId: user.id,
-      action: `moderation.report_${resolution}`,
-      targetType: report.targetType,
-      targetId: report.targetId,
-      reason: resolutionNotes,
-      metadata: { enforceAction, reportReason: report.reason },
-    });
+    // 3. Record in audit logs (for non-user-suspend actions, since updateUserMembershipStatusService writes user audit log)
+    if (enforceAction !== "suspend_user") {
+      await tx.insert(auditLogs).values({
+        actorId: user.id,
+        action: `moderation.report_${resolution}`,
+        targetType: report.targetType,
+        targetId: report.targetId,
+        reason: resolutionNotes,
+        metadata: { enforceAction, reportReason: report.reason },
+      });
+    }
   });
 
   revalidatePath("/admin/moderation");

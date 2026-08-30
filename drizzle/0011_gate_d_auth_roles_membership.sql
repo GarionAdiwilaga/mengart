@@ -57,7 +57,13 @@ CREATE INDEX IF NOT EXISTS "idx_users_membership_status" ON "users" ("membership
 
 -- 9. Direct Invite Code Schema (Blueprint 2.2.2)
 ALTER TABLE "membership_invites" ADD COLUMN IF NOT EXISTS "code" text;
-UPDATE "membership_invites" SET "code" = substr("token_hash", 1, 32) WHERE "code" IS NULL;
+-- Legacy hash-only records are unrecoverable; explicitly revoke them and assign migration surrogate code
+UPDATE "membership_invites" 
+SET 
+  "code" = 'legacy-revoked-' || substr("id"::text, 1, 8),
+  "revoked_at" = COALESCE("revoked_at", NOW()),
+  "revocation_reason" = COALESCE("revocation_reason", 'Migrated legacy hash-only token — replaced by Blueprint 2.2.2 direct code')
+WHERE "code" IS NULL;
 ALTER TABLE "membership_invites" ALTER COLUMN "code" SET NOT NULL;
 ALTER TABLE "membership_invites" DROP CONSTRAINT IF EXISTS "membership_invites_token_hash_unique";
 DROP INDEX IF EXISTS "idx_invites_token_hash";

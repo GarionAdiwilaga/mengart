@@ -1150,6 +1150,17 @@ async function runMigrationVerification() {
       INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
       VALUES (${legacyUser1.id}, 'reset_hash_1', NOW() + INTERVAL '2 hours');
     `;
+
+    // Seed legacy hash-only invite and redemption row
+    const [legacyInvite] = await upgradeClient0010`
+      INSERT INTO membership_invites (token_hash, token_prefix, label, max_uses, uses_count)
+      VALUES ('abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890', 'abcd', 'Legacy Token Invite', 1, 1)
+      RETURNING id;
+    `;
+    await upgradeClient0010`
+      INSERT INTO invite_redemptions (invite_id, user_id, ip_address)
+      VALUES (${legacyInvite.id}, ${legacyUser1.id}, '127.0.0.1');
+    `;
     console.log("✓ Pre-0011 legacy data seeded.");
 
     // Apply forward migration 0011
@@ -1297,6 +1308,36 @@ async function runMigrationVerification() {
       throw new Error("Expected uniq_membership_invites_code to reject duplicate invite code insertion.");
     }
     console.log("✓ Verified uniq_membership_invites_code unique index exists and rejects duplicate invite codes.");
+
+    // Assert 10: Legacy hash-only invite was migrated to revoked state with surrogate code and preserved redemption history
+    const [migratedLegacyInvite] = await upgradeClient0010`
+      SELECT id, code, revoked_at, revocation_reason, uses_count
+      FROM membership_invites
+      WHERE id = ${legacyInvite.id};
+    `;
+    if (!migratedLegacyInvite || !migratedLegacyInvite.revoked_at) {
+      throw new Error("Expected legacy hash-only invite to be explicitly revoked in migration 0011.");
+    }
+    if (!migratedLegacyInvite.code.startsWith("legacy-revoked-")) {
+      throw new Error(`Expected legacy invite code to be a non-secret surrogate starting with 'legacy-revoked-', got ${migratedLegacyInvite.code}`);
+    }
+    const [migratedRedemption] = await upgradeClient0010`
+      SELECT id, invite_id, user_id
+      FROM invite_redemptions
+      WHERE invite_id = ${legacyInvite.id};
+    `;
+    if (!migratedRedemption || migratedRedemption.user_id !== legacyUser1.id) {
+      throw new Error("Expected legacy redemption history to be preserved in migration 0011.");
+    }
+    const [activeLegacyBearer] = await upgradeClient0010`
+      SELECT count(*) AS cnt
+      FROM membership_invites
+      WHERE length(code) = 32 AND revoked_at IS NULL;
+    `;
+    if (Number(activeLegacyBearer.cnt) > 0) {
+      throw new Error("Found active 32-character legacy hash-derived bearer credentials after migration 0011!");
+    }
+    console.log("✓ Verified legacy hash-only invite is revoked with surrogate code, redemption history preserved, and no active hash-derived credentials exist.");
 
     await upgradeClient0010.end();
     console.log("🎉 SCENARIO 8B (0010 -> 0011 UPGRADE & GATE D SCHEMA VERIFICATION) PASSED!\n");
