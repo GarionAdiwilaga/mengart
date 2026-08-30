@@ -14,8 +14,9 @@ export interface ResolveReportParams {
  * Authoritative Canonical Domain Service for Report Resolution & Enforcement
  * 
  * Enforces active staff authorization (loaded inside transaction), serializes concurrent
- * report resolutions with FOR UPDATE, strictly requires pending status, and delegates user suspension
- * through updateUserMembershipStatusService, preserving role boundaries and invariants.
+ * report resolutions with FOR UPDATE, strictly requires pending status, validates that
+ * dismissed reports never apply enforcement actions, ensures strict targetType compatibility,
+ * and delegates user suspension through updateUserMembershipStatusService.
  */
 export async function resolveReportService(
   dbOrTx: any,
@@ -48,7 +49,27 @@ export async function resolveReportService(
       throw new Error("Laporan telah diproses sebelumnya.");
     }
 
-    // 3. Update report status
+    // 3. Validation Rule 1: A dismissed report must NEVER apply any enforcement action
+    if (resolution === "dismissed" && enforceAction !== undefined && enforceAction !== null) {
+      throw new Error(
+        "Tindakan penegakan sanksi tidak dapat diterapkan pada laporan yang diabaikan (dismissed)."
+      );
+    }
+
+    // 4. Validation Rule 2: Strict targetType compatibility for enforcement actions
+    if (enforceAction === "suspend_user" && report.targetType !== "user") {
+      throw new Error(
+        "Tindakan penangguhan pengguna (suspend_user) hanya dapat diterapkan pada laporan dengan target pengguna (user)."
+      );
+    }
+
+    if (enforceAction === "takedown_artwork" && report.targetType !== "artwork") {
+      throw new Error(
+        "Tindakan penurunan karya (takedown_artwork) hanya dapat diterapkan pada laporan dengan target karya (artwork)."
+      );
+    }
+
+    // 5. Update report status
     await tx
       .update(reports)
       .set({
@@ -59,13 +80,13 @@ export async function resolveReportService(
       })
       .where(eq(reports.id, reportId));
 
-    // 4. Perform enforcement actions
+    // 6. Perform enforcement actions
     if (enforceAction === "takedown_artwork" && report.targetType === "artwork") {
       await tx
         .update(artworks)
         .set({ publicationStatus: "hidden", updatedAt: new Date() })
         .where(eq(artworks.id, report.targetId));
-    } else if (enforceAction === "suspend_user") {
+    } else if (enforceAction === "suspend_user" && report.targetType === "user") {
       const targetUserId = report.targetId;
       await updateUserMembershipStatusService(tx, {
         actorUserId: actor.id,
@@ -77,7 +98,7 @@ export async function resolveReportService(
       });
     }
 
-    // 5. Record in audit logs (for non-user-suspend actions, since updateUserMembershipStatusService writes user audit log)
+    // 7. Record in audit logs (for non-user-suspend actions, since updateUserMembershipStatusService writes user audit log)
     if (enforceAction !== "suspend_user") {
       await tx.insert(auditLogs).values({
         actorId: actor.id,
@@ -85,7 +106,7 @@ export async function resolveReportService(
         targetType: report.targetType,
         targetId: report.targetId,
         reason: resolutionNotes,
-        metadata: { enforceAction, reportReason: report.reason },
+        metadata: { enforceAction: enforceAction || null, reportReason: report.reason },
       });
     }
 

@@ -906,15 +906,15 @@ async function runPhase4AuthAndInvitesTests() {
     console.log("✓ Test 16 Passed: Canonical updateUserMembershipStatusService strictly enforces transition matrix and role boundaries.\n");
 
     // --------------------------------------------------------------------------
-    // TEST 17: MODERATION REPORT ENFORCEMENT WIRING VIA resolveReportService (ITEM 4)
+    // TEST 17: MODERATION REPORT ENFORCEMENT WIRING, DISMISSAL & TARGET COMPATIBILITY (ITEMS 1, 2 & 3)
     // --------------------------------------------------------------------------
-    console.log("[Test 17] Testing production moderation enforcement wiring via resolveReportService (Item 4)...");
+    console.log("[Test 17] Testing production moderation enforcement wiring, dismissal invariants & target compatibility (Items 1, 2, 3)...");
     const [repTargetMember] = await db.insert(users).values({ email: `rep.mem.${Date.now()}@example.com`, role: "member", membershipStatus: "active" }).returning();
     const [repTargetMod] = await db.insert(users).values({ email: `rep.mod.${Date.now()}@example.com`, role: "moderator", membershipStatus: "active" }).returning();
     const [repTargetAdmin] = await db.insert(users).values({ email: `rep.adm.${Date.now()}@example.com`, role: "admin", membershipStatus: "active" }).returning();
     const [repTargetPending] = await db.insert(users).values({ email: `rep.pnd.${Date.now()}@example.com`, role: "member", membershipStatus: null }).returning();
 
-    // Create 4 reports
+    // Create 4 standard reports
     const [rep1] = await db.insert(reports).values({ reporterUserId: adminUser.id, targetType: "user", targetId: repTargetMember.id, reason: "harassment", status: "pending" }).returning();
     const [rep2] = await db.insert(reports).values({ reporterUserId: adminUser.id, targetType: "user", targetId: repTargetMod.id, reason: "other", status: "pending" }).returning();
     const [rep3] = await db.insert(reports).values({ reporterUserId: adminUser.id, targetType: "user", targetId: repTargetAdmin.id, reason: "other", status: "pending" }).returning();
@@ -979,7 +979,151 @@ async function runPhase4AuthAndInvitesTests() {
     }
     if (!reportAgainstPendingBlocked) throw new Error("Expected report suspension against pending user via resolveReportService to be blocked!");
 
-    // 5. Concurrency: Two simultaneous resolutions on the same pending report (Item 2)
+    // 5. Dismissal Invariant Tests: Dismissed reports must NEVER apply enforcement actions
+    const [dismissTargetUser] = await db.insert(users).values({ email: `dismiss.user.${Date.now()}@example.com`, role: "member", membershipStatus: "active" }).returning();
+    const [dismissRepUser] = await db.insert(reports).values({ reporterUserId: adminUser.id, targetType: "user", targetId: dismissTargetUser.id, reason: "harassment", status: "pending" }).returning();
+
+    const [dismissTargetArt] = await db.insert(artworks).values({ userId: dismissTargetUser.id, title: "Dismiss Target Art", slug: `dismiss-art-${Date.now()}`, mediaType: "image", publicationStatus: "published" }).returning();
+    const [dismissRepArt] = await db.insert(reports).values({ reporterUserId: adminUser.id, targetType: "artwork", targetId: dismissTargetArt.id, reason: "copyright_infringement", status: "pending" }).returning();
+
+    // (a) dismissed + suspend_user -> rejected, report remains pending, user unchanged
+    let dismissSuspendBlocked = false;
+    try {
+      await resolveReportService(db, {
+        actorUserId: transMod.id,
+        reportId: dismissRepUser.id,
+        resolution: "dismissed",
+        resolutionNotes: "Abaikan tapi coba suspend",
+        enforceAction: "suspend_user",
+      });
+    } catch (err: any) {
+      if (err.message.includes("tidak dapat diterapkan pada laporan yang diabaikan")) dismissSuspendBlocked = true;
+    }
+    if (!dismissSuspendBlocked) throw new Error("Expected dismissed + suspend_user to be rejected!");
+    const [repUserPendingAfter] = await db.select().from(reports).where(eq(reports.id, dismissRepUser.id));
+    const [userActiveAfter] = await db.select().from(users).where(eq(users.id, dismissTargetUser.id));
+    if (repUserPendingAfter.status !== "pending" || userActiveAfter.membershipStatus !== "active") {
+      throw new Error("Expected report to remain pending and user to remain active after rejected dismissal enforcement!");
+    }
+
+    // (b) dismissed + takedown_artwork -> rejected, report remains pending, artwork unchanged
+    let dismissTakedownBlocked = false;
+    try {
+      await resolveReportService(db, {
+        actorUserId: transMod.id,
+        reportId: dismissRepArt.id,
+        resolution: "dismissed",
+        resolutionNotes: "Abaikan tapi coba takedown",
+        enforceAction: "takedown_artwork",
+      });
+    } catch (err: any) {
+      if (err.message.includes("tidak dapat diterapkan pada laporan yang diabaikan")) dismissTakedownBlocked = true;
+    }
+    if (!dismissTakedownBlocked) throw new Error("Expected dismissed + takedown_artwork to be rejected!");
+    const [repArtPendingAfter] = await db.select().from(reports).where(eq(reports.id, dismissRepArt.id));
+    const [artPublishedAfter] = await db.select().from(artworks).where(eq(artworks.id, dismissTargetArt.id));
+    if (repArtPendingAfter.status !== "pending" || artPublishedAfter.publicationStatus !== "published") {
+      throw new Error("Expected report to remain pending and artwork to remain published after rejected dismissal enforcement!");
+    }
+
+    // (c) dismissed + no enforcement -> succeeds, report dismissed, target user unchanged
+    const dismissCleanRes = await resolveReportService(db, {
+      actorUserId: transMod.id,
+      reportId: dismissRepUser.id,
+      resolution: "dismissed",
+      resolutionNotes: "Laporan diabaikan setelah evaluasi",
+    });
+    if (!dismissCleanRes.success) throw new Error("Expected clean dismissal to succeed!");
+    const [repUserDismissed] = await db.select().from(reports).where(eq(reports.id, dismissRepUser.id));
+    const [userStillActive] = await db.select().from(users).where(eq(users.id, dismissTargetUser.id));
+    if (repUserDismissed.status !== "dismissed" || userStillActive.membershipStatus !== "active") {
+      throw new Error("Expected report to be dismissed and user to remain active!");
+    }
+
+    // 6. Target Compatibility Tests
+    const [compatUser] = await db.insert(users).values({ email: `compat.user.${Date.now()}@example.com`, role: "member", membershipStatus: "active" }).returning();
+    const [compatArt] = await db.insert(artworks).values({ userId: compatUser.id, title: "Compat Art", slug: `compat-art-${Date.now()}`, mediaType: "image", publicationStatus: "published" }).returning();
+
+    const [repOnArt] = await db.insert(reports).values({ reporterUserId: adminUser.id, targetType: "artwork", targetId: compatArt.id, reason: "copyright_infringement", status: "pending" }).returning();
+    const [repOnComment] = await db.insert(reports).values({ reporterUserId: adminUser.id, targetType: "comment", targetId: "fake-comment-id", reason: "harassment", status: "pending" }).returning();
+    const [repOnSubmission] = await db.insert(reports).values({ reporterUserId: adminUser.id, targetType: "challenge_submission", targetId: "fake-sub-id", reason: "ai_generated", status: "pending" }).returning();
+    const [repOnUserForTakedown] = await db.insert(reports).values({ reporterUserId: adminUser.id, targetType: "user", targetId: compatUser.id, reason: "harassment", status: "pending" }).returning();
+
+    // (a) resolved + suspend_user + artwork target -> rejected
+    let suspendArtBlocked = false;
+    try {
+      await resolveReportService(db, {
+        actorUserId: transMod.id,
+        reportId: repOnArt.id,
+        resolution: "resolved",
+        resolutionNotes: "Suspend user on artwork report",
+        enforceAction: "suspend_user",
+      });
+    } catch (err: any) {
+      if (err.message.includes("hanya dapat diterapkan pada laporan dengan target pengguna")) suspendArtBlocked = true;
+    }
+    if (!suspendArtBlocked) throw new Error("Expected suspend_user on artwork target report to be rejected!");
+
+    // (b) resolved + suspend_user + comment target -> rejected
+    let suspendCommentBlocked = false;
+    try {
+      await resolveReportService(db, {
+        actorUserId: transMod.id,
+        reportId: repOnComment.id,
+        resolution: "resolved",
+        resolutionNotes: "Suspend user on comment report",
+        enforceAction: "suspend_user",
+      });
+    } catch (err: any) {
+      if (err.message.includes("hanya dapat diterapkan pada laporan dengan target pengguna")) suspendCommentBlocked = true;
+    }
+    if (!suspendCommentBlocked) throw new Error("Expected suspend_user on comment target report to be rejected!");
+
+    // (c) resolved + suspend_user + challenge_submission target -> rejected
+    let suspendSubmissionBlocked = false;
+    try {
+      await resolveReportService(db, {
+        actorUserId: transMod.id,
+        reportId: repOnSubmission.id,
+        resolution: "resolved",
+        resolutionNotes: "Suspend user on submission report",
+        enforceAction: "suspend_user",
+      });
+    } catch (err: any) {
+      if (err.message.includes("hanya dapat diterapkan pada laporan dengan target pengguna")) suspendSubmissionBlocked = true;
+    }
+    if (!suspendSubmissionBlocked) throw new Error("Expected suspend_user on challenge_submission target report to be rejected!");
+
+    // (d) resolved + takedown_artwork + non-artwork target (user) -> rejected
+    let takedownUserBlocked = false;
+    try {
+      await resolveReportService(db, {
+        actorUserId: transMod.id,
+        reportId: repOnUserForTakedown.id,
+        resolution: "resolved",
+        resolutionNotes: "Takedown artwork on user report",
+        enforceAction: "takedown_artwork",
+      });
+    } catch (err: any) {
+      if (err.message.includes("hanya dapat diterapkan pada laporan dengan target karya")) takedownUserBlocked = true;
+    }
+    if (!takedownUserBlocked) throw new Error("Expected takedown_artwork on user target report to be rejected!");
+
+    // (e) resolved + takedown_artwork + artwork target -> allowed
+    const takedownArtRes = await resolveReportService(db, {
+      actorUserId: transMod.id,
+      reportId: repOnArt.id,
+      resolution: "resolved",
+      resolutionNotes: "Pelanggaran hak cipta diverifikasi",
+      enforceAction: "takedown_artwork",
+    });
+    if (!takedownArtRes.success) throw new Error("Expected takedown_artwork on artwork target report to succeed!");
+    const [artHiddenAfter] = await db.select().from(artworks).where(eq(artworks.id, compatArt.id));
+    if (artHiddenAfter.publicationStatus !== "hidden") {
+      throw new Error(`Expected artwork publicationStatus to be 'hidden', got ${artHiddenAfter.publicationStatus}`);
+    }
+
+    // 7. Concurrency: Two simultaneous resolutions on the same pending report (Item 2)
     const [repTargetConc] = await db.insert(users).values({ email: `rep.conc.${Date.now()}@example.com`, role: "member", membershipStatus: "active" }).returning();
     const [repConc] = await db.insert(reports).values({ reporterUserId: adminUser.id, targetType: "user", targetId: repTargetConc.id, reason: "harassment", status: "pending" }).returning();
 
@@ -1024,7 +1168,7 @@ async function runPhase4AuthAndInvitesTests() {
       }
     }
 
-    console.log(`✓ Test 17 Passed: resolveReportService strictly serializes report resolutions with FOR UPDATE and eliminates resolution race conditions.\n`);
+    console.log(`✓ Test 17 Passed: resolveReportService strictly serializes report resolutions, rejects enforcement on dismissal, and validates targetType compatibility.\n`);
 
     // --------------------------------------------------------------------------
     // TEST 18: PRESERVE PROFILE PRIVACY ACROSS PRODUCTION SUSPENSION/REACTIVATION (ITEM 5)
