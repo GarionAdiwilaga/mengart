@@ -34,7 +34,6 @@ export function CreateInviteModal() {
     try {
       const res = await createInviteAction({
         label: label.trim() || undefined,
-        customCode: customCode.trim() || undefined,
         expiryPreset,
         maxUses: maxUses === "unlimited" ? null : Number(maxUses),
       });
@@ -170,28 +169,13 @@ export function CreateInviteModal() {
                   type="text"
                   value={label}
                   onChange={(e) => setLabel(e.target.value)}
-                  placeholder="contoh: Komunitas Discord Batch #2, VIP Artist"
+                  placeholder="contoh: Komunitas Discord Batch #2, Bali Art Summit 2026"
                   maxLength={100}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/50 text-sm font-sans"
                 />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between">
-                  <label htmlFor="invite-custom-code" className="text-xs font-mono text-zinc-300">
-                    KODE KUSTOM / VANITY (OPSIONAL)
-                  </label>
-                  <span className="text-[10px] font-mono text-zinc-500">contoh: komorebi, vip-atelier</span>
-                </div>
-                <input
-                  id="invite-custom-code"
-                  type="text"
-                  value={customCode}
-                  onChange={(e) => setCustomCode(e.target.value)}
-                  placeholder="Kosongkan untuk kode acak 8 karakter (contoh: a7K9xQ2v)"
-                  maxLength={32}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/50 text-sm font-mono"
-                />
+                <p className="text-[11px] text-zinc-500 font-sans">
+                  Setiap undangan akan dibuat dengan kode acak berentropi tinggi untuk menjamin keamanan.
+                </p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">

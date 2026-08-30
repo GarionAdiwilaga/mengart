@@ -1,18 +1,15 @@
 import NextAuth, { type DefaultSession } from "next-auth";
 import Google from "next-auth/providers/google";
-import Credentials from "next-auth/providers/credentials";
-import bcrypt from "bcryptjs";
 import { db } from "@/db";
 import { users, profiles } from "@/db/schema";
 import { eq, or } from "drizzle-orm";
-import { checkRateLimit } from "@/lib/rateLimit";
 
 declare module "next-auth" {
   interface Session {
     user: {
       id: string;
       role: "member" | "moderator" | "admin";
-      membershipStatus: "active" | "suspended" | "revoked";
+      membershipStatus: "active" | "suspended" | "deleted" | null;
       profileId?: string;
       profileSlug?: string;
       profileStatus?: string;
@@ -22,7 +19,7 @@ declare module "next-auth" {
   interface User {
     id?: string;
     role?: "member" | "moderator" | "admin";
-    membershipStatus?: "active" | "suspended" | "revoked";
+    membershipStatus?: "active" | "suspended" | "deleted" | null;
     profileId?: string;
     profileSlug?: string;
     profileStatus?: string;
@@ -34,72 +31,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID || "",
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
-      allowDangerousEmailAccountLinking: true,
-    }),
-    Credentials({
-      name: "Email & Password",
-      credentials: {
-        identifier: { label: "Email atau Username", type: "text" },
-        password: { label: "Password", type: "password" },
-      },
-      async authorize(credentials) {
-        if (!credentials?.identifier || !credentials?.password) {
-          return null;
-        }
-
-        const identifier = String(credentials.identifier).trim().toLowerCase();
-        const password = String(credentials.password);
-
-        // Enforce rate limiting on credentials authentication
-        const rl = await checkRateLimit(`auth_credentials:${identifier}`, {
-          limit: 5,
-          windowSeconds: 60,
-        });
-        if (!rl.success) {
-          throw new Error("RateLimited");
-        }
-
-        // Find user by email or username
-        const [dbUser] = await db
-          .select({
-            id: users.id,
-            email: users.email,
-            passwordHash: users.passwordHash,
-            emailVerified: users.emailVerified,
-            role: users.role,
-            membershipStatus: users.membershipStatus,
-          })
-          .from(users)
-          .where(or(eq(users.email, identifier), eq(users.username, identifier)))
-          .limit(1);
-
-        if (!dbUser || !dbUser.passwordHash) {
-          return null;
-        }
-
-        // Verify password hash
-        const isMatch = await bcrypt.compare(password, dbUser.passwordHash);
-        if (!isMatch) {
-          return null;
-        }
-
-        // Verify email status
-        if (!dbUser.emailVerified) {
-          throw new Error("EmailNotVerified");
-        }
-
-        // Verify active membership status
-        if (dbUser.membershipStatus !== "active") {
-          throw new Error(`Account${dbUser.membershipStatus}`);
-        }
-
-        return {
-          id: dbUser.id,
-          email: dbUser.email,
-          role: dbUser.role,
-          membershipStatus: dbUser.membershipStatus,
-        };
-      },
     }),
   ],
   session: {
@@ -111,57 +42,93 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   },
   callbacks: {
     async signIn({ user, account, profile }) {
-      if (account?.provider === "credentials") {
+      if (account?.provider === "google") {
+        // Enforce verified email from Google OAuth profile
+        if (profile && (profile as any).email_verified === false) {
+          return "/login?error=EmailUnverified";
+        }
+
+        const rawEmail = user.email || (profile?.email as string) || "";
+        if (!rawEmail) return "/login?error=EmailRequired";
+        const normalizedEmail = rawEmail.trim().toLowerCase();
+        const googleId = account.providerAccountId || (profile?.sub as string);
+
+        // 1. Lookup by google_id
+        let userByGoogleId = null;
+        if (googleId) {
+          const [found] = await db
+            .select()
+            .from(users)
+            .where(eq(users.googleId, googleId))
+            .limit(1);
+          userByGoogleId = found || null;
+        }
+
+        // 2. Lookup by normalized email
+        const [userByEmail] = await db
+          .select()
+          .from(users)
+          .where(eq(users.email, normalizedEmail))
+          .limit(1);
+
+        // 3. Collision check: if google_id and email resolve to different accounts
+        if (userByGoogleId && userByEmail && userByGoogleId.id !== userByEmail.id) {
+          return "/login?error=AccountCollision";
+        }
+
+        if (userByGoogleId) {
+          // Verify email matches or reject collision
+          if (userByGoogleId.email.toLowerCase() !== normalizedEmail) {
+            return "/login?error=AccountCollision";
+          }
+          if (userByGoogleId.membershipStatus === "deleted" || userByGoogleId.deletedAt) {
+            return "/login?error=AccountDeleted";
+          }
+          // Account recognized
+          return true;
+        }
+
+        if (userByEmail) {
+          // If existing account has a different non-null google_id -> reject
+          if (userByEmail.googleId && userByEmail.googleId !== googleId) {
+            return "/login?error=AccountCollision";
+          }
+          if (userByEmail.membershipStatus === "deleted" || userByEmail.deletedAt) {
+            return "/login?error=AccountDeleted";
+          }
+          // Legacy account with null google_id: bind verified google_id
+          if (!userByEmail.googleId && googleId) {
+            await db
+              .update(users)
+              .set({
+                googleId,
+                emailVerified: userByEmail.emailVerified || new Date(),
+                updatedAt: new Date(),
+              })
+              .where(eq(users.id, userByEmail.id));
+          }
+          return true;
+        }
+
+        // 4. New visitor: create onboarding account with membership_status = NULL (PENDING_INVITE)
+        await db.insert(users).values({
+          email: normalizedEmail,
+          googleId: googleId || null,
+          emailVerified: new Date(),
+          role: "member",
+          membershipStatus: null,
+        });
+
         return true;
       }
 
-      if (!user.email) return false;
-
-      // Check if user already exists in database
-      const [existingUser] = await db
-        .select()
-        .from(users)
-        .where(
-          or(
-            eq(users.email, user.email.toLowerCase()),
-            account?.providerAccountId
-              ? eq(users.googleId, account.providerAccountId)
-              : undefined
-          )
-        )
-        .limit(1);
-
-      if (!existingUser) {
-        // First time visitor without invite redemption is disallowed on direct login
-        return "/login?error=InviteRequired";
-      }
-
-      // Check if user is suspended or revoked
-      if (existingUser.membershipStatus !== "active") {
-        return `/login?error=Account${existingUser.membershipStatus}`;
-      }
-
-      // Account Merging: Link Google ID and mark verified if logging in with Google
-      if (account?.provider === "google") {
-        const updates: { googleId?: string; emailVerified?: Date } = {};
-        if (account.providerAccountId && !existingUser.googleId) {
-          updates.googleId = account.providerAccountId;
-        }
-        if (!existingUser.emailVerified) {
-          updates.emailVerified = new Date();
-        }
-
-        if (Object.keys(updates).length > 0) {
-          await db.update(users).set(updates).where(eq(users.id, existingUser.id));
-        }
-      }
-
-      return true;
+      return false;
     },
 
     async jwt({ token, user, account, trigger, session }) {
       if (token.email) {
-        // Fetch current user and profile data
+        const normalizedEmail = token.email.trim().toLowerCase();
+        // Fetch current user and profile data from DB
         const [dbUser] = await db
           .select({
             id: users.id,
@@ -173,13 +140,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           })
           .from(users)
           .leftJoin(profiles, eq(profiles.userId, users.id))
-          .where(eq(users.email, token.email.toLowerCase()))
+          .where(eq(users.email, normalizedEmail))
           .limit(1);
 
         if (dbUser) {
           token.userId = dbUser.id;
           token.role = dbUser.role;
-          token.membershipStatus = dbUser.membershipStatus;
+          token.membershipStatus = dbUser.membershipStatus ?? null;
           token.profileId = dbUser.profileId;
           token.profileSlug = dbUser.profileSlug;
           token.profileStatus = dbUser.profileStatus;
@@ -194,7 +161,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         session.user.id = token.userId as string;
         session.user.role = (token.role as "member" | "moderator" | "admin") || "member";
         session.user.membershipStatus =
-          (token.membershipStatus as "active" | "suspended" | "revoked") || "active";
+          (token.membershipStatus as "active" | "suspended" | "deleted" | null) ?? null;
         session.user.profileId = token.profileId as string | undefined;
         session.user.profileSlug = token.profileSlug as string | undefined;
         session.user.profileStatus = token.profileStatus as string | undefined;

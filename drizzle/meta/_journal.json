@@ -78,6 +78,13 @@
       "when": 1788050000000,
       "tag": "0010_simplified_jury_awards_and_recorder",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788100000000,
+      "tag": "0011_gate_d_auth_roles_membership",
+      "breakpoints": true
     }
   ]
 }

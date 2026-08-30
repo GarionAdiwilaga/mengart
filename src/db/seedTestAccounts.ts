@@ -1,13 +1,12 @@
 import { db } from "@/db";
 import { users, profiles } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import bcrypt from "bcryptjs";
 
 const TEST_ACCOUNTS = [
   {
     email: "admin@mengart.local",
     username: "admin_atelier",
-    password: "Password123!",
+    googleId: "google_admin",
     role: "admin" as const,
     displayName: "Admin Atelier",
     slug: "admin-atelier",
@@ -18,7 +17,7 @@ const TEST_ACCOUNTS = [
   {
     email: "moderator@mengart.local",
     username: "mod_atelier",
-    password: "Password123!",
+    googleId: "google_moderator",
     role: "moderator" as const,
     displayName: "Komorebi Moderator",
     slug: "komorebi-mod",
@@ -29,7 +28,7 @@ const TEST_ACCOUNTS = [
   {
     email: "member@mengart.local",
     username: "member_artist",
-    password: "Password123!",
+    googleId: "google_member",
     role: "member" as const,
     displayName: "Luna Valerius (Artist)",
     slug: "luna-valerius",
@@ -40,18 +39,15 @@ const TEST_ACCOUNTS = [
 ];
 
 async function seedTestAccounts() {
-  console.log("--- Seeding Test Accounts for All Roles ---");
-  const salt = await bcrypt.genSalt(10);
+  console.log("--- Seeding Test Accounts for All Roles (Google OAuth / Gate D) ---");
   const now = new Date();
 
   for (const acc of TEST_ACCOUNTS) {
-    const passwordHash = await bcrypt.hash(acc.password, salt);
-
     // 1. Upsert User
     const [existingUser] = await db
       .select()
       .from(users)
-      .where(eq(users.email, acc.email))
+      .where(eq(users.email, acc.email.toLowerCase()))
       .limit(1);
 
     let userId: string;
@@ -62,7 +58,7 @@ async function seedTestAccounts() {
         .update(users)
         .set({
           username: acc.username,
-          passwordHash,
+          googleId: acc.googleId,
           role: acc.role,
           emailVerified: now,
           membershipStatus: "active",
@@ -75,9 +71,9 @@ async function seedTestAccounts() {
       const [newUser] = await db
         .insert(users)
         .values({
-          email: acc.email,
+          email: acc.email.toLowerCase(),
           username: acc.username,
-          passwordHash,
+          googleId: acc.googleId,
           role: acc.role,
           emailVerified: now,
           membershipStatus: "active",
@@ -98,10 +94,10 @@ async function seedTestAccounts() {
         .update(profiles)
         .set({
           displayName: acc.displayName,
+          slug: acc.slug,
           bio: acc.bio,
           specialties: acc.specialties,
           software: acc.software,
-          commissionStatus: "open",
           profileStatus: "active_public",
           updatedAt: now,
         })
@@ -109,24 +105,22 @@ async function seedTestAccounts() {
     } else {
       await db.insert(profiles).values({
         userId,
-        slug: acc.slug,
         displayName: acc.displayName,
+        slug: acc.slug,
         bio: acc.bio,
         specialties: acc.specialties,
         software: acc.software,
-        commissionStatus: "open",
         profileStatus: "active_public",
       });
     }
-
-    console.log(`✓ Account Ready: [${acc.role.toUpperCase()}] ${acc.email} / ${acc.username}`);
   }
 
-  console.log("\n--- All Test Accounts Seeded Successfully! ---");
-  process.exit(0);
+  console.log("--- Seeding Completed Successfully ---");
 }
 
-seedTestAccounts().catch((err) => {
-  console.error("❌ Seeding failed:", err);
-  process.exit(1);
-});
+seedTestAccounts()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error("Seeding failed:", err);
+    process.exit(1);
+  });

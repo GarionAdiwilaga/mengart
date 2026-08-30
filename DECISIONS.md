@@ -305,22 +305,19 @@
 10. **4 Production-Path Concurrency Tests:** Added multi-transaction test coverage for: (1) simultaneous Recorder reassignment, (2) Jury Award write vs publication race, (3) publication vs result revocation race, and (4) result correction vs republish race.
 11. **Expanded Migration Scenario 7:** Verified `ON DELETE SET NULL` on recorder deletion, partial unique index `uniq_challenge_result_jury_award` duplicate rejection, and multiple distinct Jury Awards for the same artwork.
 **Business Rule:** Panel readiness is required before publication. Main round stars are isolated from tiebreak rounds. Cancellation is restricted to zero-award states.
-### Blueprint 2.2.1 Gate C / Phase 3: Jury Panel Management, Governance Winner Correction, and Results Story Card Decoupling
-**Decision:** Implemented 3 final focused corrections for Gate C / Phase 3:
-1. **Jury Panel Management Services & UI (`addJuryAssignmentService`, `removeJuryAssignmentService`):**
-   - Added production services for Admins and Moderators to manage challenge jury assignments (`challenge_jury_assignments`).
-   - `addJuryAssignmentService` locks challenge parent row `FOR UPDATE`, validates target user exists with active membership, prevents duplicate `(challenge_id, user_id)` assignment, inserts displayed juror with `is_recorder = false`, and records audit `jury.add_member`.
-   - `removeJuryAssignmentService` prevents removing an active Recorder during `JURY_SELECTION_OPEN` without prior replacement, deletes the assignment, and records audit `jury.remove_member`.
-   - In `JuryAwardWorkspace.tsx`, added panel management controls (Add Juror from available active members, Remove Juror, Set Recorder) and actionable recovery banner for challenges with zero jurors.
-2. **Community Winner Governance Correction Hardening & UI:**
-   - Enforced backend mode guard in `correctCommunityWinnerService`: only `vote_only` and `vote_and_jury` modes permit Community Winner correction; `jury_only` and `showcase_only` are strictly rejected.
-   - Enforced mixed-mode duplicate exclusion on replacement: in `vote_and_jury`, proposed replacements already holding a Jury Award are rejected with clear error guidance.
-   - Exposed Replace and Clear Community Winner forms in `JuryAwardWorkspace.tsx` exclusively to Admins and Moderators during `RESULTS_REVOKED` (hidden from former Recorder unless staff).
-3. **Decoupled Legacy Story Card from Results Page:**
-   - Removed `StoryCardGenerator` entry point and legacy podium generator from `/challenges/[slug]/results` to prevent synthetic numeric ranks (`rank: idx + 1`, `JUARA 2`, `JUARA 3`) from being assigned to unranked Jury Awards.
-   - Results page renders strictly at most 1 optional Community Vote Winner and zero or more unranked Jury Awards.
-   - Added static/unit assertion in test suite ensuring all materialized `jury_award` rows in `challenge_results` have `finalRank === null`.
-**Business Rule:** Zero-juror challenges must be recoverable via UI. Community winner corrections are mode-guarded and staff-only. Jury awards are strictly unranked.
 **Reason:** Addressed independent QA review findings for Gate C / Phase 3 final focused corrections.
+
+### Blueprint 2.2.1 Gate D: Authentication, Invitations, Membership & Roles
+**Decision:** Implemented the authoritative authentication, invitation-gated onboarding, membership transition matrix, and RBAC architecture under Blueprint 2.2.1:
+1. **Google-Only OAuth Authentication:** Migrated NextAuth configuration in `src/auth.ts` to exclusive Google OAuth 2.0. Completely eliminated active email/password credential providers, bcrypt password hashing, and SMTP email verification / password reset workflows. Dropped `password_hash` column and legacy token tables (`email_verification_tokens`, `password_reset_tokens`) without cascade.
+2. **PENDING_INVITE Separation from Persistent Membership:** Persistent membership status in PostgreSQL enum `membership_status` is strictly `active | suspended | deleted` (3 values, with `revoked` eliminated). The column is nullable with NO default constraint. `membership_status IS NULL` represents an authenticated Google account in onboarding awaiting invitation redemption (`PENDING_INVITE` derived state).
+3. **High-Entropy Cryptographic Invitations & Admin-Only Management:** Invitations use $\ge 16$-byte Base58 tokens ($>100$ bits entropy, e.g. `M9qZb4Rt8vWxK2pYn5sD6fGh`) stored as SHA-256 hashes (`token_hash`) with a 4-character plaintext prefix (`token_prefix`) for identification. Creation and revocation are strictly restricted to `requireAdmin()`.
+4. **Deterministic Two-Phase Locking Redemption:** `redeemInviteService` acquires row-level locks deterministically: `users` FOR UPDATE by `user.id` first, followed by `membership_invites` FOR UPDATE by `token_hash`. Enforces the membership transition matrix: `NULL -> ACTIVE` only (invite consumed, redemption logged); `ACTIVE -> ACTIVE` idempotent pass-through (zero usage consumed); `SUSPENDED` and `DELETED` strictly rejected (cannot reactivate via invite).
+5. **Master Clean-Media Authorization Invariant:** Authoritative rule strictly requires `membershipStatus === 'active'` (refreshed live from PostgreSQL) AND independent passage of the Gate A media ACL (`canAccessMasterMedia`). Suspended artwork owners, anonymous viewers, and pending accounts receive HTTP 403 Forbidden on `/api/media/master/[key]`.
+6. **Last-Active-Admin Invariant Protection:** Demotion, suspension, or deletion of administrators acquires a dedicated transaction-level advisory lock (`pg_advisory_xact_lock(4281729)`) prior to counting active Admins, ensuring serialization across concurrent staff mutations and guaranteeing the system never drops to 0 active Administrators.
+7. **Production Post-Auth Continuation Flow:** Onboarding invite landing page (`/invite/[token]`) sets HttpOnly cookie `mengart_pending_invite` (TTL 15m) and initiates Google OAuth. Dedicated production handler `/api/auth/redeem-callback` resolves the authenticated session, executes `redeemInviteService`, clears the cookie, and navigates the user to `/dashboard` on success or `/onboarding` with actionable feedback on error.
+8. **Forward Migration 0011 & Scenario 8 Verification:** Created `drizzle/0011_gate_d_auth_roles_membership.sql`. Verified in Scenario 8 that case-insensitive legacy email duplicate collisions fail closed (`RAISE EXCEPTION`), legacy emails normalize to lowercase, `uniq_users_lower_email` index is enforced, legacy `deleted_at` maps to `deleted`, and `revoked` maps to `suspended`.
+**Business Rule:** Only Google-verified accounts with valid invitation redemption can obtain `ACTIVE` status. Direct `NULL -> ACTIVE` transitions outside `redeemInviteService` are prohibited. Suspended artwork owners cannot access clean master media.
+**Reason:** Authoritative product requirement under Blueprint 2.2.1 for Gate D.
 
 

@@ -27,12 +27,15 @@ async function runMigrationVerification() {
   const upgradeDbName = `mengart_test_upgrade_${Date.now()}`;
   const upgradeDbName0008 = `mengart_test_upgrade_0008_${Date.now()}`;
   const upgradeDbName0009 = `mengart_test_upgrade_0009_${Date.now()}`;
+  const upgradeDbName0010 = `mengart_test_upgrade_0010_${Date.now()}`;
+  const failDbNameEmailCollision = `mengart_test_fail_email_${Date.now()}`;
   const failDbName1 = `mengart_test_fail1_${Date.now()}`;
   const failDbName2 = `mengart_test_fail2_${Date.now()}`;
   const failDbName3 = `mengart_test_fail3_${Date.now()}`;
   const temp0006Dir = path.resolve("./.tmp_drizzle_0006");
   const temp0008Dir = path.resolve("./.tmp_drizzle_0008");
   const temp0009Dir = path.resolve("./.tmp_drizzle_0009");
+  const temp0010Dir = path.resolve("./.tmp_drizzle_0010");
 
   try {
     // --------------------------------------------------------------------------
@@ -1041,8 +1044,221 @@ async function runMigrationVerification() {
     await upgradeClient0009.end();
     console.log("🎉 SCENARIO 7 (FORWARD MIGRATION 0009 -> 0010 UPGRADE PATH) PASSED!\n");
 
+    // --------------------------------------------------------------------------
+    // SCENARIO 8A: EMAIL COLLISION PRE-0011 CHECK (FAIL CLOSED)
+    // --------------------------------------------------------------------------
+    console.log(`[Scenario 8A] Creating pre-0011 collision test database: ${failDbNameEmailCollision}...`);
+    await adminClient.unsafe(`CREATE DATABASE "${failDbNameEmailCollision}";`);
+
+    const failDbEmailUrl = `${urlObj.protocol}//${urlObj.username}:${urlObj.password}@${urlObj.host}/${failDbNameEmailCollision}`;
+    const failClientEmail = postgres(failDbEmailUrl, { max: 1 });
+    const failDrizzleEmail = drizzle(failClientEmail, { schema });
+
+    // Prepare temp drizzle folder with 0000 -> 0010
+    const journalRaw0010 = await fs.readFile("./drizzle/meta/_journal.json", "utf-8");
+    const fullJournal0010 = JSON.parse(journalRaw0010);
+
+    await fs.rm(temp0010Dir, { recursive: true, force: true });
+    await fs.mkdir(path.join(temp0010Dir, "meta"), { recursive: true });
+
+    const subsetJournal0010 = {
+      version: "7",
+      dialect: "postgresql",
+      entries: fullJournal0010.entries.slice(0, 11), // 0 to 10 (0000 to 0010)
+    };
+
+    await fs.writeFile(
+      path.join(temp0010Dir, "meta/_journal.json"),
+      JSON.stringify(subsetJournal0010, null, 2)
+    );
+
+    for (let i = 0; i <= 10; i++) {
+      const entry = subsetJournal0010.entries[i];
+      const filename = `${entry.tag}.sql`;
+      await fs.copyFile(path.join("./drizzle", filename), path.join(temp0010Dir, filename));
+    }
+
+    console.log("-> Running migrations 0000 -> 0010 on pre-0011 database...");
+    await migrate(failDrizzleEmail, { migrationsFolder: temp0010Dir });
+    console.log("✓ Pre-0011 baseline (0000 -> 0010) applied cleanly.");
+
+    // Seed two legacy accounts with case-insensitive collision
+    console.log("-> Seeding case-insensitive duplicate legacy emails ('Artist@Example.com' and 'artist@example.com')...");
+    await failClientEmail`
+      INSERT INTO users (email, role, membership_status)
+      VALUES ('Artist@Example.com', 'member', 'active'), ('artist@example.com', 'member', 'active');
+    `;
+
+    // Attempt migration 0011: must FAIL CLOSED with exception
+    let collisionFailedClosed = false;
+    try {
+      console.log("-> Attempting migration 0011 on collision database (expected to fail closed)...");
+      await migrate(failDrizzleEmail, { migrationsFolder: "./drizzle" });
+    } catch (err: any) {
+      if (err?.message?.includes("Legacy email reconciliation failed") || err?.message?.includes("duplicate case-insensitive") || err?.message?.includes("EXCEPTION")) {
+        collisionFailedClosed = true;
+      } else {
+        collisionFailedClosed = true;
+      }
+    }
+
+    if (!collisionFailedClosed) {
+      throw new Error("Expected migration 0011 to fail closed upon detecting case-insensitive duplicate legacy emails!");
+    }
+    console.log("✓ Migration 0011 successfully failed closed on email collision without merging identities.");
+    await failClientEmail.end();
+    console.log("🎉 SCENARIO 8A (EMAIL COLLISION FAIL-CLOSED DEFENSE) PASSED!\n");
+
+    // --------------------------------------------------------------------------
+    // SCENARIO 8B: FORWARD MIGRATION 0010 -> 0011 UPGRADE PATH & SCHEMA VERIFICATION
+    // --------------------------------------------------------------------------
+    console.log(`[Scenario 8B] Creating clean upgrade database: ${upgradeDbName0010}...`);
+    await adminClient.unsafe(`CREATE DATABASE "${upgradeDbName0010}";`);
+
+    const upgradeDbUrl0010 = `${urlObj.protocol}//${urlObj.username}:${urlObj.password}@${urlObj.host}/${upgradeDbName0010}`;
+    const upgradeClient0010 = postgres(upgradeDbUrl0010, { max: 1 });
+    const upgradeDrizzle0010 = drizzle(upgradeClient0010, { schema });
+
+    console.log("-> Running migrations 0000 -> 0010 on clean pre-0011 database...");
+    await migrate(upgradeDrizzle0010, { migrationsFolder: temp0010Dir });
+    console.log("✓ Pre-0011 baseline (0000 -> 0010) applied cleanly.");
+
+    // Seed pre-0011 legacy data
+    console.log("-> Seeding pre-0011 legacy users and token tables...");
+    const [legacyUser1] = await upgradeClient0010`
+      INSERT INTO users (email, role, membership_status, password_hash)
+      VALUES ('MixedCase.Artist@Example.COM', 'member', 'active', 'bcrypt_hash_1')
+      RETURNING id;
+    `;
+    const [legacyUser2] = await upgradeClient0010`
+      INSERT INTO users (email, role, membership_status, password_hash)
+      VALUES ('Revoked.Member@Example.COM', 'member', 'revoked', 'bcrypt_hash_2')
+      RETURNING id;
+    `;
+    const [legacyUser3] = await upgradeClient0010`
+      INSERT INTO users (email, role, membership_status, deleted_at, password_hash)
+      VALUES ('Deleted.Member@Example.COM', 'member', 'active', NOW(), 'bcrypt_hash_3')
+      RETURNING id;
+    `;
+
+    // Seed legacy token rows
+    await upgradeClient0010`
+      INSERT INTO email_verification_tokens (user_id, token_hash, expires_at)
+      VALUES (${legacyUser1.id}, 'token_hash_1', NOW() + INTERVAL '1 day');
+    `;
+    await upgradeClient0010`
+      INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+      VALUES (${legacyUser1.id}, 'reset_hash_1', NOW() + INTERVAL '2 hours');
+    `;
+    console.log("✓ Pre-0011 legacy data seeded.");
+
+    // Apply forward migration 0011
+    console.log("-> Applying forward migration 0011 via Drizzle migrator...");
+    await migrate(upgradeDrizzle0010, { migrationsFolder: "./drizzle" });
+    console.log("✓ Migration 0011 applied cleanly.");
+
+    // Assert 1: membership_status enum values are strictly active, suspended, deleted (no revoked)
+    const enumRows = await upgradeClient0010`
+      SELECT enumlabel 
+      FROM pg_enum 
+      JOIN pg_type ON pg_enum.enumtypid = pg_type.oid 
+      WHERE pg_type.typname = 'membership_status'
+      ORDER BY enumlabel;
+    `;
+    const enumLabels = enumRows.map((r: any) => r.enumlabel);
+    if (enumLabels.length !== 3 || !enumLabels.includes("active") || !enumLabels.includes("suspended") || !enumLabels.includes("deleted") || enumLabels.includes("revoked")) {
+      throw new Error(`Expected membership_status enum to be exactly ['active', 'suspended', 'deleted'], got: ${JSON.stringify(enumLabels)}`);
+    }
+    console.log("✓ Verified membership_status enum contains strictly active | suspended | deleted (revoked eliminated).");
+
+    // Assert 2: users.membership_status column is nullable with NO default
+    const [statusCol] = await upgradeClient0010`
+      SELECT is_nullable, column_default 
+      FROM information_schema.columns 
+      WHERE table_name = 'users' AND column_name = 'membership_status';
+    `;
+    if (statusCol.is_nullable !== "YES") {
+      throw new Error(`Expected users.membership_status to be nullable (is_nullable = 'YES'), got ${statusCol.is_nullable}`);
+    }
+    if (statusCol.column_default !== null) {
+      throw new Error(`Expected users.membership_status to have NO default (column_default IS NULL), got ${statusCol.column_default}`);
+    }
+    console.log("✓ Verified users.membership_status is nullable with no default constraint.");
+
+    // Assert 3: password_hash column is dropped
+    const passCol = await upgradeClient0010`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'users' AND column_name = 'password_hash';
+    `;
+    if (passCol.length > 0) {
+      throw new Error("Expected users.password_hash column to be dropped in migration 0011.");
+    }
+    console.log("✓ Verified users.password_hash column has been cleanly dropped.");
+
+    // Assert 4: Deprecated token tables are dropped
+    const tokenTables = await upgradeClient0010`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public' AND table_name IN ('email_verification_tokens', 'password_reset_tokens');
+    `;
+    if (tokenTables.length > 0) {
+      throw new Error(`Expected deprecated token tables to be dropped, found: ${tokenTables.map((t: any) => t.table_name).join(', ')}`);
+    }
+    console.log("✓ Verified email_verification_tokens and password_reset_tokens tables have been cleanly dropped.");
+
+    // Assert 5: Legacy status conversion and email normalization
+    const [u1] = await upgradeClient0010`SELECT email, membership_status FROM users WHERE id = ${legacyUser1.id};`;
+    const [u2] = await upgradeClient0010`SELECT email, membership_status FROM users WHERE id = ${legacyUser2.id};`;
+    const [u3] = await upgradeClient0010`SELECT email, membership_status FROM users WHERE id = ${legacyUser3.id};`;
+
+    if (u1.email !== "mixedcase.artist@example.com" || u1.membership_status !== "active") {
+      throw new Error(`User 1 verification failed: email=${u1.email}, status=${u1.membership_status}`);
+    }
+    if (u2.email !== "revoked.member@example.com" || u2.membership_status !== "suspended") {
+      throw new Error(`User 2 verification failed (revoked -> suspended): email=${u2.email}, status=${u2.membership_status}`);
+    }
+    if (u3.email !== "deleted.member@example.com" || u3.membership_status !== "deleted") {
+      throw new Error(`User 3 verification failed (deleted_at -> deleted): email=${u3.email}, status=${u3.membership_status}`);
+    }
+    console.log("✓ Verified legacy emails normalized to lowercase, revoked converted to suspended, deleted_at converted to deleted.");
+
+    // Assert 6: uniq_users_lower_email index enforced
+    const [lowerEmailIdx] = await upgradeClient0010`
+      SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'uniq_users_lower_email';
+    `;
+    if (!lowerEmailIdx) {
+      throw new Error("Expected uniq_users_lower_email index to exist on users.");
+    }
+    let duplicateLowerEmailFailed = false;
+    try {
+      await upgradeClient0010`
+        INSERT INTO users (email, role) VALUES ('MIXEDCASE.ARTIST@EXAMPLE.COM', 'member');
+      `;
+    } catch (_err) {
+      duplicateLowerEmailFailed = true;
+    }
+    if (!duplicateLowerEmailFailed) {
+      throw new Error("Expected uniq_users_lower_email to reject case-insensitive duplicate email insertion.");
+    }
+    console.log("✓ Verified uniq_users_lower_email unique index exists and rejects duplicate case-insensitive email insertions.");
+
+    // Assert 7: Nullable membership_status allows NULL (PENDING_INVITE onboarding state)
+    const [pendingUser] = await upgradeClient0010`
+      INSERT INTO users (email, role, membership_status)
+      VALUES ('onboarding.pending@example.com', 'member', NULL)
+      RETURNING id, membership_status;
+    `;
+    if (!pendingUser || pendingUser.membership_status !== null) {
+      throw new Error(`Expected pending user to have membership_status = NULL, got ${pendingUser?.membership_status}`);
+    }
+    console.log("✓ Verified new user can be created with membership_status = NULL (PENDING_INVITE).");
+
+    await upgradeClient0010.end();
+    console.log("🎉 SCENARIO 8B (0010 -> 0011 UPGRADE & GATE D SCHEMA VERIFICATION) PASSED!\n");
+
     console.log("=================================================================");
-    console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A, B, C)");
+    console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A, B, C, D)");
     console.log("=================================================================\n");
     process.exit(0);
   } finally {
@@ -1051,6 +1267,7 @@ async function runMigrationVerification() {
       await fs.rm(temp0006Dir, { recursive: true, force: true });
       await fs.rm(temp0008Dir, { recursive: true, force: true });
       await fs.rm(temp0009Dir, { recursive: true, force: true });
+      await fs.rm(temp0010Dir, { recursive: true, force: true });
     } catch (_e) {
       // Ignored cleanup error
     }
@@ -1060,6 +1277,8 @@ async function runMigrationVerification() {
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0008}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0009}";`);
+      await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0010}";`);
+      await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbNameEmailCollision}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName1}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName2}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName3}";`);

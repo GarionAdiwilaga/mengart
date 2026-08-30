@@ -3,6 +3,7 @@ import { validateInviteToken } from "@/lib/invites";
 import Link from "next/link";
 import { Palette, Sparkles, AlertCircle, Clock } from "lucide-react";
 import { InviteRedeemForm } from "@/components/auth/InviteRedeemForm";
+import { cookies } from "next/headers";
 
 export const metadata: Metadata = {
   robots: {
@@ -25,7 +26,7 @@ export default async function InvitePage({ params }: InvitePageProps) {
 
     if (validation.reason === "expired") {
       errorTitle = "Undangan Kedaluwarsa";
-      errorDescription = "Tautan undangan ini telah melewati masa berlaku. Silakan minta undangan baru kepada moderator komunitas.";
+      errorDescription = "Tautan undangan ini telah melewati masa berlaku. Silakan minta undangan baru kepada administrator komunitas.";
     } else if (validation.reason === "exhausted") {
       errorTitle = "Batas Penggunaan Habis";
       errorDescription = "Tautan undangan ini telah mencapai kuota maksimal pendaftaran.";
@@ -54,6 +55,16 @@ export default async function InvitePage({ params }: InvitePageProps) {
       </main>
     );
   }
+
+  // Set the secure HttpOnly continuation cookie
+  const cookieStore = await cookies();
+  cookieStore.set("mengart_pending_invite", token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 15 * 60, // 15 minutes
+  });
 
   const { invite } = validation;
   const formattedExpiry = invite.expiresAt
@@ -88,7 +99,7 @@ export default async function InvitePage({ params }: InvitePageProps) {
               Bergabung ke Mengart
             </h1>
             <p className="text-sm text-zinc-400 mt-1">
-              Anda diundang untuk bergabung ke komunitas atelier digital art privat.
+              Anda diundang untuk bergabung ke komunitas atelier seni visual privat.
             </p>
           </div>
         </div>
@@ -114,7 +125,7 @@ export default async function InvitePage({ params }: InvitePageProps) {
           ) : null}
         </div>
 
-        {/* Client-Side Registration Form */}
+        {/* Client-Side Google Continuation Card */}
         <InviteRedeemForm rawToken={token} />
       </div>
     </main>

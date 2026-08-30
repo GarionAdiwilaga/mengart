@@ -15,7 +15,7 @@ import { getEffectiveChallengeStatus } from "@/lib/challenges";
 export interface PolicyUser {
   id: string;
   role: "member" | "moderator" | "admin";
-  membershipStatus?: "active" | "suspended" | "revoked";
+  membershipStatus?: "active" | "suspended" | "deleted" | null;
 }
 
 export interface ArtworkEntity {
@@ -92,9 +92,10 @@ export async function canAccessMasterMedia(
   artwork: ArtworkEntity,
   challengeId?: string | null
 ): Promise<boolean> {
-  if (!viewer) return false;
-  if (viewer.membershipStatus && viewer.membershipStatus !== "active") return false;
+  // 1. Viewer MUST be an authenticated ACTIVE member
+  if (!viewer || viewer.membershipStatus !== "active") return false;
 
+  // 2. AND independently pass Gate A media ACL (owner, admin, or active challenge jury)
   const isOwner = viewer.id === artwork.userId;
   const isAdmin = viewer.role === "admin";
 
@@ -135,7 +136,7 @@ export async function canAccessMasterMedia(
  */
 export function canViewProfile(
   viewer: PolicyUser | null | undefined,
-  user: { id: string; membershipStatus: "active" | "suspended" | "revoked"; role: string },
+  user: { id: string; membershipStatus: "active" | "suspended" | "deleted" | null; role: string },
   profile: { isPublic?: boolean; deletedAt?: Date | null }
 ): boolean {
   const isSelf = viewer && viewer.id === user.id;

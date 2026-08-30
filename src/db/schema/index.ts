@@ -1,5 +1,4 @@
 export * from "./users";
-export * from "./authTokens";
 export * from "./invites";
 export * from "./profiles";
 export * from "./artworks";

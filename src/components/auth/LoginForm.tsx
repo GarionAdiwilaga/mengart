@@ -1,43 +1,37 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useState } from "react";
 import { signIn } from "next-auth/react";
-import { Loader2, ArrowRight, AlertCircle } from "lucide-react";
-import Link from "next/link";
-import { loginWithCredentialsAction } from "@/app/actions/auth";
+import { Loader2, AlertCircle } from "lucide-react";
 
 interface LoginFormProps {
   initialError?: string;
 }
 
 export function LoginForm({ initialError }: LoginFormProps) {
-  const [state, formAction, isPending] = useActionState(
-    loginWithCredentialsAction,
-    null
-  );
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
   const initialErrorMessage = (() => {
     if (initialError === "InviteRequired") {
-      return "Undangan dibutuhkan. Mengart adalah komunitas berbasis undangan (invite-only). Silakan masukkan kode undangan untuk mendaftar.";
+      return "Undangan dibutuhkan. Mengart adalah komunitas berbasis undangan (invite-only). Silakan gunakan tautan undangan resmi untuk bergabung.";
     } else if (initialError === "AccountSuspended") {
       return "Akun Anda sedang ditangguhkan. Silakan hubungi moderator komunitas.";
-    } else if (initialError === "AccountRevoked") {
-      return "Akses keanggotaan Anda telah dicabut.";
-    } else if (initialError === "EmailNotVerified") {
-      return "Email Anda belum diverifikasi. Silakan periksa email Anda atau buka halaman verifikasi.";
-    } else if (initialError === "CredentialsSignin") {
-      return "Email/Username atau password salah.";
+    } else if (initialError === "AccountDeleted") {
+      return "Akun telah dihapus oleh administrator.";
+    } else if (initialError === "EmailUnverified") {
+      return "Akun Google Anda belum memiliki email yang terverifikasi.";
+    } else if (initialError === "AccountCollision") {
+      return "Terjadi benturan identitas akun. Pastikan Anda masuk menggunakan akun Google yang terdaftar.";
+    } else if (initialError === "AuthRequired") {
+      return "Silakan masuk dengan akun Google Anda untuk melanjutkan.";
     }
-    return null;
+    return initialError ? `Terjadi kesalahan saat masuk (${initialError}).` : null;
   })();
-
-  const errorMessage = state?.error || initialErrorMessage;
 
   const handleGoogleLogin = async () => {
     setIsGoogleLoading(true);
     try {
-      await signIn("google", { callbackUrl: "/dashboard" });
+      await signIn("google", { callbackUrl: "/api/auth/redeem-callback" });
     } catch (err: any) {
       setIsGoogleLoading(false);
     }
@@ -45,18 +39,22 @@ export function LoginForm({ initialError }: LoginFormProps) {
 
   return (
     <div className="flex flex-col gap-5">
-      {errorMessage ? (
+      {initialErrorMessage ? (
         <div className="p-3.5 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-start gap-2.5">
           <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
-          <span className="leading-relaxed">{errorMessage}</span>
+          <span className="leading-relaxed">{initialErrorMessage}</span>
         </div>
       ) : null}
+
+      <div className="p-4 rounded-2xl bg-amber-500/[0.04] border border-amber-500/20 text-xs text-zinc-300 leading-relaxed">
+        Masuk menggunakan akun Google Anda untuk mengakses ruang atelier, challenge aktif, galeri karya master, dan portofolio artist.
+      </div>
 
       {/* Google OAuth Button */}
       <button
         type="button"
         onClick={handleGoogleLogin}
-        disabled={isGoogleLoading || isPending}
+        disabled={isGoogleLoading}
         className="w-full py-3.5 px-4 rounded-xl bg-white text-zinc-900 font-semibold text-sm hover:bg-zinc-100 transition-all duration-200 shadow-md flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50"
       >
         {isGoogleLoading ? (
@@ -83,66 +81,6 @@ export function LoginForm({ initialError }: LoginFormProps) {
         )}
         <span>Masuk dengan Google</span>
       </button>
-
-      {/* Divider */}
-      <div className="flex items-center gap-3 my-1">
-        <div className="flex-1 h-px bg-white/10" />
-        <span className="text-[11px] font-mono text-zinc-500 uppercase">atau dengan email</span>
-        <div className="flex-1 h-px bg-white/10" />
-      </div>
-
-      {/* Email & Password Form */}
-      <form action={formAction} method="POST" className="flex flex-col gap-3.5">
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-mono text-zinc-300">EMAIL ATAU USERNAME</label>
-          <input
-            type="text"
-            name="identifier"
-            placeholder="admin@mengart.local / admin_atelier"
-            required
-            autoComplete="username"
-            className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-sm font-sans"
-          />
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between">
-            <label className="text-xs font-mono text-zinc-300">PASSWORD</label>
-            <Link
-              href="/forgot-password"
-              className="text-[11px] font-mono text-amber-400 hover:text-amber-300 transition-colors"
-            >
-              Lupa Password?
-            </Link>
-          </div>
-          <input
-            type="password"
-            name="password"
-            placeholder="••••••••"
-            required
-            autoComplete="current-password"
-            className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-sm font-sans"
-          />
-        </div>
-
-        <button
-          type="submit"
-          disabled={isPending || isGoogleLoading}
-          className="w-full mt-2 py-3.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-sm transition-all duration-200 shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-        >
-          {isPending ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin text-black" />
-              <span>Memverifikasi Akun...</span>
-            </>
-          ) : (
-            <>
-              <span>Masuk ke Atelier</span>
-              <ArrowRight className="h-4 w-4 text-black" />
-            </>
-          )}
-        </button>
-      </form>
     </div>
   );
 }

@@ -79,15 +79,15 @@ async function runPhase3SimplifiedJuryTests() {
     // -------------------------------------------------------------------------
     // Setup Base Actors
     // -------------------------------------------------------------------------
-    const [adminUser] = await db.insert(users).values({ email: "admin@mengart.local", role: "admin" }).returning();
-    const [modUser] = await db.insert(users).values({ email: "moderator@mengart.local", role: "moderator" }).returning();
-    const [juror1] = await db.insert(users).values({ email: "juror1@mengart.local", role: "member" }).returning();
-    const [juror2] = await db.insert(users).values({ email: "juror2@mengart.local", role: "member" }).returning();
-    const [juror3] = await db.insert(users).values({ email: "juror3@mengart.local", role: "member" }).returning();
-    const [artist1] = await db.insert(users).values({ email: "artist1@mengart.local", role: "member" }).returning();
-    const [artist2] = await db.insert(users).values({ email: "artist2@mengart.local", role: "member" }).returning();
-    const [artist3] = await db.insert(users).values({ email: "artist3@mengart.local", role: "member" }).returning();
-    const [voter1] = await db.insert(users).values({ email: "voter1@mengart.local", role: "member" }).returning();
+    const [adminUser] = await db.insert(users).values({ email: "admin@mengart.local", role: "admin", membershipStatus: "active" }).returning();
+    const [modUser] = await db.insert(users).values({ email: "moderator@mengart.local", role: "moderator", membershipStatus: "active" }).returning();
+    const [juror1] = await db.insert(users).values({ email: "juror1@mengart.local", role: "member", membershipStatus: "active" }).returning();
+    const [juror2] = await db.insert(users).values({ email: "juror2@mengart.local", role: "member", membershipStatus: "active" }).returning();
+    const [juror3] = await db.insert(users).values({ email: "juror3@mengart.local", role: "member", membershipStatus: "active" }).returning();
+    const [artist1] = await db.insert(users).values({ email: "artist1@mengart.local", role: "member", membershipStatus: "active" }).returning();
+    const [artist2] = await db.insert(users).values({ email: "artist2@mengart.local", role: "member", membershipStatus: "active" }).returning();
+    const [artist3] = await db.insert(users).values({ email: "artist3@mengart.local", role: "member", membershipStatus: "active" }).returning();
+    const [voter1] = await db.insert(users).values({ email: "voter1@mengart.local", role: "member", membershipStatus: "active" }).returning();
 
     const [adminProf] = await db.insert(profiles).values({ userId: adminUser.id, displayName: "Admin User", slug: "admin-user" }).returning();
     const [juror1Prof] = await db.insert(profiles).values({ userId: juror1.id, displayName: "Juror One", slug: "juror-1" }).returning();

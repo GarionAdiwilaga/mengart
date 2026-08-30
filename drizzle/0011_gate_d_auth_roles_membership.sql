@@ -1,0 +1,56 @@
+-- ============================================================================
+-- GATE D FORWARD MIGRATION: AUTHENTICATION, INVITATIONS, MEMBERSHIP & ROLES
+-- ============================================================================
+
+-- 1. Email Normalization & Case-Insensitive Duplicate Detection
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM (
+      SELECT lower(trim("email")) AS norm_email, count(*) AS cnt
+      FROM "users"
+      GROUP BY lower(trim("email"))
+      HAVING count(*) > 1
+    ) duplicates
+  ) THEN
+    RAISE EXCEPTION 'Legacy email reconciliation failed: duplicate case-insensitive email addresses detected in users table';
+  END IF;
+END $$;
+
+UPDATE "users" SET "email" = lower(trim("email"));
+
+DROP INDEX IF EXISTS "idx_users_email";
+CREATE UNIQUE INDEX IF NOT EXISTS "uniq_users_lower_email" ON "users" (lower("email"));
+
+-- 2. Rename Old Enum & Create New 3-Value Membership Enum
+ALTER TYPE "membership_status" RENAME TO "membership_status_old";
+CREATE TYPE "membership_status" AS ENUM ('active', 'suspended', 'deleted');
+
+-- 3. Drop Default and Drop NOT NULL (NULL represents PENDING_INVITE)
+ALTER TABLE "users" ALTER COLUMN "membership_status" DROP DEFAULT;
+ALTER TABLE "users" ALTER COLUMN "membership_status" DROP NOT NULL;
+
+-- 4. Convert Column Type with In-Flight Status Reconciliation
+ALTER TABLE "users" 
+  ALTER COLUMN "membership_status" 
+  TYPE "membership_status" 
+  USING (
+    CASE 
+      WHEN "deleted_at" IS NOT NULL THEN 'deleted'::"membership_status"
+      WHEN "membership_status"::text = 'revoked' THEN 'suspended'::"membership_status"
+      ELSE "membership_status"::text::"membership_status"
+    END
+  );
+
+-- 5. Drop Old Enum
+DROP TYPE "membership_status_old";
+
+-- 6. Explicitly Drop Deprecated Token Tables (fail-closed without CASCADE)
+DROP TABLE IF EXISTS "email_verification_tokens";
+DROP TABLE IF EXISTS "password_reset_tokens";
+
+-- 7. Drop Deprecated password_hash Column Cleanly
+ALTER TABLE "users" DROP COLUMN IF EXISTS "password_hash";
+
+-- 8. Index on Membership Status
+CREATE INDEX IF NOT EXISTS "idx_users_membership_status" ON "users" ("membership_status");

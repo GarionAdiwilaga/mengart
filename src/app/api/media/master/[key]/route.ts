@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { resolveStoragePath } from "@/lib/storage";
 import { db } from "@/db";
-import { artworkVersions, artworks, challengeSubmissionVersions, challengeSubmissions } from "@/db/schema";
+import { artworkVersions, artworks, challengeSubmissionVersions, challengeSubmissions, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { canAccessMasterMedia } from "@/lib/policy";
 import fs from "fs";
@@ -15,15 +15,21 @@ export async function GET(
 ) {
   const session = await auth();
   
-  // 1. Authentication Guard
+  // 1. Authentication Guard & DB Membership Refresh
   if (!session?.user || !session.user.id) {
     return new NextResponse("Unauthorized: Autentikasi diperlukan untuk mengakses master media orisinal.", {
       status: 401,
     });
   }
 
-  if (session.user.membershipStatus !== "active") {
-    return new NextResponse("Forbidden: Akun Anda ditangguhkan atau tidak aktif.", {
+  const [dbUser] = await db
+    .select({ membershipStatus: users.membershipStatus })
+    .from(users)
+    .where(eq(users.id, session.user.id))
+    .limit(1);
+
+  if (!dbUser || dbUser.membershipStatus !== "active") {
+    return new NextResponse("Forbidden: Akun Anda ditangguhkan atau belum aktif.", {
       status: 403,
     });
   }

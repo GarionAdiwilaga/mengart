@@ -7,9 +7,7 @@ import {
   users,
   profiles,
   auditLogs,
-  emailVerificationTokens,
 } from "@/db/schema";
-import { sendVerificationEmail } from "./email";
 
 export type InviteExpiryPreset =
   | "30m"
@@ -23,7 +21,6 @@ export type InviteExpiryPreset =
 
 export interface CreateInviteParams {
   label?: string;
-  customCode?: string; // Optional custom Discord-style vanity code (e.g. "komorebi", "atelier-vip")
   expiryPreset?: InviteExpiryPreset;
   customExpiresAt?: Date;
   maxUses?: number | null; // null = unlimited
@@ -45,16 +42,16 @@ export interface GeneratedInviteResult {
 
 export type InviteStatus = "active" | "expired" | "exhausted" | "revoked";
 
-const BASE62_CHARS = "23456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ"; // Clean base58-style alphabet without ambiguous 0/O/1/l/I
+const BASE58_CHARS = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 /**
- * Generate a clean, human-friendly short random invite code (e.g. "a7K9xQ2v")
+ * Generate a high-entropy cryptographic random invite code (default 16 bytes base58, >100 bits entropy)
  */
-export function generateShortInviteCode(length = 8): string {
+export function generateShortInviteCode(length = 16): string {
   const bytes = crypto.randomBytes(length);
   let result = "";
   for (let i = 0; i < length; i++) {
-    result += BASE62_CHARS[bytes[i] % BASE62_CHARS.length];
+    result += BASE58_CHARS[bytes[i] % BASE58_CHARS.length];
   }
   return result;
 }
@@ -119,51 +116,15 @@ export function calculateExpiryDate(
 }
 
 /**
- * Generate a new short-code or custom-code membership invitation
+ * Generate a new high-entropy membership invitation (Admin only)
  */
 export async function createMembershipInvite(
   params: CreateInviteParams,
   appBaseUrl: string = process.env.APP_URL || "http://localhost:3000"
 ): Promise<GeneratedInviteResult> {
-  let rawToken: string;
-
-  if (params.customCode && params.customCode.trim().length > 0) {
-    const cleanCode = params.customCode.trim();
-    if (cleanCode.length < 3 || cleanCode.length > 32) {
-      throw new Error("Kode undangan kustom harus antara 3 hingga 32 karakter.");
-    }
-    if (!/^[a-zA-Z0-9_-]+$/.test(cleanCode)) {
-      throw new Error("Kode kustom hanya boleh berisi huruf, angka, tanda hubung (-), dan garis bawah (_).");
-    }
-
-    const testHash = hashInviteToken(cleanCode);
-    const [existing] = await db
-      .select()
-      .from(membershipInvites)
-      .where(
-        and(
-          eq(membershipInvites.tokenHash, testHash),
-          isNull(membershipInvites.revokedAt),
-          or(
-            isNull(membershipInvites.expiresAt),
-            gt(membershipInvites.expiresAt, new Date())
-          )
-        )
-      )
-      .limit(1);
-
-    if (existing && (existing.maxUses === null || existing.usesCount < existing.maxUses)) {
-      throw new Error(`Kode undangan kustom "${cleanCode}" sudah aktif digunakan.`);
-    }
-
-    rawToken = cleanCode;
-  } else {
-    // Generate clean 8-char short code
-    rawToken = generateShortInviteCode(8);
-  }
-
+  const rawToken = generateShortInviteCode(16);
   const tokenHash = hashInviteToken(rawToken);
-  const tokenPrefix = rawToken.length <= 8 ? rawToken : `inv_${rawToken.slice(0, 8)}`;
+  const tokenPrefix = `inv_${rawToken.slice(0, 8)}`;
   const expiresAt = params.customExpiresAt
     ? params.customExpiresAt
     : calculateExpiryDate(params.expiryPreset || "7d");
@@ -173,7 +134,7 @@ export async function createMembershipInvite(
     .values({
       tokenHash,
       tokenPrefix,
-      label: params.label || null,
+      label: params.label?.trim() || null,
       expiresAt,
       maxUses: params.maxUses !== undefined ? params.maxUses : 1, // Default 1 use
       usesCount: 0,
@@ -191,7 +152,6 @@ export async function createMembershipInvite(
     reason: params.label || `Generated membership invite (${tokenPrefix})`,
     metadata: {
       tokenPrefix,
-      isCustomCode: !!params.customCode,
       expiresAt,
       maxUses: params.maxUses,
     },
@@ -216,7 +176,7 @@ export async function createMembershipInvite(
 export async function validateInviteToken(rawToken: string) {
   const cleanToken = extractInviteToken(rawToken);
   if (!cleanToken || cleanToken.length === 0) {
-    return { isValid: false, reason: "Missing token" as const, invite: null };
+    return { isValid: false, reason: "not_found" as const, invite: null };
   }
 
   const tokenHash = hashInviteToken(cleanToken);
@@ -246,46 +206,77 @@ export async function validateInviteToken(rawToken: string) {
 }
 
 /**
- * Atomically redeem an invitation and create member account via Google OAuth
+ * Deterministic Two-Phase Locking Service for Invite Redemption (Blueprint 2.2.1)
+ * Lock Order:
+ * 1. Lock target users row FOR UPDATE
+ * 2. Lock target membership_invites row FOR UPDATE
  */
-export async function redeemInviteAndCreateMember(params: {
-  rawToken: string;
-  email: string;
-  googleId?: string;
-  displayName: string;
-  avatarUrl?: string;
-  ipAddress?: string;
-  userAgent?: string;
-}) {
+export async function redeemInviteService(
+  dbOrTx: any,
+  params: {
+    userId: string;
+    rawToken: string;
+    displayName?: string;
+    avatarUrl?: string;
+    ipAddress?: string;
+    userAgent?: string;
+  }
+) {
   const tokenHash = hashInviteToken(params.rawToken);
   const now = new Date();
 
-  return await db.transaction(async (tx) => {
-    // 1. Lock and validate invite row
+  return await dbOrTx.transaction(async (tx: any) => {
+    // 1. Lock target user row FOR UPDATE
+    const [user] = await tx
+      .select()
+      .from(users)
+      .where(eq(users.id, params.userId))
+      .for("update");
+
+    if (!user) {
+      throw new Error("Pengguna tidak ditemukan.");
+    }
+
+    // Enforce membership status invariants
+    if (user.membershipStatus === "active") {
+      // Idempotent pass-through: already active, do not consume invite
+      const [profile] = await tx
+        .select()
+        .from(profiles)
+        .where(eq(profiles.userId, user.id))
+        .limit(1);
+      return { user, profile, isAlreadyActive: true };
+    }
+    if (user.membershipStatus === "suspended") {
+      throw new Error(
+        "Akun Anda sedang ditangguhkan. Undangan tidak dapat digunakan untuk mengaktifkan kembali akun."
+      );
+    }
+    if (user.membershipStatus === "deleted" || user.deletedAt) {
+      throw new Error("Akun telah dihapus.");
+    }
+
+    // 2. Lock target invite row FOR UPDATE
     const [invite] = await tx
       .select()
       .from(membershipInvites)
-      .where(
-        and(
-          eq(membershipInvites.tokenHash, tokenHash),
-          isNull(membershipInvites.revokedAt),
-          or(
-            isNull(membershipInvites.expiresAt),
-            gt(membershipInvites.expiresAt, now)
-          )
-        )
-      )
+      .where(eq(membershipInvites.tokenHash, tokenHash))
       .for("update");
 
     if (!invite) {
-      throw new Error("Undangan tidak valid, telah kedaluwarsa, atau telah dicabut.");
+      throw new Error("Undangan tidak valid atau tidak ditemukan.");
     }
-
+    if (invite.revokedAt) {
+      throw new Error("Undangan telah dicabut oleh administrator.");
+    }
+    if (invite.expiresAt && invite.expiresAt <= now) {
+      throw new Error("Undangan telah kedaluwarsa.");
+    }
     if (invite.maxUses !== null && invite.usesCount >= invite.maxUses) {
-      throw new Error("Undangan telah mencapai batas maksimum penggunaan.");
+      throw new Error("Batas penggunaan undangan ini telah habis.");
     }
 
-    // 2. Increment usage counter
+    // 3. Atomically increment usage count
     await tx
       .update(membershipInvites)
       .set({
@@ -294,24 +285,29 @@ export async function redeemInviteAndCreateMember(params: {
       })
       .where(eq(membershipInvites.id, invite.id));
 
-    // 3. Create User record (Google accounts have emailVerified set immediately)
-    const [newUser] = await tx
-      .insert(users)
-      .values({
-        email: params.email.toLowerCase().trim(),
-        googleId: params.googleId || null,
-        emailVerified: now,
-        role: "member",
+    // 4. Update user to ACTIVE
+    const [updatedUser] = await tx
+      .update(users)
+      .set({
         membershipStatus: "active",
+        emailVerified: user.emailVerified || now,
+        updatedAt: now,
       })
+      .where(eq(users.id, user.id))
       .returning();
 
-    // 4. Generate unique slug for artist profile
-    const baseSlug = params.displayName
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)/g, "") || `artist-${newUser.id.slice(0, 8)}`;
-    
+    // 5. Create or reconcile artist profile
+    const rawName =
+      params.displayName ||
+      user.username ||
+      user.email.split("@")[0] ||
+      "Artist";
+    const baseSlug =
+      rawName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/(^-|-$)/g, "") || `artist-${user.id.slice(0, 8)}`;
+
     const [existingSlug] = await tx
       .select({ id: profiles.id })
       .from(profiles)
@@ -319,190 +315,110 @@ export async function redeemInviteAndCreateMember(params: {
       .limit(1);
 
     const finalSlug = existingSlug
-      ? `${baseSlug}-${newUser.id.slice(0, 6)}`
+      ? `${baseSlug}-${user.id.slice(0, 6)}`
       : baseSlug;
 
-    // 5. Create Profile record
-    const [newProfile] = await tx
-      .insert(profiles)
-      .values({
-        userId: newUser.id,
-        slug: finalSlug,
-        displayName: params.displayName.trim(),
-        avatarUrl: params.avatarUrl || null,
-        profileStatus: "incomplete",
-      })
-      .returning();
+    let [profile] = await tx
+      .select()
+      .from(profiles)
+      .where(eq(profiles.userId, user.id))
+      .limit(1);
 
-    // 6. Record Invite Redemption
+    if (!profile) {
+      [profile] = await tx
+        .insert(profiles)
+        .values({
+          userId: user.id,
+          slug: finalSlug,
+          displayName: rawName.trim(),
+          avatarUrl: params.avatarUrl || null,
+          profileStatus: "incomplete",
+        })
+        .returning();
+    }
+
+    // 6. Record redemption history
     await tx.insert(inviteRedemptions).values({
       inviteId: invite.id,
-      userId: newUser.id,
+      userId: user.id,
       ipAddress: params.ipAddress || null,
       userAgent: params.userAgent || null,
+      redeemedAt: now,
     });
 
-    // 7. Audit Log
+    // 7. Audit log
     await tx.insert(auditLogs).values({
-      actorId: newUser.id,
+      actorId: user.id,
       actorIp: params.ipAddress || "127.0.0.1",
       action: "invite_redeemed",
-      targetType: "user",
-      targetId: newUser.id,
-      reason: `Account created via invitation ${invite.tokenPrefix} (Google OAuth)`,
+      targetType: "invite",
+      targetId: invite.id,
+      reason: `Membership activated via invite ${invite.tokenPrefix}`,
       metadata: {
         inviteId: invite.id,
-        email: params.email,
+        tokenPrefix: invite.tokenPrefix,
+        userId: user.id,
+        email: user.email,
       },
     });
 
-    return { user: newUser, profile: newProfile };
+    return { user: updatedUser, profile, isAlreadyActive: false };
   });
 }
 
 /**
- * Atomically redeem an invitation and create member account via Email & Password
+ * Revoke an invitation with serialized row lock (Admin only)
  */
-export async function redeemInviteAndCreateMemberWithCredentials(params: {
-  rawToken: string;
-  email: string;
-  passwordHash: string;
-  displayName: string;
-  username?: string;
-  ipAddress?: string;
-  userAgent?: string;
-}) {
-  const tokenHash = hashInviteToken(params.rawToken);
-  const now = new Date();
-  const normalizedEmail = params.email.toLowerCase().trim();
-
-  // Check if email already registered
-  const [existingUser] = await db
-    .select()
-    .from(users)
-    .where(eq(users.email, normalizedEmail))
-    .limit(1);
-
-  if (existingUser) {
-    throw new Error("Email ini telah terdaftar. Silakan langsung masuk di halaman Login.");
+export async function revokeInviteService(
+  dbOrTx: any,
+  params: {
+    inviteId: string;
+    adminUserId: string;
+    reason?: string;
+    ipAddress?: string;
   }
+) {
+  const now = new Date();
 
-  const result = await db.transaction(async (tx) => {
-    // 1. Lock and validate invite row
+  return await dbOrTx.transaction(async (tx: any) => {
     const [invite] = await tx
       .select()
       .from(membershipInvites)
-      .where(
-        and(
-          eq(membershipInvites.tokenHash, tokenHash),
-          isNull(membershipInvites.revokedAt),
-          or(
-            isNull(membershipInvites.expiresAt),
-            gt(membershipInvites.expiresAt, now)
-          )
-        )
-      )
+      .where(eq(membershipInvites.id, params.inviteId))
       .for("update");
 
     if (!invite) {
-      throw new Error("Undangan tidak valid, telah kedaluwarsa, atau telah dicabut.");
+      throw new Error("Undangan tidak ditemukan.");
     }
 
-    if (invite.maxUses !== null && invite.usesCount >= invite.maxUses) {
-      throw new Error("Undangan telah mencapai batas maksimum penggunaan.");
+    if (invite.revokedAt) {
+      return { invite, alreadyRevoked: true };
     }
 
-    // 2. Increment usage counter
-    await tx
+    const [updated] = await tx
       .update(membershipInvites)
       .set({
-        usesCount: sql`${membershipInvites.usesCount} + 1`,
+        revokedAt: now,
+        revokedBy: params.adminUserId,
+        revocationReason: params.reason?.trim() || "Dicabut oleh administrator",
         updatedAt: now,
       })
-      .where(eq(membershipInvites.id, invite.id));
-
-    // 3. Create User record (Password account with emailVerified: null initially)
-    const [newUser] = await tx
-      .insert(users)
-      .values({
-        email: normalizedEmail,
-        username: params.username?.toLowerCase().trim() || null,
-        passwordHash: params.passwordHash,
-        emailVerified: null, // Requires verification
-        role: "member",
-        membershipStatus: "active",
-      })
+      .where(eq(membershipInvites.id, invite.id))
       .returning();
 
-    // 4. Generate unique slug for artist profile
-    const baseSlug = params.displayName
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)/g, "") || `artist-${newUser.id.slice(0, 8)}`;
-    
-    const [existingSlug] = await tx
-      .select({ id: profiles.id })
-      .from(profiles)
-      .where(eq(profiles.slug, baseSlug))
-      .limit(1);
-
-    const finalSlug = existingSlug
-      ? `${baseSlug}-${newUser.id.slice(0, 6)}`
-      : baseSlug;
-
-    // 5. Create Profile record
-    const [newProfile] = await tx
-      .insert(profiles)
-      .values({
-        userId: newUser.id,
-        slug: finalSlug,
-        displayName: params.displayName.trim(),
-        profileStatus: "incomplete",
-      })
-      .returning();
-
-    // 6. Record Invite Redemption
-    await tx.insert(inviteRedemptions).values({
-      inviteId: invite.id,
-      userId: newUser.id,
-      ipAddress: params.ipAddress || null,
-      userAgent: params.userAgent || null,
-    });
-
-    // 7. Generate Email Verification Token (valid for 24 hours)
-    const rawVerificationToken = crypto.randomBytes(32).toString("hex");
-    const verifTokenHash = crypto.createHash("sha256").update(rawVerificationToken).digest("hex");
-    const verifExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-
-    await tx.insert(emailVerificationTokens).values({
-      userId: newUser.id,
-      tokenHash: verifTokenHash,
-      expiresAt: verifExpiresAt,
-    });
-
-    // 8. Audit Log
     await tx.insert(auditLogs).values({
-      actorId: newUser.id,
+      actorId: params.adminUserId,
       actorIp: params.ipAddress || "127.0.0.1",
-      action: "invite_redeemed",
-      targetType: "user",
-      targetId: newUser.id,
-      reason: `Account created via invitation ${invite.tokenPrefix} (Credentials)`,
+      action: "invite_revoked",
+      targetType: "invite",
+      targetId: invite.id,
+      reason: params.reason?.trim() || "Undangan dicabut oleh administrator",
       metadata: {
         inviteId: invite.id,
-        email: normalizedEmail,
+        tokenPrefix: invite.tokenPrefix,
       },
     });
 
-    return { user: newUser, profile: newProfile, verificationToken: rawVerificationToken };
+    return { invite: updated, alreadyRevoked: false };
   });
-
-  // 9. Send verification email
-  await sendVerificationEmail({
-    email: normalizedEmail,
-    token: result.verificationToken,
-    displayName: params.displayName,
-  });
-
-  return result;
 }

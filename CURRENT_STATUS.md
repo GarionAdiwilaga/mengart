@@ -91,27 +91,66 @@
     - `npm run test:all`: 15/15 test suites passed cleanly.
     - `npm run lint`: 0 errors.
     - `npm run build`: Production Next.js build and worker bundle compiled cleanly.
-- **Phase 4: Release Gate D (Authentication, Invitations & Roles):** PENDING REVIEW
-- **Phase 5: Release Gate E (Radix Modal A11y & Playwright E2E Testing):** PENDING REVIEW
+- **Phase 4: Release Gate D (Authentication, Invitations, Membership & Roles):** **COMPLETED, FULLY COMPATIBLE & 100% VERIFIED**
+  - Google-Only Authentication & Removal of Legacy Password Paths:
+    - Migrated NextAuth in `src/auth.ts` to exclusive Google OAuth 2.0. Completely removed credentials provider, bcrypt hashing, and SMTP verification/password-reset flows.
+    - Dropped `users.password_hash` column and deprecated token tables (`email_verification_tokens`, `password_reset_tokens`) without cascade.
+  - PENDING_INVITE Separation & 3-Value Persistent Membership:
+    - Persistent membership status in PostgreSQL enum `membership_status` is strictly `active | suspended | deleted` (no default, nullable).
+    - `membership_status IS NULL` represents an authenticated Google account in onboarding awaiting invitation redemption (`PENDING_INVITE` derived state).
+  - High-Entropy Base58 Invitations & Admin-Only Management:
+    - Cryptographic base58 tokens ($\ge 16$ bytes, $>100$ bits entropy) stored as SHA-256 hashes (`token_hash`) with 4-character plaintext prefix (`token_prefix`).
+    - Invitation creation and revocation restricted strictly to `requireAdmin()`.
+  - Deterministic Two-Phase Locking Redemption:
+    - `redeemInviteService` acquires row-level locks deterministically: `users` FOR UPDATE by `user.id` first, then `membership_invites` FOR UPDATE by `token_hash`.
+    - Enforces membership transition matrix: `NULL -> ACTIVE` only (invite consumed); `ACTIVE -> ACTIVE` idempotent pass-through (zero usage consumed); `SUSPENDED` and `DELETED` strictly rejected.
+  - Master Clean-Media Authorization Invariant:
+    - Authoritative rule strictly requires `membershipStatus === 'active'` (refreshed live from PostgreSQL) AND independent passage of Gate A media ACL (`canAccessMasterMedia`). Suspended artwork owners receive 403 Forbidden.
+  - Last-Active-Admin Invariant Protection:
+    - Admin demotion, suspension, or deletion acquires transaction-level advisory lock (`pg_advisory_xact_lock(4281729)`) prior to counting active Admins, ensuring serialization and preventing the system from reaching 0 active Admins.
+  - Production Post-Auth Continuation Flow:
+    - Onboarding invite landing page (`/invite/[token]`) sets HttpOnly cookie `mengart_pending_invite` (TTL 15m) and triggers Google OAuth.
+    - Production handler `/api/auth/redeem-callback` resolves session, executes `redeemInviteService`, clears cookie, and navigates to `/dashboard` on success or `/onboarding` on error.
+  - Forward Migration 0011 & Scenario 8 Verification:
+    - Created `drizzle/0011_gate_d_auth_roles_membership.sql`.
+    - Migration Scenario 8 verifies email collision fail-closed defense (`Artist@Example.com` + `artist@example.com` throws `RAISE EXCEPTION`), email lowercase normalization, `uniq_users_lower_email` index enforcement, and 3-value enum conversion.
+  - Test Suite (`src/lib/__tests__/testPhase4AuthAndInvites.ts`):
+    - Verified all 22 Gate D test scenarios + suspended artwork owner 403 master media check.
+  - Verification Suite:
+    - `npm run test:migrate`: 8/8 scenarios passed (including Scenario 8A & 8B).
+    - `npx tsx src/lib/__tests__/testPhase4AuthAndInvites.ts`: 22/22 scenarios passed.
+    - `npx tsx src/lib/__tests__/testPhase2VotingAndTiebreak.ts`: 20/20 scenarios passed.
+    - `npx tsx src/lib/__tests__/testPhase3SimplifiedJury.ts`: 63/63 scenarios passed.
+    - `npm run test:all`: 14/14 test suites passed cleanly.
+    - `npm run lint`: 0 errors.
+    - `npm run build`: Production Next.js build and worker bundle compiled cleanly.
+- **Phase 5: Release Gate E (Submission & Portfolio Simplification):** PENDING REVIEW
 - **Phase 6: Release Gate F (Media Processing, Watermarking & Rate Limiting):** PENDING REVIEW
-- **Phase 7: Release Gate G (Community, Showcase & Story Cards):** PENDING REVIEW
+- **Phase 7: Release Gate G (Community UX, Story Cards, A11y & Playwright E2E):** PENDING REVIEW
 - **Phase 8: Release Gate H (Disaster Recovery & Runtime Concurrency):** PENDING REVIEW
 
-## Addressed QA IDs in Phase 1, Phase 2 & Phase 3 (Gate A, B & C PASS)
+## Addressed QA IDs in Phase 1, Phase 2, Phase 3 & Phase 4 (Gate A, B, C & D PASS)
 - **QA-P0-001** (Database migration reproducibility & authoritative production backfill): RESOLVED & VERIFIED
 - **QA-P0-002** (Per-round ballot uniqueness & multi-round tiebreak support): RESOLVED & VERIFIED
+- **QA-P0-003** (Google-only authentication, invitation-gated onboarding & PENDING_INVITE separation): RESOLVED & VERIFIED
+- **QA-P0-004** (Persistent membership states active | suspended | deleted, transition matrix & serialized RBAC): RESOLVED & VERIFIED
+- **QA-P0-005** (Clean master-media authorization ACTIVE AND Gate A ACL, suspended owner 403): RESOLVED & VERIFIED
 - **QA-P0-006** (Persisted lifecycle state authority & scheduler materializer): RESOLVED & VERIFIED
 - **QA-P0-007** (Mode-aware state machine paths & button actions): RESOLVED & VERIFIED
 - **QA-P0-008** (Two-stage finalization via REVIEW without auto-publish bypass): RESOLVED & VERIFIED
+- **QA-P0-009** (Dynamic jury awards & Recorder model without numeric scoring): RESOLVED & VERIFIED
+- **QA-P0-010** (Mixed mode Community Winner exclusion from jury awards): RESOLVED & VERIFIED
+- **QA-P0-011** (Persist only actual winners/awards; zero empty slots): RESOLVED & VERIFIED
+- **QA-P0-012** (No synthetic jury ranks / #null; single Community Winner highlight): RESOLVED & VERIFIED
 - **QA-P1-007** (Pause/resume deadline validation with round deadlines): RESOLVED & VERIFIED
 - **QA-P1-008** (RESULTS_REVOKED status, notice banner, snapshot audit & flow): RESOLVED & VERIFIED
 
 ## Current Branch
-`main`
+`main` (Gate C Baseline: `94ab50040bf226039fc5c1a1f464faf9d95236a5`)
 
 ## Current Focus
-- Gate C / Phase 3 (Simplified Jury & Results) completed and verified. Ready for independent QA review.
+- Gate D implementation complete and verified. Ready for independent QA review.
 
 ## Blockers
-- Overall status remains NO-GO until Gates D–H pass independent QA.
+- Overall status remains NO-GO until Gates D–H pass independent QA. Stop after Gate D.
 

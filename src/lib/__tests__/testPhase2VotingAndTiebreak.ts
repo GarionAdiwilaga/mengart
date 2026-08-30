@@ -96,13 +96,13 @@ async function runTests() {
       .insert(users)
       .values({ email: "suspended@atelier.local", role: "member", membershipStatus: "suspended", emailVerified: new Date() })
       .returning();
-    const [revokedUser] = await db
+    const [pendingUser] = await db
       .insert(users)
-      .values({ email: "revoked@atelier.local", role: "member", membershipStatus: "revoked", emailVerified: new Date() })
+      .values({ email: "pending@atelier.local", role: "member", membershipStatus: null, emailVerified: new Date() })
       .returning();
     const [deletedUser] = await db
       .insert(users)
-      .values({ email: "deleted@atelier.local", role: "member", membershipStatus: "active", emailVerified: new Date(), deletedAt: new Date() })
+      .values({ email: "deleted@atelier.local", role: "member", membershipStatus: "deleted", emailVerified: new Date(), deletedAt: new Date() })
       .returning();
 
     const [prof1] = await db
@@ -639,19 +639,19 @@ async function runTests() {
     }
     if (!suspendedRejected) throw new Error("Expected suspended member voting to be rejected!");
 
-    // 3. Revoked member -> rejected
-    let revokedRejected = false;
+    // 3. Pending member -> rejected
+    let pendingRejected = false;
     try {
-      await castOrUpdateBallotService(db, { userId: revokedUser.id, role: revokedUser.role }, {
+      await castOrUpdateBallotService(db, { userId: pendingUser.id, role: pendingUser.role }, {
         votingRoundId: round5.id,
         votes: [{ submissionId: sub5A.id, starsCount: 1 }],
       });
     } catch (err: any) {
-      if (err.message.includes("tidak aktif atau sedang ditangguhkan/dicabut")) {
-        revokedRejected = true;
+      if (err.message.includes("tidak aktif atau sedang ditangguhkan/dicabut") || err.message.includes("tidak aktif")) {
+        pendingRejected = true;
       }
     }
-    if (!revokedRejected) throw new Error("Expected revoked member voting to be rejected!");
+    if (!pendingRejected) throw new Error("Expected pending member voting to be rejected!");
 
     // 4. Deleted member -> rejected
     let deletedRejected = false;

@@ -1,4 +1,4 @@
-import { requireModerator } from "@/lib/rbac";
+import { requireAdmin } from "@/lib/rbac";
 import { db } from "@/db";
 import { membershipInvites, users } from "@/db/schema";
 import { desc, eq } from "drizzle-orm";
@@ -7,7 +7,7 @@ import { CreateInviteModal } from "@/components/admin/CreateInviteModal";
 import { InviteManagerTable, type InviteRowItem } from "@/components/admin/InviteManagerTable";
 
 export default async function AdminInvitesPage() {
-  await requireModerator("/login");
+  await requireAdmin("/login");
 
   const invitesList = await db
     .select({

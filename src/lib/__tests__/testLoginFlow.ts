@@ -1,13 +1,12 @@
 import { db } from "@/db";
 import { users, profiles } from "@/db/schema";
 import { eq, or } from "drizzle-orm";
-import bcrypt from "bcryptjs";
 
 const TEST_ACCOUNTS = [
   {
     email: "admin@mengart.local",
     username: "admin_atelier",
-    password: "Password123!",
+    googleId: "google_admin_test",
     role: "admin" as const,
     displayName: "Admin Atelier",
     slug: "admin-atelier",
@@ -15,7 +14,7 @@ const TEST_ACCOUNTS = [
   {
     email: "moderator@mengart.local",
     username: "mod_atelier",
-    password: "Password123!",
+    googleId: "google_mod_test",
     role: "moderator" as const,
     displayName: "Komorebi Moderator",
     slug: "komorebi-mod",
@@ -23,35 +22,32 @@ const TEST_ACCOUNTS = [
   {
     email: "member@mengart.local",
     username: "member_artist",
-    password: "Password123!",
+    googleId: "google_member_test",
     role: "member" as const,
     displayName: "Luna Valerius (Artist)",
     slug: "luna-valerius",
   },
 ];
 
-async function testCredentials() {
-  console.log("--- Testing Credentials & Login Flow Invariants ---");
-  const salt = await bcrypt.genSalt(10);
+async function testGoogleOAuthLoginFlow() {
+  console.log("--- Testing Google OAuth Identity Resolution & Login Invariants ---");
   const now = new Date();
 
-  // Ensure test accounts are seeded
+  // Ensure test accounts are seeded with Google IDs
   for (const acc of TEST_ACCOUNTS) {
     const [existing] = await db
       .select()
       .from(users)
-      .where(eq(users.email, acc.email))
+      .where(eq(users.email, acc.email.toLowerCase()))
       .limit(1);
-
-    const passwordHash = await bcrypt.hash(acc.password, salt);
 
     if (!existing) {
       const [newUser] = await db
         .insert(users)
         .values({
-          email: acc.email,
+          email: acc.email.toLowerCase(),
           username: acc.username,
-          passwordHash,
+          googleId: acc.googleId,
           role: acc.role,
           membershipStatus: "active",
           emailVerified: now,
@@ -70,7 +66,7 @@ async function testCredentials() {
       await db
         .update(users)
         .set({
-          passwordHash,
+          googleId: acc.googleId,
           username: acc.username,
           emailVerified: now,
           membershipStatus: "active",
@@ -79,44 +75,39 @@ async function testCredentials() {
     }
   }
 
-  // Test credential matching for email, username, and password
-  const testCases = [
-    { id: "admin@mengart.local", pass: "Password123!", expectedRole: "admin" },
-    { id: "admin_atelier", pass: "Password123!", expectedRole: "admin" },
-    { id: "moderator@mengart.local", pass: "Password123!", expectedRole: "moderator" },
-    { id: "mod_atelier", pass: "Password123!", expectedRole: "moderator" },
-    { id: "member@mengart.local", pass: "Password123!", expectedRole: "member" },
-    { id: "member_artist", pass: "Password123!", expectedRole: "member" },
-  ];
-
-  for (const tc of testCases) {
-    const [targetUser] = await db
+  // Test Google OAuth lookup for all roles
+  for (const acc of TEST_ACCOUNTS) {
+    // 1. Match by Google ID
+    const [byGoogleId] = await db
       .select()
       .from(users)
-      .where(or(eq(users.email, tc.id), eq(users.username, tc.id)))
+      .where(eq(users.googleId, acc.googleId))
       .limit(1);
 
-    if (!targetUser) {
-      throw new Error(`User not found for ${tc.id}`);
+    if (!byGoogleId || byGoogleId.role !== acc.role || byGoogleId.membershipStatus !== "active") {
+      throw new Error(`Google ID lookup failed for ${acc.email} (${acc.role})`);
     }
 
-    const matches = await bcrypt.compare(tc.pass, targetUser.passwordHash || "");
-    if (!matches) {
-      throw new Error(`Password mismatch for ${tc.id}`);
+    // 2. Match by normalized email
+    const [byEmail] = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, acc.email.toUpperCase().toLowerCase()))
+      .limit(1);
+
+    if (!byEmail || byEmail.id !== byGoogleId.id) {
+      throw new Error(`Normalized email lookup failed for ${acc.email}`);
     }
 
-    if (targetUser.role !== tc.expectedRole) {
-      throw new Error(`Role mismatch for ${tc.id}: expected ${tc.expectedRole}, got ${targetUser.role}`);
-    }
-
-    console.log(`✓ Verified principal: "${tc.id}" -> ID=${targetUser.id}, Role=${targetUser.role}, EmailVerified=true, PasswordHash=Valid`);
+    console.log(`✓ Verified Google OAuth identity resolution for ${acc.email} [${acc.role}]`);
   }
 
-  console.log("\n--- All login flow & credentials invariants verified successfully! ---");
-  process.exit(0);
+  console.log("✓ All Google OAuth Login Invariants passed successfully!\n");
 }
 
-testCredentials().catch((err) => {
-  console.error("❌ Test failed:", err);
-  process.exit(1);
-});
+testGoogleOAuthLoginFlow()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error("❌ Test failed:", err);
+    process.exit(1);
+  });
