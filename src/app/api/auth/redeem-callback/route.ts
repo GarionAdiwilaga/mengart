@@ -5,11 +5,24 @@ import { db } from "@/db";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 
-export async function GET(request: NextRequest) {
-  const session = await auth();
+export async function handleRedeemCallback(
+  request: NextRequest,
+  sessionUserOverride?: { id: string; email?: string; name?: string; image?: string; role?: string; membershipStatus?: string | null }
+) {
+  let sessionUser = sessionUserOverride;
+  if (!sessionUser) {
+    try {
+      const session = await auth();
+      sessionUser = session?.user as any;
+    } catch {
+      sessionUser = undefined;
+    }
+  }
 
-  if (!session?.user || !session.user.id) {
-    return NextResponse.redirect(new URL("/login?error=AuthRequired", request.url));
+  if (!sessionUser || !sessionUser.id) {
+    const response = NextResponse.redirect(new URL("/login?error=AuthRequired", request.url));
+    response.cookies.delete("mengart_pending_invite");
+    return response;
   }
 
   const clientIp =
@@ -26,7 +39,7 @@ export async function GET(request: NextRequest) {
       deletedAt: users.deletedAt,
     })
     .from(users)
-    .where(eq(users.id, session.user.id))
+    .where(eq(users.id, sessionUser.id))
     .limit(1);
 
   if (!dbUser || dbUser.deletedAt || dbUser.membershipStatus === "deleted") {
@@ -48,37 +61,47 @@ export async function GET(request: NextRequest) {
     return response;
   }
 
-  // User is in PENDING_INVITE state (membershipStatus === null)
-  // Read pending invite token from HttpOnly cookie or query param fallback
-  const searchParams = request.nextUrl.searchParams;
-  const cookieToken = request.cookies.get("mengart_pending_invite")?.value;
-  const queryToken = searchParams.get("token");
-  const rawToken = cookieToken || queryToken;
+  // 2. User is in PENDING_INVITE state (membershipStatus === null)
+  // Read pending invite code strictly from HttpOnly cookie (NO searchParams fallback per Blueprint 2.2.2)
+  const pendingCode = request.cookies.get("mengart_pending_invite")?.value;
 
-  if (!rawToken) {
-    // No invite provided: navigate to onboarding to enter invite code
-    return NextResponse.redirect(new URL("/onboarding", request.url));
+  if (!pendingCode || pendingCode.trim().length === 0) {
+    // No invite provided: navigate to onboarding to enter invite code manually
+    const response = NextResponse.redirect(new URL("/onboarding", request.url));
+    response.cookies.delete("mengart_pending_invite");
+    return response;
   }
 
   try {
-    await redeemInviteService(db, {
-      userId: session.user.id,
-      rawToken,
-      displayName: session.user.name || undefined,
-      avatarUrl: session.user.image || undefined,
+    const result = await redeemInviteService(db, {
+      userId: sessionUser.id,
+      code: pendingCode.trim(),
+      displayName: sessionUser.name || undefined,
+      avatarUrl: sessionUser.image || undefined,
       ipAddress: clientIp,
       userAgent,
     });
 
-    const response = NextResponse.redirect(new URL("/dashboard", request.url));
+    const targetUrl = new URL("/dashboard", request.url);
+    if (result.isAlreadyActive) {
+      targetUrl.searchParams.set("notice", "already_active");
+    } else {
+      targetUrl.searchParams.set("welcome", "member");
+    }
+
+    const response = NextResponse.redirect(targetUrl);
     response.cookies.delete("mengart_pending_invite");
     return response;
-  } catch (err: any) {
-    console.error("Failed to redeem invite during OAuth continuation:", err);
-    const response = NextResponse.redirect(
-      new URL(`/onboarding?error=${encodeURIComponent(err?.message || "InvalidInvite")}`, request.url)
-    );
+  } catch (error: any) {
+    const targetUrl = new URL("/onboarding", request.url);
+    targetUrl.searchParams.set("error", error?.message || "Gagal mengaktifkan undangan.");
+
+    const response = NextResponse.redirect(targetUrl);
     response.cookies.delete("mengart_pending_invite");
     return response;
   }
+}
+
+export async function GET(request: NextRequest) {
+  return handleRedeemCallback(request);
 }

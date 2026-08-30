@@ -1254,6 +1254,50 @@ async function runMigrationVerification() {
     }
     console.log("✓ Verified new user can be created with membership_status = NULL (PENDING_INVITE).");
 
+    // Assert 8: membership_invites has 'code' column and dropped 'token_hash' & 'token_prefix'
+    const inviteCols = await upgradeClient0010`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'membership_invites' AND column_name IN ('code', 'token_hash', 'token_prefix');
+    `;
+    const inviteColNames = inviteCols.map((c: any) => c.column_name);
+    if (!inviteColNames.includes("code")) {
+      throw new Error("Expected membership_invites table to have 'code' column in Blueprint 2.2.2.");
+    }
+    if (inviteColNames.includes("token_hash") || inviteColNames.includes("token_prefix")) {
+      throw new Error(`Expected legacy token_hash and token_prefix to be dropped, found: ${inviteColNames.join(', ')}`);
+    }
+    console.log("✓ Verified membership_invites has 'code' column and dropped legacy hash/prefix columns.");
+
+    // Assert 9: uniq_membership_invites_code unique index enforced
+    const [inviteCodeIdx] = await upgradeClient0010`
+      SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'uniq_membership_invites_code';
+    `;
+    if (!inviteCodeIdx) {
+      throw new Error("Expected uniq_membership_invites_code index to exist on membership_invites.");
+    }
+    const [inv1] = await upgradeClient0010`
+      INSERT INTO membership_invites (code, max_uses, uses_count)
+      VALUES ('code2026', 1, 0)
+      RETURNING id, code;
+    `;
+    if (!inv1 || inv1.code !== "code2026") {
+      throw new Error("Failed to insert invite with direct code.");
+    }
+    let duplicateCodeFailed = false;
+    try {
+      await upgradeClient0010`
+        INSERT INTO membership_invites (code, max_uses, uses_count)
+        VALUES ('code2026', 5, 0);
+      `;
+    } catch (_err) {
+      duplicateCodeFailed = true;
+    }
+    if (!duplicateCodeFailed) {
+      throw new Error("Expected uniq_membership_invites_code to reject duplicate invite code insertion.");
+    }
+    console.log("✓ Verified uniq_membership_invites_code unique index exists and rejects duplicate invite codes.");
+
     await upgradeClient0010.end();
     console.log("🎉 SCENARIO 8B (0010 -> 0011 UPGRADE & GATE D SCHEMA VERIFICATION) PASSED!\n");
 

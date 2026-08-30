@@ -1,9 +1,8 @@
 import { Metadata } from "next";
-import { validateInviteToken } from "@/lib/invites";
+import { validateInviteCode } from "@/lib/invites";
 import Link from "next/link";
 import { Palette, Sparkles, AlertCircle, Clock } from "lucide-react";
 import { InviteRedeemForm } from "@/components/auth/InviteRedeemForm";
-import { cookies } from "next/headers";
 
 export const metadata: Metadata = {
   robots: {
@@ -18,7 +17,7 @@ interface InvitePageProps {
 
 export default async function InvitePage({ params }: InvitePageProps) {
   const { token } = await params;
-  const validation = await validateInviteToken(token);
+  const validation = await validateInviteCode(token);
 
   if (!validation.isValid || !validation.invite) {
     let errorTitle = "Undangan Tidak Valid";
@@ -55,16 +54,6 @@ export default async function InvitePage({ params }: InvitePageProps) {
       </main>
     );
   }
-
-  // Set the secure HttpOnly continuation cookie
-  const cookieStore = await cookies();
-  cookieStore.set("mengart_pending_invite", token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 15 * 60, // 15 minutes
-  });
 
   const { invite } = validation;
   const formattedExpiry = invite.expiresAt
@@ -108,7 +97,7 @@ export default async function InvitePage({ params }: InvitePageProps) {
         <div className="grid grid-cols-2 gap-3 p-4 rounded-2xl bg-white/[0.03] border border-white/10 text-xs">
           <div className="flex flex-col gap-1">
             <span className="text-zinc-500 font-mono">KODE UNDANGAN</span>
-            <span className="text-zinc-200 font-mono font-medium">{invite.tokenPrefix}...</span>
+            <span className="text-zinc-200 font-mono font-bold tracking-wider">{invite.code}</span>
           </div>
           <div className="flex flex-col gap-1">
             <span className="text-zinc-500 font-mono">BERLAKU HINGGA</span>
@@ -126,7 +115,7 @@ export default async function InvitePage({ params }: InvitePageProps) {
         </div>
 
         {/* Client-Side Google Continuation Card */}
-        <InviteRedeemForm rawToken={token} />
+        <InviteRedeemForm rawCode={invite.code} />
       </div>
     </main>
   );

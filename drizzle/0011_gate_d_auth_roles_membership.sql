@@ -54,3 +54,14 @@ ALTER TABLE "users" DROP COLUMN IF EXISTS "password_hash";
 
 -- 8. Index on Membership Status
 CREATE INDEX IF NOT EXISTS "idx_users_membership_status" ON "users" ("membership_status");
+
+-- 9. Direct Invite Code Schema (Blueprint 2.2.2)
+ALTER TABLE "membership_invites" ADD COLUMN IF NOT EXISTS "code" text;
+UPDATE "membership_invites" SET "code" = substr("token_hash", 1, 32) WHERE "code" IS NULL;
+ALTER TABLE "membership_invites" ALTER COLUMN "code" SET NOT NULL;
+ALTER TABLE "membership_invites" DROP CONSTRAINT IF EXISTS "membership_invites_token_hash_unique";
+DROP INDEX IF EXISTS "idx_invites_token_hash";
+ALTER TABLE "membership_invites" DROP COLUMN IF EXISTS "token_hash";
+ALTER TABLE "membership_invites" DROP COLUMN IF EXISTS "token_prefix";
+CREATE UNIQUE INDEX IF NOT EXISTS "uniq_membership_invites_code" ON "membership_invites" ("code");
+CREATE INDEX IF NOT EXISTS "idx_invites_code" ON "membership_invites" ("code");

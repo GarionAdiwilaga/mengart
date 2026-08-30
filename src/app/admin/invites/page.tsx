@@ -2,7 +2,7 @@ import { requireAdmin } from "@/lib/rbac";
 import { db } from "@/db";
 import { membershipInvites, users } from "@/db/schema";
 import { desc, eq } from "drizzle-orm";
-import { KeyRound, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { CreateInviteModal } from "@/components/admin/CreateInviteModal";
 import { InviteManagerTable, type InviteRowItem } from "@/components/admin/InviteManagerTable";
 
@@ -12,7 +12,7 @@ export default async function AdminInvitesPage() {
   const invitesList = await db
     .select({
       id: membershipInvites.id,
-      tokenPrefix: membershipInvites.tokenPrefix,
+      code: membershipInvites.code,
       label: membershipInvites.label,
       expiresAt: membershipInvites.expiresAt,
       maxUses: membershipInvites.maxUses,
@@ -39,7 +39,7 @@ export default async function AdminInvitesPage() {
             Kunci & Tautan Undangan
           </h1>
           <p className="text-xs text-zinc-400 font-sans mt-0.5">
-            Buat kode pendek 8-karakter atau vanity kustom, pantau kuota penggunaan, dan salin tautan undangan langsung.
+            Buat kode CSPRNG 8-karakter atau custom vanity code, kelola kuota penggunaan, dan salin kode/tautan undangan.
           </p>
         </div>
 

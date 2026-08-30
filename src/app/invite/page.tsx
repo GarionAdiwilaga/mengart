@@ -1,6 +1,6 @@
 import { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { extractInviteToken, validateInviteToken } from "@/lib/invites";
+import { extractInviteCode, validateInviteCode } from "@/lib/invites";
 import Link from "next/link";
 import { Palette, Key, Sparkles, ArrowRight, ShieldCheck } from "lucide-react";
 
@@ -23,13 +23,13 @@ export default async function InviteEntryPage({ searchParams }: InviteEntryPageP
   async function handleInviteSubmit(formData: FormData) {
     "use server";
     const rawInput = formData.get("inviteInput") as string;
-    const token = extractInviteToken(rawInput);
+    const code = extractInviteCode(rawInput);
 
-    if (!token) {
+    if (!code) {
       redirect("/invite?error=InvalidFormat");
     }
 
-    redirect(`/invite/${encodeURIComponent(token)}`);
+    redirect(`/invite/${encodeURIComponent(code)}`);
   }
 
   return (
@@ -74,7 +74,7 @@ export default async function InviteEntryPage({ searchParams }: InviteEntryPageP
               type="text"
               name="inviteInput"
               required
-              placeholder="e.g. inv_a8f9c2... atau https://mengart.art/invite/..."
+              placeholder="contoh: a7Kp3mQx atau https://mengart.art/invite/..."
               className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-xs font-mono"
             />
             <span className="text-[11px] text-zinc-500 font-sans">

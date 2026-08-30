@@ -76,7 +76,7 @@ export async function updateUserStatusAction(
       throw new Error("Pengguna tidak ditemukan.");
     }
 
-    // Transition Matrix Enforcement
+    // Transition Matrix Enforcement (Blueprint 2.2.2 Section F)
     // 1. Cannot activate pending account via generic admin action (must redeem invite)
     if (target.membershipStatus === null && newStatus === "active") {
       throw new Error(
@@ -84,12 +84,17 @@ export async function updateUserStatusAction(
       );
     }
 
-    // 2. Deleted status is irreversible in Gate D
+    // 2. Cannot suspend pending account
+    if (target.membershipStatus === null && newStatus === "suspended") {
+      throw new Error("Akun pending tidak dapat ditangguhkan.");
+    }
+
+    // 3. Deleted status is irreversible
     if (target.membershipStatus === "deleted" || target.deletedAt) {
       throw new Error("Akun yang telah dihapus tidak dapat diubah statusnya.");
     }
 
-    // 3. Moderator authority boundary: ordinary members only, cannot delete
+    // 4. Moderator authority boundary: ordinary members only, cannot delete
     if (actor.role === "moderator") {
       if (target.role !== "member") {
         throw new Error(
@@ -101,7 +106,7 @@ export async function updateUserStatusAction(
       }
     }
 
-    // 4. Soft-delete requires mandatory >= 5 character reason
+    // 5. Soft-delete requires mandatory >= 5 character reason and Admin role
     if (newStatus === "deleted") {
       if (actor.role !== "admin") {
         throw new Error("Akses ditolak: Hanya Administrator yang dapat menghapus akun.");
@@ -111,7 +116,7 @@ export async function updateUserStatusAction(
       }
     }
 
-    // 5. Enforce serialized Last-Active-Admin Invariant when suspending or deleting an active Admin
+    // 6. Enforce serialized Last-Active-Admin Invariant when suspending or deleting an active Admin
     const willRemoveActiveAdmin =
       target.role === "admin" &&
       target.membershipStatus === "active" &&
@@ -142,13 +147,8 @@ export async function updateUserStatusAction(
         .set({ membershipStatus: newStatus, updatedAt: now })
         .where(eq(users.id, targetUserId));
 
-      await tx
-        .update(profiles)
-        .set({
-          profileStatus: newStatus === "suspended" ? "suspended" : "active_public",
-          updatedAt: now,
-        })
-        .where(eq(profiles.userId, targetUserId));
+      // Blueprint 2.2.2 Section G: Preserve Profile Privacy across suspension/reactivation
+      // Keep underlying profile visibility/status unchanged (e.g. active_hidden remains active_hidden)
     }
 
     await tx.insert(auditLogs).values({
@@ -161,7 +161,6 @@ export async function updateUserStatusAction(
         previousStatus: target.membershipStatus,
         newStatus,
         targetEmail: target.email,
-        reason: reason?.trim(),
       },
     });
 

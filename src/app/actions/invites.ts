@@ -13,6 +13,7 @@ import { revalidatePath } from "next/cache";
 
 const createInviteSchema = z.object({
   label: z.string().max(100).optional(),
+  customCode: z.string().max(25).optional(),
   expiryPreset: z
     .enum(["30m", "1h", "6h", "12h", "1d", "7d", "never", "custom"])
     .default("7d"),
@@ -30,6 +31,7 @@ const revokeInviteSchema = z.object({
  */
 export async function createInviteAction(formData: {
   label?: string;
+  customCode?: string;
   expiryPreset?: InviteExpiryPreset;
   customExpiresAt?: string;
   maxUses?: number | null;
@@ -44,6 +46,7 @@ export async function createInviteAction(formData: {
 
   const result = await createMembershipInvite({
     label: validated.label,
+    customCode: validated.customCode,
     expiryPreset: validated.expiryPreset as InviteExpiryPreset,
     customExpiresAt: validated.customExpiresAt
       ? new Date(validated.customExpiresAt)

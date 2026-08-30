@@ -3,12 +3,13 @@
 import { useState } from "react";
 import { signIn } from "next-auth/react";
 import { ArrowRight, Loader2, Sparkles, AlertCircle } from "lucide-react";
+import { initiateInviteGoogleLoginAction } from "@/app/actions/auth";
 
 interface InviteRedeemFormProps {
-  rawToken: string;
+  rawCode: string;
 }
 
-export function InviteRedeemForm({ rawToken }: InviteRedeemFormProps) {
+export function InviteRedeemForm({ rawCode }: InviteRedeemFormProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -17,8 +18,17 @@ export function InviteRedeemForm({ rawToken }: InviteRedeemFormProps) {
     setError(null);
 
     try {
+      // 1. Call Server Action to validate code and set HttpOnly continuation cookie
+      const res = await initiateInviteGoogleLoginAction(rawCode);
+      if (!res.success) {
+        setError(res.error || "Undangan tidak valid.");
+        setIsLoading(false);
+        return;
+      }
+
+      // 2. Start Google OAuth with clean callback URL (NO invite code in query parameters)
       await signIn("google", {
-        callbackUrl: `/api/auth/redeem-callback?token=${encodeURIComponent(rawToken)}`,
+        callbackUrl: "/api/auth/redeem-callback",
       });
     } catch (err: any) {
       setError(err?.message || "Gagal memulai autentikasi Google. Silakan coba kembali.");
@@ -68,7 +78,7 @@ export function InviteRedeemForm({ rawToken }: InviteRedeemFormProps) {
               />
             </svg>
             <span>Lanjutkan dengan Google</span>
-            <ArrowRight className="h-4 w-4 text-black ml-auto" />
+            <ArrowRight className="h-4 w-4 text-black/60" />
           </>
         )}
       </button>

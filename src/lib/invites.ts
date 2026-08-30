@@ -21,6 +21,7 @@ export type InviteExpiryPreset =
 
 export interface CreateInviteParams {
   label?: string;
+  customCode?: string;
   expiryPreset?: InviteExpiryPreset;
   customExpiresAt?: Date;
   maxUses?: number | null; // null = unlimited
@@ -30,9 +31,8 @@ export interface CreateInviteParams {
 
 export interface GeneratedInviteResult {
   id: string;
-  rawToken: string; // ONLY returned upon initial creation. Never stored or logged.
+  code: string;
   inviteUrl: string;
-  tokenPrefix: string;
   label: string | null;
   expiresAt: Date | null;
   maxUses: number | null;
@@ -42,24 +42,56 @@ export interface GeneratedInviteResult {
 
 export type InviteStatus = "active" | "expired" | "exhausted" | "revoked";
 
-const BASE58_CHARS = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const INVITE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+const RESERVED_INVITE_CODES = new Set([
+  "api",
+  "auth",
+  "admin",
+  "login",
+  "onboarding",
+  "dashboard",
+  "invite",
+  "challenges",
+  "artists",
+  "artworks",
+  "gallery",
+  "me",
+  "settings",
+]);
 
 /**
- * Generate a high-entropy cryptographic random invite code (default 16 bytes base58, >100 bits entropy)
+ * Generate a CSPRNG unbiased random invite code (default 8 characters, A-Z/a-z/0-9) per Blueprint 2.2.2
  */
-export function generateShortInviteCode(length = 16): string {
-  const bytes = crypto.randomBytes(length);
+export function generateDefaultInviteCode(length = 8): string {
   let result = "";
   for (let i = 0; i < length; i++) {
-    result += BASE58_CHARS[bytes[i] % BASE58_CHARS.length];
+    const randomIndex = crypto.randomInt(0, INVITE_ALPHABET.length);
+    result += INVITE_ALPHABET[randomIndex];
   }
   return result;
 }
 
 /**
- * Intelligently extract raw token whether user entered a raw token or full invitation URL
+ * Normalize and validate optional custom invite code (lowercase, [a-z0-9-], max length 25)
  */
-export function extractInviteToken(input: string): string {
+export function normalizeAndValidateCustomCode(customCode: string): string {
+  const normalized = customCode.trim().toLowerCase();
+  if (normalized.length < 1 || normalized.length > 25) {
+    throw new Error("Kode undangan khusus harus terdiri dari 1 hingga 25 karakter.");
+  }
+  if (!/^[a-z0-9-]+$/.test(normalized)) {
+    throw new Error("Kode undangan khusus hanya boleh memuat huruf kecil, angka, dan tanda hubung (-).");
+  }
+  if (RESERVED_INVITE_CODES.has(normalized)) {
+    throw new Error("Kode undangan tersebut merupakan kata kunci sistem dan tidak dapat digunakan.");
+  }
+  return normalized;
+}
+
+/**
+ * Intelligently extract raw code whether user entered a raw code or full invitation URL
+ */
+export function extractInviteCode(input: string): string {
   if (!input) return "";
   const trimmed = input.trim();
 
@@ -76,14 +108,6 @@ export function extractInviteToken(input: string): string {
     .replace(/^https?:\/\/[^/]+\//, "")
     .replace(/^invite\//, "")
     .trim();
-}
-
-/**
- * Hash raw invitation token with SHA-256
- */
-export function hashInviteToken(rawToken: string): string {
-  const clean = extractInviteToken(rawToken);
-  return crypto.createHash("sha256").update(clean).digest("hex");
 }
 
 /**
@@ -116,15 +140,53 @@ export function calculateExpiryDate(
 }
 
 /**
- * Generate a new high-entropy membership invitation (Admin only)
+ * Create a new membership invitation (Admin only) storing direct code per Blueprint 2.2.2
  */
 export async function createMembershipInvite(
   params: CreateInviteParams,
   appBaseUrl: string = process.env.APP_URL || "http://localhost:3000"
 ): Promise<GeneratedInviteResult> {
-  const rawToken = generateShortInviteCode(16);
-  const tokenHash = hashInviteToken(rawToken);
-  const tokenPrefix = `inv_${rawToken.slice(0, 8)}`;
+  let code: string;
+
+  if (params.customCode && params.customCode.trim().length > 0) {
+    code = normalizeAndValidateCustomCode(params.customCode);
+
+    // Check custom code uniqueness
+    const [existing] = await db
+      .select({ id: membershipInvites.id })
+      .from(membershipInvites)
+      .where(eq(membershipInvites.code, code))
+      .limit(1);
+
+    if (existing) {
+      throw new Error("Kode undangan khusus tersebut sudah digunakan. Silakan pilih kode lain.");
+    }
+  } else {
+    // Generate default 8-char CSPRNG code with collision retry loop
+    let attempts = 0;
+    let unique = false;
+    code = "";
+
+    while (!unique && attempts < 10) {
+      attempts++;
+      const candidate = generateDefaultInviteCode(8);
+      const [existing] = await db
+        .select({ id: membershipInvites.id })
+        .from(membershipInvites)
+        .where(eq(membershipInvites.code, candidate))
+        .limit(1);
+
+      if (!existing) {
+        code = candidate;
+        unique = true;
+      }
+    }
+
+    if (!unique || !code) {
+      throw new Error("Gagal menghasilkan kode undangan unik. Silakan coba lagi.");
+    }
+  }
+
   const expiresAt = params.customExpiresAt
     ? params.customExpiresAt
     : calculateExpiryDate(params.expiryPreset || "7d");
@@ -132,8 +194,7 @@ export async function createMembershipInvite(
   const [createdInvite] = await db
     .insert(membershipInvites)
     .values({
-      tokenHash,
-      tokenPrefix,
+      code,
       label: params.label?.trim() || null,
       expiresAt,
       maxUses: params.maxUses !== undefined ? params.maxUses : 1, // Default 1 use
@@ -142,16 +203,17 @@ export async function createMembershipInvite(
     })
     .returning();
 
-  // Audit log creation (NEVER log raw token)
+  // Audit log creation (DO NOT put raw code in reason or metadata)
   await db.insert(auditLogs).values({
     actorId: params.createdByUserId || null,
     actorIp: params.creatorIp || "127.0.0.1",
     action: "invite_created",
     targetType: "invite",
     targetId: createdInvite.id,
-    reason: params.label || `Generated membership invite (${tokenPrefix})`,
+    reason: params.label || "Undangan membership baru dibuat oleh administrator",
     metadata: {
-      tokenPrefix,
+      inviteId: createdInvite.id,
+      label: createdInvite.label,
       expiresAt,
       maxUses: params.maxUses,
     },
@@ -159,9 +221,8 @@ export async function createMembershipInvite(
 
   return {
     id: createdInvite.id,
-    rawToken,
-    inviteUrl: `${appBaseUrl}/invite/${rawToken}`,
-    tokenPrefix,
+    code: createdInvite.code,
+    inviteUrl: `${appBaseUrl}/invite/${createdInvite.code}`,
     label: createdInvite.label,
     expiresAt: createdInvite.expiresAt,
     maxUses: createdInvite.maxUses,
@@ -171,19 +232,23 @@ export async function createMembershipInvite(
 }
 
 /**
- * Validate an invitation token without redeeming it
+ * Validate an invitation code without redeeming it
  */
-export async function validateInviteToken(rawToken: string) {
-  const cleanToken = extractInviteToken(rawToken);
-  if (!cleanToken || cleanToken.length === 0) {
+export async function validateInviteCode(rawInput: string) {
+  const cleanCode = extractInviteCode(rawInput);
+  if (!cleanCode || cleanCode.length === 0) {
     return { isValid: false, reason: "not_found" as const, invite: null };
   }
 
-  const tokenHash = hashInviteToken(cleanToken);
   const [invite] = await db
     .select()
     .from(membershipInvites)
-    .where(eq(membershipInvites.tokenHash, tokenHash))
+    .where(
+      or(
+        eq(membershipInvites.code, cleanCode),
+        eq(membershipInvites.code, cleanCode.toLowerCase())
+      )
+    )
     .limit(1);
 
   if (!invite) {
@@ -206,23 +271,23 @@ export async function validateInviteToken(rawToken: string) {
 }
 
 /**
- * Deterministic Two-Phase Locking Service for Invite Redemption (Blueprint 2.2.1)
+ * Deterministic Two-Phase Locking Service for Invite Redemption (Blueprint 2.2.2)
  * Lock Order:
  * 1. Lock target users row FOR UPDATE
- * 2. Lock target membership_invites row FOR UPDATE
+ * 2. Lock target membership_invites row FOR UPDATE by direct code
  */
 export async function redeemInviteService(
   dbOrTx: any,
   params: {
     userId: string;
-    rawToken: string;
+    code: string;
     displayName?: string;
     avatarUrl?: string;
     ipAddress?: string;
     userAgent?: string;
   }
 ) {
-  const tokenHash = hashInviteToken(params.rawToken);
+  const cleanCode = extractInviteCode(params.code);
   const now = new Date();
 
   return await dbOrTx.transaction(async (tx: any) => {
@@ -256,11 +321,16 @@ export async function redeemInviteService(
       throw new Error("Akun telah dihapus.");
     }
 
-    // 2. Lock target invite row FOR UPDATE
+    // 2. Lock target invite row FOR UPDATE by direct code
     const [invite] = await tx
       .select()
       .from(membershipInvites)
-      .where(eq(membershipInvites.tokenHash, tokenHash))
+      .where(
+        or(
+          eq(membershipInvites.code, cleanCode),
+          eq(membershipInvites.code, cleanCode.toLowerCase())
+        )
+      )
       .for("update");
 
     if (!invite) {
@@ -346,17 +416,16 @@ export async function redeemInviteService(
       redeemedAt: now,
     });
 
-    // 7. Audit log
+    // 7. Audit log (DO NOT leak raw invite code in metadata/reason)
     await tx.insert(auditLogs).values({
       actorId: user.id,
       actorIp: params.ipAddress || "127.0.0.1",
       action: "invite_redeemed",
       targetType: "invite",
       targetId: invite.id,
-      reason: `Membership activated via invite ${invite.tokenPrefix}`,
+      reason: "Keanggotaan diaktifkan melalui penukaran undangan resmi",
       metadata: {
         inviteId: invite.id,
-        tokenPrefix: invite.tokenPrefix,
         userId: user.id,
         email: user.email,
       },
@@ -415,7 +484,6 @@ export async function revokeInviteService(
       reason: params.reason?.trim() || "Undangan dicabut oleh administrator",
       metadata: {
         inviteId: invite.id,
-        tokenPrefix: invite.tokenPrefix,
       },
     });
 

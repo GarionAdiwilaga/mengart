@@ -1,16 +1,12 @@
 import { db } from "@/db";
 import { users, profiles, artworks } from "@/db/schema";
 import { eq, sql, desc } from "drizzle-orm";
-import { auth } from "@/auth";
-import { redirect } from "next/navigation";
+import { requireModerator } from "@/lib/rbac";
 import { UserManagementTable, type UserRowItem } from "@/components/admin/UserManagementTable";
-import { Users, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 
 export default async function AdminUsersPage() {
-  const session = await auth();
-  if (session?.user?.role !== "admin" && session?.user?.role !== "moderator") {
-    redirect("/dashboard");
-  }
+  const actor = await requireModerator("/dashboard");
 
   // Fetch all users with profile data and count of published artworks
   const rows = await db
@@ -50,7 +46,7 @@ export default async function AdminUsersPage() {
 
       <UserManagementTable
         users={rows as UserRowItem[]}
-        currentUserRole={session.user.role}
+        currentUserRole={actor.role}
       />
     </div>
   );

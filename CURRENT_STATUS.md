@@ -97,28 +97,39 @@
     - Dropped `users.password_hash` column and deprecated token tables (`email_verification_tokens`, `password_reset_tokens`) without cascade.
   - PENDING_INVITE Separation & 3-Value Persistent Membership:
     - Persistent membership status in PostgreSQL enum `membership_status` is strictly `active | suspended | deleted` (no default, nullable).
+- **Phase 4: Release Gate D (Authentication, Invitations, Membership & Roles — Blueprint 2.2.2):** **COMPLETED, FULLY COMPATIBLE & 100% VERIFIED**
+  - Google-Only OAuth Authentication:
+    - Migrated NextAuth configuration in `src/auth.ts` to exclusive Google OAuth 2.0. Completely removed credentials provider, bcrypt password hashing, and SMTP verification/password reset workflows.
+    - Dropped `password_hash` column and legacy token tables (`email_verification_tokens`, `password_reset_tokens`) without cascade.
+    - Production `resolveGoogleSignInIdentity` helper enforces literal `profile.email_verified === true` (rejects `false`, `undefined`, `null`, and missing claims), lowercases emails, binds Google IDs to existing verified accounts, and fails closed on collisions and deleted accounts.
+  - PENDING_INVITE Separation from Persistent Membership:
+    - Persistent membership status in PostgreSQL enum `membership_status` is strictly `active | suspended | deleted` (3 values, with `revoked` eliminated).
+    - The column is nullable with NO default constraint.
     - `membership_status IS NULL` represents an authenticated Google account in onboarding awaiting invitation redemption (`PENDING_INVITE` derived state).
-  - High-Entropy Base58 Invitations & Admin-Only Management:
-    - Cryptographic base58 tokens ($\ge 16$ bytes, $>100$ bits entropy) stored as SHA-256 hashes (`token_hash`) with 4-character plaintext prefix (`token_prefix`).
-    - Invitation creation and revocation restricted strictly to `requireAdmin()`.
+  - Direct Discord-Style Invitation Codes & Admin-Only Management:
+    - Stored invitation codes directly as plaintext `membership_invites.code` with unique index `uniq_membership_invites_code`. Dropped `token_hash` and `token_prefix`.
+    - Default generated codes use an unbiased CSPRNG (`crypto.randomInt(0, 62)`) producing strictly 8 alphanumeric characters from `[A-Za-z0-9]`.
+    - Custom vanity codes normalized to lowercase, restricted to `[a-z0-9-]`, max length 25 characters with reserved keyword filter.
+    - Invitation creation and revocation restricted strictly to `requireAdmin()`. Admins can list, view, and copy the real stored code and `/invite/<code>` link. Moderators denied invite administration.
   - Deterministic Two-Phase Locking Redemption:
-    - `redeemInviteService` acquires row-level locks deterministically: `users` FOR UPDATE by `user.id` first, then `membership_invites` FOR UPDATE by `token_hash`.
+    - `redeemInviteService` acquires row-level locks deterministically: `users` FOR UPDATE by `user.id` first, then `membership_invites` FOR UPDATE by `code`.
     - Enforces membership transition matrix: `NULL -> ACTIVE` only (invite consumed); `ACTIVE -> ACTIVE` idempotent pass-through (zero usage consumed); `SUSPENDED` and `DELETED` strictly rejected.
   - Master Clean-Media Authorization Invariant:
     - Authoritative rule strictly requires `membershipStatus === 'active'` (refreshed live from PostgreSQL) AND independent passage of Gate A media ACL (`canAccessMasterMedia`). Suspended artwork owners receive 403 Forbidden.
   - Last-Active-Admin Invariant Protection:
     - Admin demotion, suspension, or deletion acquires transaction-level advisory lock (`pg_advisory_xact_lock(4281729)`) prior to counting active Admins, ensuring serialization and preventing the system from reaching 0 active Admins.
   - Production Post-Auth Continuation Flow:
-    - Onboarding invite landing page (`/invite/[token]`) sets HttpOnly cookie `mengart_pending_invite` (TTL 15m) and triggers Google OAuth.
-    - Production handler `/api/auth/redeem-callback` resolves session, executes `redeemInviteService`, clears cookie, and navigates to `/dashboard` on success or `/onboarding` on error.
+    - `initiateInviteGoogleLoginAction` Server Action sets HttpOnly cookie `mengart_pending_invite` (TTL 15m).
+    - Google OAuth initiates with clean callback URL `/api/auth/redeem-callback` (zero query tokens).
+    - Production handler `/api/auth/redeem-callback` reads exclusively from the cookie, executes `redeemInviteService`, clears the cookie on all outcomes, and navigates to `/dashboard` on success or `/onboarding` on error.
   - Forward Migration 0011 & Scenario 8 Verification:
     - Created `drizzle/0011_gate_d_auth_roles_membership.sql`.
-    - Migration Scenario 8 verifies email collision fail-closed defense (`Artist@Example.com` + `artist@example.com` throws `RAISE EXCEPTION`), email lowercase normalization, `uniq_users_lower_email` index enforcement, and 3-value enum conversion.
+    - Migration Scenario 8 verifies email collision fail-closed defense (`Artist@Example.com` + `artist@example.com` throws `RAISE EXCEPTION`), email lowercase normalization, `uniq_users_lower_email` index enforcement, direct `membership_invites.code` column migration, and `uniq_membership_invites_code` unique index enforcement.
   - Test Suite (`src/lib/__tests__/testPhase4AuthAndInvites.ts`):
-    - Verified all 22 Gate D test scenarios + suspended artwork owner 403 master media check.
+    - Verified all 20 Gate D security and invariant test scenarios under Blueprint 2.2.2.
   - Verification Suite:
     - `npm run test:migrate`: 8/8 scenarios passed (including Scenario 8A & 8B).
-    - `npx tsx src/lib/__tests__/testPhase4AuthAndInvites.ts`: 22/22 scenarios passed.
+    - `npx tsx src/lib/__tests__/testPhase4AuthAndInvites.ts`: 20/20 scenarios passed.
     - `npx tsx src/lib/__tests__/testPhase2VotingAndTiebreak.ts`: 20/20 scenarios passed.
     - `npx tsx src/lib/__tests__/testPhase3SimplifiedJury.ts`: 63/63 scenarios passed.
     - `npm run test:all`: 14/14 test suites passed cleanly.

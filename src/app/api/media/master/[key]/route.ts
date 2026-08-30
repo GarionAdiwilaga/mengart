@@ -9,23 +9,32 @@ import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
 
-export async function GET(
+export async function handleGetMasterMedia(
   request: NextRequest,
-  { params }: { params: Promise<{ key: string }> }
+  { params }: { params: Promise<{ key: string }> },
+  sessionUserOverride?: { id: string; role?: string; membershipStatus?: string | null }
 ) {
-  const session = await auth();
+  let sessionUser = sessionUserOverride;
+  if (!sessionUser) {
+    try {
+      const session = await auth();
+      sessionUser = session?.user as any;
+    } catch {
+      sessionUser = undefined;
+    }
+  }
   
   // 1. Authentication Guard & DB Membership Refresh
-  if (!session?.user || !session.user.id) {
+  if (!sessionUser || !sessionUser.id) {
     return new NextResponse("Unauthorized: Autentikasi diperlukan untuk mengakses master media orisinal.", {
       status: 401,
     });
   }
 
   const [dbUser] = await db
-    .select({ membershipStatus: users.membershipStatus })
+    .select({ membershipStatus: users.membershipStatus, role: users.role })
     .from(users)
-    .where(eq(users.id, session.user.id))
+    .where(eq(users.id, sessionUser.id))
     .limit(1);
 
   if (!dbUser || dbUser.membershipStatus !== "active") {
@@ -59,76 +68,59 @@ export async function GET(
     return new NextResponse("Master Media Tidak Ditemukan", { status: 404 });
   }
 
-  // Check if artwork was submitted to a challenge
-  let challengeId: string | null = null;
-  const [subVersion] = await db
-    .select({
-      challengeId: challengeSubmissions.challengeId,
-    })
-    .from(challengeSubmissionVersions)
-    .innerJoin(challengeSubmissions, eq(challengeSubmissions.id, challengeSubmissionVersions.submissionId))
-    .where(eq(challengeSubmissionVersions.artworkVersionId, version.versionId))
-    .limit(1);
+  // Optional challenge ID context
+  const searchParams = request.nextUrl.searchParams;
+  const challengeId = searchParams.get("challengeId");
 
-  if (subVersion) {
-    challengeId = subVersion.challengeId;
-  }
+  const isAllowed = await canAccessMasterMedia(
+    {
+      id: sessionUser.id,
+      role: dbUser.role as any,
+      membershipStatus: dbUser.membershipStatus as any,
+    },
+    {
+      id: version.artworkId,
+      userId: version.artworkUserId,
+      audience: version.artworkAudience as any,
+      publicationStatus: version.artworkPublicationStatus as any,
+      deletedAt: version.artworkDeletedAt,
+    },
+    challengeId
+  );
 
-  const artworkEntity = {
-    id: version.artworkId,
-    userId: version.artworkUserId,
-    audience: version.artworkAudience as any,
-    publicationStatus: version.artworkPublicationStatus as any,
-    deletedAt: version.artworkDeletedAt,
-  };
-
-  const hasAccess = await canAccessMasterMedia(session.user as any, artworkEntity, challengeId);
-  if (!hasAccess) {
-    return new NextResponse("Forbidden: Anda tidak memiliki izin akses untuk mengunduh master media karya ini.", {
+  if (!isAllowed) {
+    return new NextResponse("Forbidden: Anda tidak memiliki wewenang untuk mengakses master clean media karya ini.", {
       status: 403,
     });
   }
 
-  // 3. Resolve Path with Path Traversal Protection
+  // 3. Resolve file from private master storage and stream
   const filePath = resolveStoragePath("master", key);
-
   try {
-    const stats = await fsp.stat(filePath);
-    if (!stats.isFile()) {
-      return new NextResponse("Not Found", { status: 404 });
-    }
-
-    // Determine MIME type
-    const ext = path.extname(filePath).toLowerCase();
-    let contentType = version.mimeType || "application/octet-stream";
-    if (ext === ".jpg" || ext === ".jpeg") contentType = "image/jpeg";
-    else if (ext === ".png") contentType = "image/png";
-    else if (ext === ".webp") contentType = "image/webp";
-    else if (ext === ".gif") contentType = "image/gif";
-    else if (ext === ".mp4") contentType = "video/mp4";
-    else if (ext === ".webm") contentType = "video/webm";
-
-    const nodeStream = fs.createReadStream(filePath);
-    const webStream = new ReadableStream({
-      start(controller) {
-        nodeStream.on("data", (chunk) => controller.enqueue(chunk));
-        nodeStream.on("end", () => controller.close());
-        nodeStream.on("error", (err) => controller.error(err));
-      },
-      cancel() {
-        nodeStream.destroy();
-      },
-    });
-
-    return new NextResponse(webStream, {
-      headers: {
-        "Content-Type": contentType,
-        "Content-Length": stats.size.toString(),
-        "Cache-Control": "private, no-cache, no-store, must-revalidate",
-        "X-Content-Type-Options": "nosniff",
-      },
-    });
-  } catch (err) {
-    return new NextResponse("Media File Not Found on Disk", { status: 404 });
+    await fsp.access(filePath);
+  } catch {
+    return new NextResponse("File Media Fisik Tidak Ditemukan", { status: 404 });
   }
+
+  const stat = await fsp.stat(filePath);
+  const fileStream = fs.createReadStream(filePath);
+
+  const headers = new Headers();
+  headers.set("Content-Type", version.mimeType || "application/octet-stream");
+  headers.set("Content-Length", stat.size.toString());
+  headers.set("Cache-Control", "private, no-cache, no-store, must-revalidate");
+  headers.set("Content-Disposition", `inline; filename="${path.basename(key)}"`);
+
+  // Cast Node.js Readable stream to standard web ReadableStream for NextResponse
+  return new NextResponse(fileStream as any, {
+    status: 200,
+    headers,
+  });
+}
+
+export async function GET(
+  request: NextRequest,
+  context: { params: Promise<{ key: string }> }
+) {
+  return handleGetMasterMedia(request, context);
 }

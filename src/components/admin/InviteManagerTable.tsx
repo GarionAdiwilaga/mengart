@@ -7,7 +7,7 @@ import { toast } from "sonner";
 
 export interface InviteRowItem {
   id: string;
-  tokenPrefix: string;
+  code: string;
   label: string | null;
   expiresAt: Date | null;
   maxUses: number | null;
@@ -24,16 +24,24 @@ interface InviteManagerTableProps {
 
 export function InviteManagerTable({ invites }: InviteManagerTableProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const now = new Date();
 
-  const handleCopy = (inv: InviteRowItem) => {
+  const handleCopyLink = (inv: InviteRowItem) => {
     const origin = typeof window !== "undefined" ? window.location.origin : "";
-    const inviteUrl = `${origin}/invite/${inv.tokenPrefix}`;
+    const inviteUrl = `${origin}/invite/${inv.code}`;
     navigator.clipboard.writeText(inviteUrl);
     setCopiedId(inv.id);
-    toast.success(`Tautan undangan untuk "${inv.tokenPrefix}" disalin ke clipboard!`);
+    toast.success(`Tautan undangan untuk "${inv.code}" disalin ke clipboard!`);
     setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleCopyCode = (inv: InviteRowItem) => {
+    navigator.clipboard.writeText(inv.code);
+    setCopiedCodeId(inv.id);
+    toast.success(`Kode undangan "${inv.code}" disalin ke clipboard!`);
+    setTimeout(() => setCopiedCodeId(null), 2000);
   };
 
   const filtered = invites.filter((inv) => {
@@ -47,7 +55,7 @@ export function InviteManagerTable({ invites }: InviteManagerTableProps) {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Filter Tabs: Horizontally scrollable on mobile */}
+      {/* Filter Tabs */}
       <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-white/5 border border-white/10 w-full sm:w-fit overflow-x-auto no-scrollbar touch-pan-x">
         {[
           { key: "all", label: "Semua" },
@@ -110,10 +118,21 @@ export function InviteManagerTable({ invites }: InviteManagerTableProps) {
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <span className="px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 font-bold text-xs tracking-wider font-mono">
-                        {inv.tokenPrefix}
+                        {inv.code}
                       </span>
                       <button
-                        onClick={() => handleCopy(inv)}
+                        onClick={() => handleCopyCode(inv)}
+                        className="p-2 min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors cursor-pointer"
+                        title="Salin Kode"
+                      >
+                        {copiedCodeId === inv.id ? (
+                          <Check className="h-4 w-4 text-emerald-400" />
+                        ) : (
+                          <KeyRound className="h-4 w-4" />
+                        )}
+                      </button>
+                      <button
+                        onClick={() => handleCopyLink(inv)}
                         className="p-2 min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors cursor-pointer"
                         title="Salin Tautan Undangan"
                       >
@@ -144,7 +163,7 @@ export function InviteManagerTable({ invites }: InviteManagerTableProps) {
 
                   {status === "Aktif" ? (
                     <div className="pt-2 border-t border-white/5 flex justify-end">
-                      <RevokeInviteButton inviteId={inv.id} tokenPrefix={inv.tokenPrefix} />
+                      <RevokeInviteButton inviteId={inv.id} code={inv.code} />
                     </div>
                   ) : null}
                 </div>
@@ -153,12 +172,12 @@ export function InviteManagerTable({ invites }: InviteManagerTableProps) {
           )}
         </div>
 
-        {/* Desktop Table (hidden on mobile, visible on md+) */}
+        {/* Desktop Table */}
         <div className="hidden md:block overflow-x-auto touch-pan-x">
           <table className="w-full text-left text-xs font-sans">
             <thead className="bg-white/5 border-b border-white/10 text-[11px] font-mono text-zinc-400 uppercase">
               <tr>
-                <th className="py-3.5 px-5">Kode / Vanity Undangan</th>
+                <th className="py-3.5 px-5">Kode Undangan</th>
                 <th className="py-3.5 px-4">Label Peruntukan</th>
                 <th className="py-3.5 px-4">Status</th>
                 <th className="py-3.5 px-4">Penggunaan</th>
@@ -208,10 +227,21 @@ export function InviteManagerTable({ invites }: InviteManagerTableProps) {
                       <td className="py-3.5 px-5 font-mono">
                         <div className="flex items-center gap-2">
                           <span className="px-2.5 py-1 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 font-bold text-xs tracking-wider">
-                            {inv.tokenPrefix}
+                            {inv.code}
                           </span>
                           <button
-                            onClick={() => handleCopy(inv)}
+                            onClick={() => handleCopyCode(inv)}
+                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors cursor-pointer"
+                            title="Salin Kode"
+                          >
+                            {copiedCodeId === inv.id ? (
+                              <Check className="h-3.5 w-3.5 text-emerald-400" />
+                            ) : (
+                              <KeyRound className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                          <button
+                            onClick={() => handleCopyLink(inv)}
                             className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors cursor-pointer"
                             title="Salin Tautan Undangan"
                           >
@@ -256,7 +286,7 @@ export function InviteManagerTable({ invites }: InviteManagerTableProps) {
                       {/* Action */}
                       <td className="py-3.5 px-5 text-right">
                         {status === "Aktif" ? (
-                          <RevokeInviteButton inviteId={inv.id} tokenPrefix={inv.tokenPrefix} />
+                          <RevokeInviteButton inviteId={inv.id} code={inv.code} />
                         ) : (
                           <span className="text-zinc-600 font-mono text-[11px]">—</span>
                         )}

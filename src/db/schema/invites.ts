@@ -5,8 +5,7 @@ export const membershipInvites = pgTable(
   "membership_invites",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    tokenHash: text("token_hash").notNull().unique(),
-    tokenPrefix: text("token_prefix").notNull(), // Short preview for admin dashboard (e.g. "inv_8f9a..")
+    code: text("code").notNull().unique(),
     label: text("label"),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     maxUses: integer("max_uses"), // null = unlimited uses
@@ -21,7 +20,7 @@ export const membershipInvites = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    index("idx_invites_token_hash").on(table.tokenHash),
+    index("idx_invites_code").on(table.code),
     index("idx_invites_created_by").on(table.createdBy),
   ]
 );

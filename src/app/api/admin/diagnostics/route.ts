@@ -5,11 +5,12 @@ import { sql } from "drizzle-orm";
 import { mediaQueue } from "@/lib/queue";
 import os from "os";
 
-export async function GET() {
-  const session = await auth();
+import { requireAdmin } from "@/lib/rbac";
 
-  // Strict Admin Only Guard
-  if (!session?.user || session.user.role !== "admin") {
+export async function GET() {
+  try {
+    await requireAdmin();
+  } catch {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 

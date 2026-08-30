@@ -1,6 +1,7 @@
 "use server";
 
 import { auth } from "@/auth";
+import { requireModerator } from "@/lib/rbac";
 import { db } from "@/db";
 import {
   challenges,
@@ -48,10 +49,7 @@ export interface HistoricalChallengeInput {
 }
 
 export async function importHistoricalChallengeAction(data: HistoricalChallengeInput) {
-  const session = await auth();
-  if (session?.user?.role !== "admin" && session?.user?.role !== "moderator") {
-    throw new Error("Akses tidak diizinkan. Hanya Admin/Moderator yang dapat mengimpor data historis.");
-  }
+  const actor = await requireModerator();
 
   if (!data.title.trim() || !data.slug.trim() || !data.theme.trim()) {
     throw new Error("Judul, slug, dan tema challenge wajib diisi.");
@@ -86,7 +84,7 @@ export async function importHistoricalChallengeAction(data: HistoricalChallengeI
         submissionDeadline: new Date(data.submissionDeadline),
         votingStartsAt: new Date(data.votingStartsAt),
         votingDeadline: new Date(data.votingDeadline),
-        createdByUserId: session.user.id,
+        createdByUserId: actor.id,
       })
       .returning();
 
@@ -239,7 +237,7 @@ export async function importHistoricalChallengeAction(data: HistoricalChallengeI
 
     // 4. Audit Log & Activity Log
     await tx.insert(auditLogs).values({
-      actorId: session.user.id,
+      actorId: actor.id,
       action: "historical_challenge_imported",
       targetType: "challenge",
       targetId: challenge.id,

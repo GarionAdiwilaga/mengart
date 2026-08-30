@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Copy, Check, Sparkles, Key, AlertCircle, Loader2 } from "lucide-react";
+import { Plus, Copy, Check, Sparkles, Key, AlertCircle, Loader2, KeyRound } from "lucide-react";
 import { createInviteAction } from "@/app/actions/invites";
 import type { InviteExpiryPreset } from "@/lib/invites";
 import {
@@ -20,10 +20,11 @@ export function CreateInviteModal() {
   const [maxUses, setMaxUses] = useState<number | "unlimited">(1);
   const [isLoading, setIsLoading] = useState(false);
   const [generatedInvite, setGeneratedInvite] = useState<{
+    code: string;
     inviteUrl: string;
-    tokenPrefix: string;
   } | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -34,28 +35,36 @@ export function CreateInviteModal() {
     try {
       const res = await createInviteAction({
         label: label.trim() || undefined,
+        customCode: customCode.trim() || undefined,
         expiryPreset,
         maxUses: maxUses === "unlimited" ? null : Number(maxUses),
       });
 
       if (res.success && res.invite) {
         setGeneratedInvite({
+          code: res.invite.code,
           inviteUrl: res.invite.inviteUrl,
-          tokenPrefix: res.invite.tokenPrefix,
         });
       }
     } catch (err: any) {
-      setError(err?.message || "Gagal membuat tautan undangan");
+      setError(err?.message || "Gagal membuat undangan");
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleCopy = async () => {
+  const handleCopyLink = async () => {
     if (!generatedInvite) return;
     await navigator.clipboard.writeText(generatedInvite.inviteUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2000);
+  };
+
+  const handleCopyCode = async () => {
+    if (!generatedInvite) return;
+    await navigator.clipboard.writeText(generatedInvite.code);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 2000);
   };
 
   const handleClose = () => {
@@ -66,7 +75,8 @@ export function CreateInviteModal() {
     setExpiryPreset("7d");
     setMaxUses(1);
     setError(null);
-    setCopied(false);
+    setCopiedLink(false);
+    setCopiedCode(false);
   };
 
   return (
@@ -93,8 +103,8 @@ export function CreateInviteModal() {
                 </DialogTitle>
                 <DialogDescription>
                   {generatedInvite
-                    ? "Salin dan bagikan tautan ini ke artist yang diundang."
-                    : "Atur masa berlaku, batas kuota, dan kode kustom undangan."}
+                    ? "Salin kode atau tautan undangan untuk dibagikan kepada calon anggota."
+                    : "Buat kode acak 8-karakter atau kustomisasi kode undangan (vanity code)."}
                 </DialogDescription>
               </div>
             </div>
@@ -106,28 +116,60 @@ export function CreateInviteModal() {
               <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3 text-xs text-amber-200">
                 <Sparkles className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
                 <p className="leading-relaxed">
-                  <strong>Salin tautan ini sekarang.</strong> Demi keamanan, token mentah di-hash dengan SHA-256 dan tidak disimpan di database. Tautan lengkap ini tidak dapat dilihat lagi setelah jendela ditutup.
+                  Undangan aktif dan tersimpan. Anda dapat menyalin kode atau membagikan tautan undangan langsung ke calon anggota atelier.
                 </p>
               </div>
 
+              {/* Code display */}
               <div className="flex flex-col gap-1.5">
-                <label htmlFor="generated-invite-url" className="text-xs font-mono text-zinc-400">
-                  TAUTAN UNDANGAN LENGKAP
+                <label className="text-xs font-mono text-zinc-400">
+                  KODE UNDANGAN
                 </label>
                 <div className="flex items-center gap-2">
                   <input
-                    id="generated-invite-url"
+                    type="text"
+                    readOnly
+                    value={generatedInvite.code}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-black/50 border border-white/15 text-amber-300 font-mono font-bold text-sm focus:outline-none select-all tracking-wider"
+                  />
+                  <button
+                    onClick={handleCopyCode}
+                    aria-label="Salin kode undangan"
+                    className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    {copiedCode ? (
+                      <>
+                        <Check className="h-4 w-4" />
+                        <span>Tersalin</span>
+                      </>
+                    ) : (
+                      <>
+                        <KeyRound className="h-4 w-4" />
+                        <span>Salin Kode</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* URL display */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-mono text-zinc-400">
+                  TAUTAN LENGKAP
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
                     type="text"
                     readOnly
                     value={generatedInvite.inviteUrl}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-black/50 border border-white/15 text-zinc-200 font-mono text-xs focus:outline-none select-all"
                   />
                   <button
-                    onClick={handleCopy}
+                    onClick={handleCopyLink}
                     aria-label="Salin tautan undangan ke clipboard"
-                    className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
+                    className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
                   >
-                    {copied ? (
+                    {copiedLink ? (
                       <>
                         <Check className="h-4 w-4" />
                         <span>Tersalin</span>
@@ -135,7 +177,7 @@ export function CreateInviteModal() {
                     ) : (
                       <>
                         <Copy className="h-4 w-4" />
-                        <span>Salin</span>
+                        <span>Salin Tautan</span>
                       </>
                     )}
                   </button>
@@ -161,8 +203,26 @@ export function CreateInviteModal() {
               ) : null}
 
               <div className="flex flex-col gap-1.5">
+                <label htmlFor="invite-code" className="text-xs font-mono text-zinc-300">
+                  KODE KUSTOM / VANITY (OPSIONAL)
+                </label>
+                <input
+                  id="invite-code"
+                  type="text"
+                  value={customCode}
+                  onChange={(e) => setCustomCode(e.target.value)}
+                  placeholder="Kosongkan untuk auto-generate kode 8 karakter (misal: mengart-bali)"
+                  maxLength={25}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/50 text-sm font-mono"
+                />
+                <p className="text-[11px] text-zinc-500 font-sans">
+                  Huruf kecil, angka, tanda hubung (-) hingga 25 karakter. Jika kosong, kode 8-karakter CSPRNG akan digenerate otomatis.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
                 <label htmlFor="invite-label" className="text-xs font-mono text-zinc-300">
-                  LABEL UNDANGAN (OPSIONAL)
+                  LABEL PERUNTUKAN (OPSIONAL)
                 </label>
                 <input
                   id="invite-label"
@@ -173,9 +233,6 @@ export function CreateInviteModal() {
                   maxLength={100}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/50 text-sm font-sans"
                 />
-                <p className="text-[11px] text-zinc-500 font-sans">
-                  Setiap undangan akan dibuat dengan kode acak berentropi tinggi untuk menjamin keamanan.
-                </p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -246,7 +303,7 @@ export function CreateInviteModal() {
                   ) : (
                     <>
                       <Sparkles className="h-4 w-4" />
-                      <span>Buat Tautan</span>
+                      <span>Buat Undangan</span>
                     </>
                   )}
                 </button>
