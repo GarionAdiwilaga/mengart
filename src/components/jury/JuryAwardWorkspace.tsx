@@ -10,6 +10,9 @@ import {
   publishJuryResultsAction,
   cancelJuryChallengeAction,
   assignJuryRecorderAction,
+  addJuryAssignmentAction,
+  removeJuryAssignmentAction,
+  correctCommunityWinnerAction,
   republishChallengeResultsAction,
   cancelRevokedChallengeAction,
 } from "@/app/actions/jury";
@@ -29,6 +32,9 @@ import {
   XCircle,
   AlertCircle,
   HelpCircle,
+  UserPlus,
+  UserMinus,
+  RefreshCw,
 } from "lucide-react";
 
 interface JuryAssignmentItem {
@@ -38,6 +44,14 @@ interface JuryAssignmentItem {
   displayName: string;
   avatarUrl?: string | null;
   slug?: string;
+}
+
+interface AvailableMemberItem {
+  userId: string;
+  profileId: string;
+  displayName: string;
+  slug: string;
+  avatarUrl?: string | null;
 }
 
 interface CandidateItem {
@@ -98,6 +112,7 @@ interface JuryAwardWorkspaceProps {
   isRecorder: boolean;
   isAdmin: boolean;
   isModerator: boolean;
+  availableMembers?: AvailableMemberItem[];
 }
 
 export function JuryAwardWorkspace({
@@ -111,6 +126,7 @@ export function JuryAwardWorkspace({
   isRecorder,
   isAdmin,
   isModerator,
+  availableMembers = [],
 }: JuryAwardWorkspaceProps) {
   const isModOrAdmin = isAdmin || isModerator;
   const isJuryOpen = challenge.status === "jury_selection_open";
@@ -135,6 +151,16 @@ export function JuryAwardWorkspace({
   const [categoryLabel, setCategoryLabel] = useState<string>("");
   const [confirmDuplicateSubmission, setConfirmDuplicateSubmission] = useState(false);
   const [editingAwardId, setEditingAwardId] = useState<string | null>(null);
+
+  // Panel Management State
+  const [selectedNewJurorId, setSelectedNewJurorId] = useState<string>("");
+
+  // Governance Community Winner Correction State
+  const [activeGovernanceTab, setActiveGovernanceTab] = useState<"replace" | "clear">("replace");
+  const [replaceWinnerSubmissionId, setReplaceWinnerSubmissionId] = useState<string>("");
+  const [replaceWinnerReason, setReplaceWinnerReason] = useState<string>("");
+  const [clearWinnerReason, setClearWinnerReason] = useState<string>("");
+  const [confirmClearWinner, setConfirmClearWinner] = useState(false);
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -331,9 +357,109 @@ export function JuryAwardWorkspace({
     }
   };
 
+  const handleAddJuror = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!selectedNewJurorId) {
+      setError("Pilih anggota yang ingin ditambahkan sebagai dewan juri.");
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      await addJuryAssignmentAction({
+        challengeId: challenge.id,
+        targetUserId: selectedNewJurorId,
+      });
+      setSuccessMessage("Anggota dewan juri berhasil ditambahkan.");
+      setSelectedNewJurorId("");
+    } catch (err: any) {
+      setError(err?.message || "Gagal menambahkan dewan juri.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRemoveJuror = async (targetUserId: string, name: string) => {
+    if (!confirm(`Hapus ${name} dari panel dewan juri?`)) return;
+    setIsLoading(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      await removeJuryAssignmentAction({
+        challengeId: challenge.id,
+        targetUserId,
+      });
+      setSuccessMessage("Anggota dewan juri berhasil dihapus.");
+    } catch (err: any) {
+      setError(err?.message || "Gagal menghapus dewan juri.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleReplaceCommunityWinner = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!replaceWinnerSubmissionId) {
+      setError("Pilih karya pengganti Pemenang Komunitas.");
+      return;
+    }
+    if (!replaceWinnerReason || replaceWinnerReason.trim().length < 5) {
+      setError("Alasan penggantian pemenang komunitas harus diisi minimal 5 karakter.");
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      await correctCommunityWinnerAction({
+        challengeId: challenge.id,
+        action: "replace",
+        replacementSubmissionId: replaceWinnerSubmissionId,
+        reason: replaceWinnerReason.trim(),
+      });
+      setSuccessMessage("Pemenang Komunitas berhasil diganti.");
+      setReplaceWinnerSubmissionId("");
+      setReplaceWinnerReason("");
+    } catch (err: any) {
+      setError(err?.message || "Gagal mengganti Pemenang Komunitas.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleClearCommunityWinner = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!confirmClearWinner) {
+      setError("Centang konfirmasi penghapusan terlebih dahulu.");
+      return;
+    }
+    if (!clearWinnerReason || clearWinnerReason.trim().length < 5) {
+      setError("Alasan penghapusan pemenang komunitas harus diisi minimal 5 karakter.");
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      await correctCommunityWinnerAction({
+        challengeId: challenge.id,
+        action: "clear",
+        reason: clearWinnerReason.trim(),
+      });
+      setSuccessMessage("Status Pemenang Komunitas berhasil dihapus.");
+      setClearWinnerReason("");
+      setConfirmClearWinner(false);
+    } catch (err: any) {
+      setError(err?.message || "Gagal menghapus Pemenang Komunitas.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-10">
-      {/* 1. Jury Panel Banner & Status */}
+      {/* 1. Jury Panel Banner & Management */}
       <section className="glass-panel p-6 sm:p-8 rounded-3xl flex flex-col gap-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -345,7 +471,7 @@ export function JuryAwardWorkspace({
                 Panel Dewan Juri
               </h2>
               <p className="text-xs text-zinc-400 font-sans">
-                {juryAssignments.length} Juri Terdaftar • 1 Jury Recorder Bertanggung Jawab
+                {juryAssignments.length} Juri Terdaftar • {readiness.recorder ? "1 Jury Recorder Bertanggung Jawab" : "Belum Ada Recorder"}
               </p>
             </div>
           </div>
@@ -371,21 +497,80 @@ export function JuryAwardWorkspace({
                     Recorder
                   </span>
                 ) : isModOrAdmin ? (
-                  <button
-                    onClick={() => handleSetRecorder(j.userId)}
-                    title="Tunjuk sebagai Recorder"
-                    className="text-[10px] text-zinc-400 hover:text-amber-400 underline ml-1 cursor-pointer"
-                  >
-                    Set Recorder
-                  </button>
+                  <div className="flex items-center gap-1.5 ml-1">
+                    <button
+                      onClick={() => handleSetRecorder(j.userId)}
+                      title="Tunjuk sebagai Recorder"
+                      className="text-[10px] text-zinc-400 hover:text-amber-400 underline cursor-pointer"
+                    >
+                      Set Recorder
+                    </button>
+                    <button
+                      onClick={() => handleRemoveJuror(j.userId, j.displayName)}
+                      title="Hapus dari Dewan Juri"
+                      className="text-[10px] text-zinc-500 hover:text-rose-400 cursor-pointer p-0.5"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
                 ) : null}
               </div>
             ))}
           </div>
         </div>
 
-        {/* Unready Banner for Missing Recorder */}
-        {!readiness.ready ? (
+        {/* Add Juror Control for Admin / Moderator */}
+        {isModOrAdmin ? (
+          <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <UserPlus className="h-4 w-4 text-amber-400" />
+              <span className="text-xs font-mono text-zinc-200 font-bold">
+                Tambah Anggota Dewan Juri:
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3 flex-1 max-w-md">
+              <select
+                value={selectedNewJurorId}
+                onChange={(e) => setSelectedNewJurorId(e.target.value)}
+                className="flex-1 px-3 py-2 min-h-[44px] rounded-xl bg-zinc-900 border border-white/10 text-white text-xs font-mono focus:outline-none focus:border-amber-500/60"
+              >
+                <option value="" className="bg-zinc-900 text-zinc-500">
+                  -- Pilih Anggota Komunitas --
+                </option>
+                {availableMembers.map((m) => (
+                  <option key={m.userId} value={m.userId} className="bg-zinc-900 text-white">
+                    {m.displayName} (@{m.slug})
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                onClick={handleAddJuror}
+                disabled={isLoading || !selectedNewJurorId}
+                className="px-4 py-2 min-h-[44px] rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shrink-0"
+              >
+                {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                <span>Tambah</span>
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Empty Panel Banner */}
+        {juryAssignments.length === 0 ? (
+          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-3">
+            <AlertTriangle className="h-5 w-5 shrink-0 text-amber-400" />
+            <div className="flex flex-col gap-0.5">
+              <span className="font-bold">Belum Ada Dewan Juri Ditugaskan</span>
+              <p className="text-amber-200/80">
+                Challenge ini belum memiliki anggota dewan juri. Tambahkan juri di atas dan tunjuk satu orang sebagai Jury Recorder untuk mengaktifkan sesi kurasi.
+              </p>
+            </div>
+          </div>
+        ) : !readiness.ready ? (
+          /* Unready Banner for Missing Recorder */
           <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-3">
             <AlertTriangle className="h-5 w-5 shrink-0 text-rose-400" />
             <div className="flex flex-col gap-0.5">
@@ -396,7 +581,7 @@ export function JuryAwardWorkspace({
         ) : null}
       </section>
 
-      {/* 2. Mixed Mode: Community Vote Winner Banner */}
+      {/* 2a. Mixed Mode: Community Vote Winner Banner */}
       {challenge.awardMode === "vote_and_jury" && communityWinner ? (
         <section className="glass-panel p-6 sm:p-8 rounded-3xl border border-amber-500/20 bg-amber-500/[0.02] flex flex-col sm:flex-row sm:items-center justify-between gap-6">
           <div className="flex items-center gap-5">
@@ -420,6 +605,162 @@ export function JuryAwardWorkspace({
           <div className="px-4 py-2 rounded-2xl bg-white/5 border border-white/10 text-xs font-mono text-zinc-400">
             Dikecualikan dari Penjurian (Blueprint 2.2.1)
           </div>
+        </section>
+      ) : null}
+
+      {/* 2b. Governance Correction Panel for Community Winner (RESULTS_REVOKED only) */}
+      {isRevoked && isModOrAdmin && (challenge.awardMode === "vote_only" || challenge.awardMode === "vote_and_jury") ? (
+        <section className="glass-panel p-6 sm:p-8 rounded-3xl border border-amber-500/30 bg-amber-500/[0.03] flex flex-col gap-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30">
+                <Crown className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-display font-bold text-lg text-[#f6f2e9]">
+                  Koreksi Tata Kelola: Pemenang Komunitas
+                </h3>
+                <p className="text-xs text-zinc-400 font-sans">
+                  Status challenge <span className="font-mono text-rose-400">results_revoked</span>. Admin/Moderator dapat mengoreksi atau menghapus Pemenang Komunitas sebelum publikasi ulang.
+                </p>
+              </div>
+            </div>
+
+            {/* Current Community Winner Status Pill */}
+            <div className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs font-mono flex items-center gap-2">
+              <span className="text-zinc-400">Pemenang Saat Ini:</span>
+              <span className="font-bold text-amber-300">
+                {communityWinner ? `${communityWinner.title} (${communityWinner.totalCommunityStars} Stars)` : "Tidak Ada"}
+              </span>
+            </div>
+          </div>
+
+          {/* Governance Mode Tabs */}
+          <div className="flex items-center gap-2 border-b border-white/10 pb-3">
+            <button
+              type="button"
+              onClick={() => setActiveGovernanceTab("replace")}
+              className={`px-4 py-2 rounded-xl text-xs font-mono font-bold transition-colors cursor-pointer ${
+                activeGovernanceTab === "replace"
+                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                  : "text-zinc-400 hover:text-white"
+              }`}
+            >
+              Ganti Pemenang Komunitas
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveGovernanceTab("clear")}
+              className={`px-4 py-2 rounded-xl text-xs font-mono font-bold transition-colors cursor-pointer ${
+                activeGovernanceTab === "clear"
+                  ? "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                  : "text-zinc-400 hover:text-white"
+              }`}
+            >
+              Hapus Pemenang Komunitas
+            </button>
+          </div>
+
+          {/* Tab 1: Replace Community Winner */}
+          {activeGovernanceTab === "replace" ? (
+            <form onSubmit={handleReplaceCommunityWinner} className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-mono text-zinc-300">PILIH KARYA PENGGANTI</label>
+                  <select
+                    value={replaceWinnerSubmissionId}
+                    onChange={(e) => setReplaceWinnerSubmissionId(e.target.value)}
+                    required
+                    className="w-full px-4 py-3 rounded-xl bg-zinc-900 border border-white/10 text-white text-xs font-mono focus:outline-none focus:border-amber-500/60"
+                  >
+                    <option value="" className="bg-zinc-900 text-zinc-500">
+                      -- Pilih Karya Pengganti --
+                    </option>
+                    {candidates.map((c) => {
+                      const holdsAward =
+                        challenge.awardMode === "vote_and_jury" &&
+                        draftAwards.some((a) => a.submissionId === c.submissionId);
+                      return (
+                        <option
+                          key={c.submissionId}
+                          value={c.submissionId}
+                          disabled={holdsAward}
+                          className="bg-zinc-900 text-white"
+                        >
+                          {c.title} — {c.artistName} ({c.communityStars} Stars) {holdsAward ? "[Penerima Jury Award]" : ""}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-mono text-zinc-300">ALASAN KOREKSI (MIN. 5 KARAKTER)</label>
+                  <input
+                    type="text"
+                    value={replaceWinnerReason}
+                    onChange={(e) => setReplaceWinnerReason(e.target.value)}
+                    required
+                    placeholder="e.g. Koreksi penghitungan audit pasca diskualifikasi submisi #1 sebelumnya"
+                    className="w-full px-4 py-3 rounded-xl bg-zinc-900 border border-white/10 text-white text-xs font-mono focus:outline-none focus:border-amber-500/60 placeholder:text-zinc-600"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  disabled={isLoading || !replaceWinnerSubmissionId || replaceWinnerReason.trim().length < 5}
+                  className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer shadow-lg shadow-amber-500/20"
+                >
+                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin text-black" /> : <RefreshCw className="h-4 w-4 text-black" />}
+                  <span>Tetapkan Pemenang Pengganti</span>
+                </button>
+              </div>
+            </form>
+          ) : (
+            /* Tab 2: Clear Community Winner */
+            <form onSubmit={handleClearCommunityWinner} className="flex flex-col gap-4">
+              <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex flex-col gap-2">
+                <span className="font-bold">Perhatian Tata Kelola:</span>
+                <p className="text-rose-200/80">
+                  Tindakan ini akan menghapus Pemenang Komunitas dari challenge ini. Pada mode vote_only, publikasi ulang tanpa pemenang hanya diizinkan jika total suara komunitas adalah 0.
+                </p>
+                <label className="flex items-center gap-2 pt-2 cursor-pointer text-white">
+                  <input
+                    type="checkbox"
+                    checked={confirmClearWinner}
+                    onChange={(e) => setConfirmClearWinner(e.target.checked)}
+                    className="rounded border-rose-400 text-rose-500 focus:ring-rose-500"
+                  />
+                  <span>Saya mengonfirmasi penghapusan status Pemenang Komunitas.</span>
+                </label>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-mono text-zinc-300">ALASAN PENGHAPUSAN (MIN. 5 KARAKTER)</label>
+                <input
+                  type="text"
+                  value={clearWinnerReason}
+                  onChange={(e) => setClearWinnerReason(e.target.value)}
+                  required
+                  placeholder="e.g. Pembatalan pemenang voting komunitas karena seluruh peserta didiskualifikasi"
+                  className="w-full px-4 py-3 rounded-xl bg-zinc-900 border border-white/10 text-white text-xs font-mono focus:outline-none focus:border-rose-500/60 placeholder:text-zinc-600"
+                />
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  disabled={isLoading || !confirmClearWinner || clearWinnerReason.trim().length < 5}
+                  className="px-6 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs font-mono transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer shadow-lg shadow-rose-500/20"
+                >
+                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin text-white" /> : <Trash2 className="h-4 w-4 text-white" />}
+                  <span>Hapus Pemenang Komunitas</span>
+                </button>
+              </div>
+            </form>
+          )}
         </section>
       ) : null}
 

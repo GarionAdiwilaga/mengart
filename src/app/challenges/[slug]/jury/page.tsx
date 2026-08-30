@@ -87,6 +87,7 @@ export default async function ChallengeJuryPage({ params }: JuryPageProps) {
         isAssignedJury={workspaceData.isAssignedJury}
         isAdmin={user.role === "admin"}
         isModerator={user.role === "moderator"}
+        availableMembers={workspaceData.availableMembers || []}
       />
     </main>
   );

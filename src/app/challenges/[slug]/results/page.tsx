@@ -13,8 +13,6 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
-import { StoryCardGenerator } from "@/components/challenges/StoryCardGenerator";
-
 interface ResultsPageProps {
   params: Promise<{ slug: string }>;
 }
@@ -39,18 +37,6 @@ export default async function ChallengeResultsPage({ params }: ResultsPageProps)
 
   const juryWinners = results.filter((r) => r.awardType === "jury_award");
 
-  const storyWinners = isFinished
-    ? results.map((r, idx) => ({
-        rank: r.finalRank ?? (idx + 1),
-        title: r.title || "Karya Pemenang",
-        artistName: r.artistName || "Artist Atelier",
-        artistSlug: r.artistSlug || "",
-        starsCount: r.totalCommunityStars,
-        imageUrl: r.thumbnailStorageKey ? `/api/media/public/${r.thumbnailStorageKey}` : null,
-        awardTitle: r.categoryLabel || r.slotTitle || (r.awardType === "community_vote_winner" ? "Pemenang Komunitas" : "Jury Winner"),
-      }))
-    : [];
-
   return (
     <main className="p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-10 flex-1">
       {/* Breadcrumb & Sub-Header */}
@@ -68,24 +54,10 @@ export default async function ChallengeResultsPage({ params }: ResultsPageProps)
 
         <div className="flex items-center gap-3">
           {isFinished ? (
-            <>
-              <StoryCardGenerator
-                challenge={{
-                  title: challenge.title,
-                  slug: challenge.slug,
-                  theme: challenge.theme,
-                  description: challenge.description,
-                  status: challenge.status,
-                }}
-                winners={storyWinners}
-                defaultMode="results"
-              />
-
-              <span className="px-3 py-2 min-h-[44px] rounded-2xl text-xs font-mono font-bold uppercase border bg-amber-500/10 text-amber-400 border-amber-500/30 flex items-center gap-1.5">
-                <Trophy className="h-3.5 w-3.5" />
-                <span>HALL OF FAME SELESAI</span>
-              </span>
-            </>
+            <span className="px-3 py-2 min-h-[44px] rounded-2xl text-xs font-mono font-bold uppercase border bg-amber-500/10 text-amber-400 border-amber-500/30 flex items-center gap-1.5">
+              <Trophy className="h-3.5 w-3.5" />
+              <span>HALL OF FAME SELESAI</span>
+            </span>
           ) : isRevoked ? (
             <span className="px-3 py-2 min-h-[44px] rounded-2xl text-xs font-mono font-bold uppercase border bg-rose-500/10 text-rose-400 border-rose-500/30 flex items-center gap-1.5">
               <AlertTriangle className="h-3.5 w-3.5" />

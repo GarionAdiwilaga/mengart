@@ -305,9 +305,22 @@
 10. **4 Production-Path Concurrency Tests:** Added multi-transaction test coverage for: (1) simultaneous Recorder reassignment, (2) Jury Award write vs publication race, (3) publication vs result revocation race, and (4) result correction vs republish race.
 11. **Expanded Migration Scenario 7:** Verified `ON DELETE SET NULL` on recorder deletion, partial unique index `uniq_challenge_result_jury_award` duplicate rejection, and multiple distinct Jury Awards for the same artwork.
 **Business Rule:** Panel readiness is required before publication. Main round stars are isolated from tiebreak rounds. Cancellation is restricted to zero-award states.
-**Reason:** Addressed all independent QA review findings for Gate C / Phase 3 under Blueprint 2.2.1.
-
-
-
+### Blueprint 2.2.1 Gate C / Phase 3: Jury Panel Management, Governance Winner Correction, and Results Story Card Decoupling
+**Decision:** Implemented 3 final focused corrections for Gate C / Phase 3:
+1. **Jury Panel Management Services & UI (`addJuryAssignmentService`, `removeJuryAssignmentService`):**
+   - Added production services for Admins and Moderators to manage challenge jury assignments (`challenge_jury_assignments`).
+   - `addJuryAssignmentService` locks challenge parent row `FOR UPDATE`, validates target user exists with active membership, prevents duplicate `(challenge_id, user_id)` assignment, inserts displayed juror with `is_recorder = false`, and records audit `jury.add_member`.
+   - `removeJuryAssignmentService` prevents removing an active Recorder during `JURY_SELECTION_OPEN` without prior replacement, deletes the assignment, and records audit `jury.remove_member`.
+   - In `JuryAwardWorkspace.tsx`, added panel management controls (Add Juror from available active members, Remove Juror, Set Recorder) and actionable recovery banner for challenges with zero jurors.
+2. **Community Winner Governance Correction Hardening & UI:**
+   - Enforced backend mode guard in `correctCommunityWinnerService`: only `vote_only` and `vote_and_jury` modes permit Community Winner correction; `jury_only` and `showcase_only` are strictly rejected.
+   - Enforced mixed-mode duplicate exclusion on replacement: in `vote_and_jury`, proposed replacements already holding a Jury Award are rejected with clear error guidance.
+   - Exposed Replace and Clear Community Winner forms in `JuryAwardWorkspace.tsx` exclusively to Admins and Moderators during `RESULTS_REVOKED` (hidden from former Recorder unless staff).
+3. **Decoupled Legacy Story Card from Results Page:**
+   - Removed `StoryCardGenerator` entry point and legacy podium generator from `/challenges/[slug]/results` to prevent synthetic numeric ranks (`rank: idx + 1`, `JUARA 2`, `JUARA 3`) from being assigned to unranked Jury Awards.
+   - Results page renders strictly at most 1 optional Community Vote Winner and zero or more unranked Jury Awards.
+   - Added static/unit assertion in test suite ensuring all materialized `jury_award` rows in `challenge_results` have `finalRank === null`.
+**Business Rule:** Zero-juror challenges must be recoverable via UI. Community winner corrections are mode-guarded and staff-only. Jury awards are strictly unranked.
+**Reason:** Addressed independent QA review findings for Gate C / Phase 3 final focused corrections.
 
 

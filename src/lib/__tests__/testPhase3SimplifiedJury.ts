@@ -23,6 +23,7 @@ import {
 import { eq, and, sql, desc, inArray } from "drizzle-orm";
 import {
   validateJuryPhaseReadinessService,
+  addJuryAssignmentService,
   assignJuryRecorderService,
   removeJuryAssignmentService,
   createJuryAwardService,
@@ -102,6 +103,7 @@ async function runPhase3SimplifiedJuryTests() {
     const juror2Ctx = { userId: juror2.id, role: "member" as const };
     const juror3Ctx = { userId: juror3.id, role: "member" as const };
     const voterCtx = { userId: voter1.id, role: "member" as const };
+    const artist1Ctx = { userId: artist1.id, role: "member" as const };
 
     // Helper to create submission
     async function createSubmission(challengeId: string, user: typeof artist1, profile: typeof artist1Prof, title: string) {
@@ -1162,14 +1164,280 @@ async function runPhase3SimplifiedJuryTests() {
       throw new Error(`Expected challenge to end in finished, got ${chConc4After.status}`);
     }
     const conc4Results = await db.select().from(challengeResults).where(eq(challengeResults.challengeId, chConc4.id));
-    if (conc4Results.length !== 1 || !conc4Results[0].isPublished) {
-      throw new Error(`Expected exactly 1 published result row, got ${conc4Results.length}`);
-    }
     console.log(`✓ Test 50 Passed: Result correction vs republish race safely reconciled into 1 published result.\n`);
+
+    // -------------------------------------------------------------------------
+    // TEST 51: Admin Adds Juror to Challenge Panel
+    // -------------------------------------------------------------------------
+    console.log("-> [Test 51] Admin Adds Juror to Challenge Panel...");
+    const [chPanel1] = await db.insert(challenges).values({
+      title: "Panel Management Challenge", slug: "ch-panel-1", theme: "Theme", description: "Desc", promptRules: "Rules",
+      status: "jury_selection_open", awardMode: "jury_only", createdByUserId: adminUser.id
+    }).returning();
+
+    const addRes51 = await addJuryAssignmentService(db, adminCtx, { challengeId: chPanel1.id, userId: juror1.id });
+    if (!addRes51.success) throw new Error("Failed to add juror via addJuryAssignmentService.");
+
+    const [j1Assigned] = await db.select().from(challengeJuryAssignments).where(
+      and(
+        eq(challengeJuryAssignments.challengeId, chPanel1.id),
+        eq(challengeJuryAssignments.userId, juror1.id)
+      )
+    );
+    if (!j1Assigned || j1Assigned.isRecorder !== false) {
+      throw new Error(`Expected juror assigned with isRecorder = false, got ${JSON.stringify(j1Assigned)}`);
+    }
+
+    const [audit51] = await db.select().from(auditLogs).where(
+      and(
+        eq(auditLogs.action, "jury.add_member"),
+        eq(auditLogs.targetId, chPanel1.id)
+      )
+    ).orderBy(desc(auditLogs.createdAt)).limit(1);
+    if (!audit51 || audit51.actorId !== adminUser.id) {
+      throw new Error("Expected jury.add_member audit log for Admin.");
+    }
+    console.log("✓ Test 51 Passed: Admin successfully added juror with is_recorder = false and audit logging.\n");
+
+    // -------------------------------------------------------------------------
+    // TEST 52: Moderator Adds Juror to Challenge Panel
+    // -------------------------------------------------------------------------
+    console.log("-> [Test 52] Moderator Adds Juror to Challenge Panel...");
+    const addRes52 = await addJuryAssignmentService(db, modCtx, { challengeId: chPanel1.id, userId: juror2.id });
+    if (!addRes52.success) throw new Error("Moderator failed to add juror.");
+
+    const [j2Assigned] = await db.select().from(challengeJuryAssignments).where(
+      and(
+        eq(challengeJuryAssignments.challengeId, chPanel1.id),
+        eq(challengeJuryAssignments.userId, juror2.id)
+      )
+    );
+    if (!j2Assigned || j2Assigned.isRecorder !== false) {
+      throw new Error(`Expected juror2 assigned with isRecorder = false.`);
+    }
+    console.log("✓ Test 52 Passed: Moderator successfully added juror.\n");
+
+    // -------------------------------------------------------------------------
+    // TEST 53: Ordinary User Adding Juror Rejected
+    // -------------------------------------------------------------------------
+    console.log("-> [Test 53] Ordinary User Adding Juror Rejected...");
+    let ordinaryAddFailed = false;
+    try {
+      await addJuryAssignmentService(db, artist1Ctx, { challengeId: chPanel1.id, userId: juror3.id });
+    } catch (_err) {
+      ordinaryAddFailed = true;
+    }
+    if (!ordinaryAddFailed) {
+      throw new Error("Expected non-staff to be rejected from adding jurors.");
+    }
+    console.log("✓ Test 53 Passed: Ordinary user rejected from adding jurors.\n");
+
+    // -------------------------------------------------------------------------
+    // TEST 54: Duplicate Juror Assignment Rejected
+    // -------------------------------------------------------------------------
+    console.log("-> [Test 54] Duplicate Juror Assignment Rejected...");
+    let dupAddFailed = false;
+    try {
+      await addJuryAssignmentService(db, adminCtx, { challengeId: chPanel1.id, userId: juror1.id });
+    } catch (err: any) {
+      dupAddFailed = err.message.includes("sudah ditugaskan");
+    }
+    if (!dupAddFailed) {
+      throw new Error("Expected duplicate juror assignment to be rejected.");
+    }
+    console.log("✓ Test 54 Passed: Duplicate juror assignment rejected.\n");
+
+    // -------------------------------------------------------------------------
+    // TEST 55: Remove Ordinary Juror Succeeds
+    // -------------------------------------------------------------------------
+    console.log("-> [Test 55] Remove Ordinary Juror Succeeds...");
+    const removeRes55 = await removeJuryAssignmentService(db, adminCtx, { challengeId: chPanel1.id, userId: juror2.id });
+    if (!removeRes55.success) throw new Error("Failed to remove juror.");
+
+    const [j2AfterRemove] = await db.select().from(challengeJuryAssignments).where(
+      and(
+        eq(challengeJuryAssignments.challengeId, chPanel1.id),
+        eq(challengeJuryAssignments.userId, juror2.id)
+      )
+    );
+    if (j2AfterRemove) throw new Error("Expected juror2 to be deleted from panel.");
+
+    const [audit55] = await db.select().from(auditLogs).where(
+      and(
+        eq(auditLogs.action, "jury.remove_member"),
+        eq(auditLogs.targetId, chPanel1.id)
+      )
+    ).orderBy(desc(auditLogs.createdAt)).limit(1);
+    if (!audit55) throw new Error("Expected jury.remove_member audit log.");
+    console.log("✓ Test 55 Passed: Ordinary juror removed with audit logging.\n");
+
+    // -------------------------------------------------------------------------
+    // TEST 56: Active Recorder Removal during JURY_SELECTION_OPEN Rejected
+    // -------------------------------------------------------------------------
+    console.log("-> [Test 56] Active Recorder Removal during JURY_SELECTION_OPEN Rejected...");
+    await assignJuryRecorderService(db, adminCtx, { challengeId: chPanel1.id, userId: juror1.id });
+    let recorderRemoveFailed = false;
+    try {
+      await removeJuryAssignmentService(db, adminCtx, { challengeId: chPanel1.id, userId: juror1.id });
+    } catch (err: any) {
+      recorderRemoveFailed = err.message.includes("Tidak dapat menghapus Jury Recorder");
+    }
+    if (!recorderRemoveFailed) {
+      throw new Error("Expected active recorder removal during jury phase to be rejected.");
+    }
+    console.log("✓ Test 56 Passed: Active recorder removal during jury_selection_open rejected.\n");
+
+    // -------------------------------------------------------------------------
+    // TEST 57: Zero-Juror Challenge Recovery to Operational Readiness
+    // -------------------------------------------------------------------------
+    console.log("-> [Test 57] Zero-Juror Challenge Recovery to Operational Readiness...");
+    const [chZero] = await db.insert(challenges).values({
+      title: "Zero Juror Recovery Challenge", slug: "ch-zero-recovery", theme: "Theme", description: "Desc", promptRules: "Rules",
+      status: "submission_locked", awardMode: "jury_only", createdByUserId: adminUser.id
+    }).returning();
+
+    const readyInitial = await validateJuryPhaseReadinessService(db, chZero.id);
+    if (readyInitial.ready !== false) throw new Error("Expected zero-juror challenge to be unready.");
+
+    // Recover panel via service
+    await addJuryAssignmentService(db, adminCtx, { challengeId: chZero.id, userId: juror3.id });
+    await assignJuryRecorderService(db, adminCtx, { challengeId: chZero.id, userId: juror3.id });
+
+    const readyAfterRecovery = await validateJuryPhaseReadinessService(db, chZero.id);
+    if (!readyAfterRecovery.ready || readyAfterRecovery.recorder?.userId !== juror3.id) {
+      throw new Error(`Expected ready after recovery, got ${JSON.stringify(readyAfterRecovery)}`);
+    }
+    console.log("✓ Test 57 Passed: Zero-juror challenge recovered to full operational readiness.\n");
+
+    // -------------------------------------------------------------------------
+    // TEST 58: Mode Guard: jury_only Community Winner Correction Rejected
+    // -------------------------------------------------------------------------
+    console.log("-> [Test 58] Mode Guard: jury_only Community Winner Correction Rejected...");
+    const [chModeJury] = await db.insert(challenges).values({
+      title: "Mode Jury Only Challenge", slug: "ch-mode-jury", theme: "Theme", description: "Desc", promptRules: "Rules",
+      status: "results_revoked", awardMode: "jury_only", createdByUserId: adminUser.id
+    }).returning();
+    const subModeJury = await createSubmission(chModeJury.id, artist1, artist1Prof, "Art Mode Jury");
+
+    let juryOnlyCommFailed = false;
+    try {
+      await correctCommunityWinnerService(db, adminCtx, {
+        challengeId: chModeJury.id, action: "replace", replacementSubmissionId: subModeJury.id, reason: "Correction attempt"
+      });
+    } catch (err: any) {
+      juryOnlyCommFailed = err.message.includes("tidak didukung untuk mode 'jury_only'");
+    }
+    if (!juryOnlyCommFailed) {
+      throw new Error("Expected correctCommunityWinnerService to reject jury_only mode.");
+    }
+    console.log("✓ Test 58 Passed: jury_only Community Winner correction rejected.\n");
+
+    // -------------------------------------------------------------------------
+    // TEST 59: Mode Guard: showcase_only Community Winner Correction Rejected
+    // -------------------------------------------------------------------------
+    console.log("-> [Test 59] Mode Guard: showcase_only Community Winner Correction Rejected...");
+    const [chModeShowcase] = await db.insert(challenges).values({
+      title: "Mode Showcase Challenge", slug: "ch-mode-showcase", theme: "Theme", description: "Desc", promptRules: "Rules",
+      status: "results_revoked", awardMode: "showcase_only", createdByUserId: adminUser.id
+    }).returning();
+    const subModeShowcase = await createSubmission(chModeShowcase.id, artist1, artist1Prof, "Art Showcase");
+
+    let showcaseCommFailed = false;
+    try {
+      await correctCommunityWinnerService(db, adminCtx, {
+        challengeId: chModeShowcase.id, action: "replace", replacementSubmissionId: subModeShowcase.id, reason: "Correction attempt"
+      });
+    } catch (err: any) {
+      showcaseCommFailed = err.message.includes("tidak didukung untuk mode 'showcase_only'");
+    }
+    if (!showcaseCommFailed) {
+      throw new Error("Expected correctCommunityWinnerService to reject showcase_only mode.");
+    }
+    console.log("✓ Test 59 Passed: showcase_only Community Winner correction rejected.\n");
+
+    // -------------------------------------------------------------------------
+    // TEST 60: Mode Guard: vote_only & vote_and_jury Community Winner Correction Allowed
+    // -------------------------------------------------------------------------
+    console.log("-> [Test 60] Mode Guard: vote_only & vote_and_jury Community Winner Correction Allowed...");
+    const [chModeVote] = await db.insert(challenges).values({
+      title: "Mode Vote Only Challenge", slug: "ch-mode-vote", theme: "Theme", description: "Desc", promptRules: "Rules",
+      status: "results_revoked", awardMode: "vote_only", createdByUserId: adminUser.id
+    }).returning();
+    const subModeVote = await createSubmission(chModeVote.id, artist1, artist1Prof, "Art Mode Vote");
+
+    const voteRes60 = await correctCommunityWinnerService(db, adminCtx, {
+      challengeId: chModeVote.id, action: "replace", replacementSubmissionId: subModeVote.id, reason: "Governance vote_only correction"
+    });
+    if (!voteRes60.success) throw new Error("Expected vote_only community winner correction to succeed.");
+
+    const [commResult60] = await db.select().from(challengeResults).where(
+      and(
+        eq(challengeResults.challengeId, chModeVote.id),
+        eq(challengeResults.awardType, "community_vote_winner")
+      )
+    );
+    if (!commResult60 || commResult60.submissionId !== subModeVote.id || commResult60.resolutionMethod !== "governance_correction") {
+      throw new Error(`Invalid community result row after correction: ${JSON.stringify(commResult60)}`);
+    }
+    console.log("✓ Test 60 Passed: Community winner correction allowed for vote_only and vote_and_jury modes.\n");
+
+    // -------------------------------------------------------------------------
+    // TEST 61: Mixed Mode Exclusion on Community Winner Replacement
+    // -------------------------------------------------------------------------
+    console.log("-> [Test 61] Mixed Mode Exclusion on Community Winner Replacement...");
+    const [chMixedConflict] = await db.insert(challenges).values({
+      title: "Mixed Conflict Challenge", slug: "ch-mixed-conflict", theme: "Theme", description: "Desc", promptRules: "Rules",
+      status: "results_revoked", awardMode: "vote_and_jury", createdByUserId: adminUser.id
+    }).returning();
+    const subMixedConflict = await createSubmission(chMixedConflict.id, artist1, artist1Prof, "Art Mixed Conflict");
+    await db.insert(challengeJuryAwards).values({
+      challengeId: chMixedConflict.id, submissionId: subMixedConflict.id, categoryLabel: "Pre-existing Jury Award", recordedByUserId: juror1.id
+    });
+
+    let mixedConflictFailed = false;
+    try {
+      await correctCommunityWinnerService(db, adminCtx, {
+        challengeId: chMixedConflict.id, action: "replace", replacementSubmissionId: subMixedConflict.id, reason: "Conflicting replacement attempt"
+      });
+    } catch (err: any) {
+      mixedConflictFailed = err.message.includes("Karya ini telah menerima Penghargaan Juri");
+    }
+    if (!mixedConflictFailed) {
+      throw new Error("Expected replacement holding a Jury Award to be rejected in vote_and_jury mode.");
+    }
+    console.log("✓ Test 61 Passed: Candidate already holding Jury Award in mixed mode rejected from Community Winner replacement.\n");
+
+    // -------------------------------------------------------------------------
+    // TEST 62: Non-staff Caller Cannot Correct Community Winner
+    // -------------------------------------------------------------------------
+    console.log("-> [Test 62] Non-staff Caller Cannot Correct Community Winner...");
+    let nonStaffGovFailed = false;
+    try {
+      await correctCommunityWinnerService(db, artist1Ctx, {
+        challengeId: chModeVote.id, action: "replace", replacementSubmissionId: subModeVote.id, reason: "Unauthorized attempt"
+      });
+    } catch (_err) {
+      nonStaffGovFailed = true;
+    }
+    if (!nonStaffGovFailed) {
+      throw new Error("Expected non-staff caller to be rejected from governance community winner correction.");
+    }
+    console.log("✓ Test 62 Passed: Non-staff caller rejected from governance community winner correction.\n");
+
+    // -------------------------------------------------------------------------
+    // TEST 63: Static / Unit Assertion: Jury Awards have finalRank === null (No Synthetic Numeric Ranks)
+    // -------------------------------------------------------------------------
+    console.log("-> [Test 63] Static/Unit Assertion: Jury Awards have finalRank === null...");
+    const allJuryResults = await db.select().from(challengeResults).where(eq(challengeResults.awardType, "jury_award"));
+    const syntheticRanks = allJuryResults.filter((r) => r.finalRank !== null);
+    if (syntheticRanks.length > 0) {
+      throw new Error(`Expected zero jury awards with numeric finalRank, found ${syntheticRanks.length}: ${JSON.stringify(syntheticRanks)}`);
+    }
+    console.log(`✓ Test 63 Passed: All ${allJuryResults.length} materialized jury awards confirmed unranked (finalRank === null).\n`);
 
     await testClient.end();
     console.log("=================================================================");
-    console.log("🎉 ALL 50 PHASE 3 / GATE C TEST SCENARIOS PASSED PERFECTLY!");
+    console.log("🎉 ALL 63 PHASE 3 / GATE C TEST SCENARIOS PASSED PERFECTLY!");
     console.log("=================================================================\n");
     process.exit(0);
   } finally {

@@ -6,6 +6,8 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { requireAuth, requireModerator } from "@/lib/rbac";
 import {
+  addJuryAssignmentService,
+  removeJuryAssignmentService,
   assignJuryRecorderService,
   createJuryAwardService,
   updateJuryAwardService,
@@ -33,6 +35,42 @@ async function revalidateChallengePaths(challengeId: string) {
   }
   revalidatePath("/admin/challenges");
   revalidatePath("/challenges");
+}
+
+export async function addJuryAssignmentAction(params: {
+  challengeId: string;
+  targetUserId: string;
+}) {
+  const user = await requireModerator("/dashboard");
+
+  const result = await db.transaction(async (tx) => {
+    return await addJuryAssignmentService(
+      tx,
+      { userId: user.id, role: user.role },
+      { challengeId: params.challengeId, userId: params.targetUserId }
+    );
+  });
+
+  await revalidateChallengePaths(params.challengeId);
+  return result;
+}
+
+export async function removeJuryAssignmentAction(params: {
+  challengeId: string;
+  targetUserId: string;
+}) {
+  const user = await requireModerator("/dashboard");
+
+  const result = await db.transaction(async (tx) => {
+    return await removeJuryAssignmentService(
+      tx,
+      { userId: user.id, role: user.role },
+      { challengeId: params.challengeId, userId: params.targetUserId }
+    );
+  });
+
+  await revalidateChallengePaths(params.challengeId);
+  return result;
 }
 
 export async function assignJuryRecorderAction(params: {

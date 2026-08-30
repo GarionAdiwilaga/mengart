@@ -92,6 +92,101 @@ export async function validateJuryPhaseReadinessService(
 }
 
 /**
+ * Service: Add Jury Assignment
+ * Invariant: Admin or Moderator only.
+ * Adds displayed juror with is_recorder = false.
+ * Prevents duplicate (challenge_id, user_id) assignment.
+ * Emits audit log "jury.add_member".
+ */
+export async function addJuryAssignmentService(
+  dbOrTx: any,
+  actor: ServiceContext,
+  params: { challengeId: string; userId: string }
+) {
+  if (actor.role !== "admin" && actor.role !== "moderator") {
+    throw new Error("Hanya Administrator atau Moderator yang dapat menambah penugasan juri.");
+  }
+
+  const { challengeId, userId } = params;
+
+  // 1. Lock parent challenge row
+  const [challenge] = await dbOrTx
+    .select()
+    .from(challenges)
+    .where(eq(challenges.id, challengeId))
+    .for("update")
+    .limit(1);
+
+  if (!challenge) {
+    throw new Error("Challenge tidak ditemukan.");
+  }
+
+  // 2. Validate target user & profile exist and active
+  const [targetUser] = await dbOrTx
+    .select({
+      userId: users.id,
+      profileId: profiles.id,
+      displayName: profiles.displayName,
+    })
+    .from(users)
+    .innerJoin(profiles, eq(profiles.userId, users.id))
+    .where(
+      and(
+        eq(users.id, userId),
+        eq(users.membershipStatus, "active")
+      )
+    )
+    .limit(1);
+
+  if (!targetUser) {
+    throw new Error("Pengguna tidak ditemukan atau status keanggotaan tidak aktif.");
+  }
+
+  // 3. Prevent duplicate assignment
+  const [existing] = await dbOrTx
+    .select()
+    .from(challengeJuryAssignments)
+    .where(
+      and(
+        eq(challengeJuryAssignments.challengeId, challengeId),
+        eq(challengeJuryAssignments.userId, userId)
+      )
+    )
+    .limit(1);
+
+  if (existing) {
+    throw new Error("Pengguna sudah ditugaskan sebagai dewan juri pada challenge ini.");
+  }
+
+  // 4. Insert displayed juror with is_recorder = false
+  const [inserted] = await dbOrTx
+    .insert(challengeJuryAssignments)
+    .values({
+      challengeId,
+      userId,
+      profileId: targetUser.profileId,
+      isRecorder: false,
+    })
+    .returning();
+
+  // 5. Audit Log
+  await dbOrTx.insert(auditLogs).values({
+    actorId: actor.userId,
+    action: "jury.add_member",
+    targetType: "challenge",
+    targetId: challengeId,
+    reason: `Penambahan dewan juri ${targetUser.displayName} (${userId}) pada challenge ${challengeId}`,
+    metadata: {
+      targetUserId: userId,
+      profileId: targetUser.profileId,
+      displayName: targetUser.displayName,
+    },
+  });
+
+  return { success: true, assignmentId: inserted.id };
+}
+
+/**
  * Service: Assign or Reassign Jury Recorder
  * Invariant: Parent challenge locked FOR UPDATE, atomic clear and set, audit log emitted.
  */
@@ -1021,6 +1116,12 @@ export async function correctCommunityWinnerService(
     throw new Error(`Koreksi pemenang komunitas hanya diizinkan pada status "results_revoked" (Status saat ini: "${challenge.status}").`);
   }
 
+  if (challenge.awardMode !== "vote_only" && challenge.awardMode !== "vote_and_jury") {
+    throw new Error(
+      `Koreksi pemenang komunitas tidak didukung untuk mode '${challenge.awardMode}'. Hanya mode 'vote_only' dan 'vote_and_jury' yang memiliki Pemenang Komunitas.`
+    );
+  }
+
   const [existingCommWinner] = await dbOrTx
     .select()
     .from(challengeResults)
@@ -1051,6 +1152,26 @@ export async function correctCommunityWinnerService(
 
     if (!submission) {
       throw new Error("Karya submisi pengganti tidak valid atau telah didiskualifikasi.");
+    }
+
+    // In mixed mode (vote_and_jury), candidate cannot already hold a Jury Award
+    if (challenge.awardMode === "vote_and_jury") {
+      const [existingJuryAward] = await dbOrTx
+        .select()
+        .from(challengeJuryAwards)
+        .where(
+          and(
+            eq(challengeJuryAwards.challengeId, challengeId),
+            eq(challengeJuryAwards.submissionId, replacementSubmissionId)
+          )
+        )
+        .limit(1);
+
+      if (existingJuryAward) {
+        throw new Error(
+          "Karya ini telah menerima Penghargaan Juri. Dalam mode vote_and_jury, Pemenang Komunitas tidak boleh menerima Penghargaan Juri. Selesaikan konflik Penghargaan Juri terlebih dahulu sebelum menetapkan sebagai Pemenang Komunitas."
+        );
+      }
     }
 
     // Query actual authoritative raw Stars for replacement submission strictly from Main Round
@@ -1531,6 +1652,26 @@ export async function getJuryWorkspaceData(
   const isAssignedJury = rawAssignments.some((a) => a.userId === userId);
   const isRecorder = readiness.recorder?.userId === userId;
 
+  // 6. Fetch Available Members for Panel Assignment (Active members not yet assigned)
+  const assignedUserIds = rawAssignments.map((a) => a.userId);
+  const availableMembers = await dbOrTx
+    .select({
+      userId: users.id,
+      profileId: profiles.id,
+      displayName: profiles.displayName,
+      slug: profiles.slug,
+      avatarUrl: profiles.avatarUrl,
+    })
+    .from(users)
+    .innerJoin(profiles, eq(profiles.userId, users.id))
+    .where(
+      and(
+        eq(users.membershipStatus, "active"),
+        assignedUserIds.length > 0 ? sql`${users.id} NOT IN ${assignedUserIds}` : sql`TRUE`
+      )
+    )
+    .orderBy(asc(profiles.displayName));
+
   return {
     challenge,
     juryAssignments: rawAssignments,
@@ -1540,5 +1681,6 @@ export async function getJuryWorkspaceData(
     draftAwards,
     isAssignedJury,
     isRecorder,
+    availableMembers,
   };
 }

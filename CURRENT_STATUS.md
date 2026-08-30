@@ -69,24 +69,24 @@
     - Retained existing legacy jury assignments as `is_recorder = false` without inventing synthetic recorders.
   - Production Domain Services (`src/lib/services/juryService.ts`):
     - `validateJuryPhaseReadinessService`: Enforces $\ge 1$ displayed juror and exactly 1 recorder.
+    - `addJuryAssignmentService` & `removeJuryAssignmentService`: Minimal panel management for Admin/Moderator, preventing duplicate assignments and active recorder removal during `JURY_SELECTION_OPEN`.
     - `assignJuryRecorderService`: Atomic transfer with parent row lock and audit log.
-    - `removeJuryAssignmentService`: Blocks removing active recorder during open jury phase.
     - `createJuryAwardService` & `updateJuryAwardService` & `deleteJuryAwardService`: Recorder/Admin write authority, dynamic category labels, duplicate artwork confirmation policy, mixed-mode Community Winner exclusion.
     - `publishJuryChallengeResultsService`: Strict `publishCommunityOnly` invariants, result reconciliation, transitions to `finished`.
     - `cancelJuryChallengeService`: Cancellation with $\ge 5$ char reason for zero-award outcomes.
     - `revokeChallengeResultsService`: Audit snapshot of previous results, sets `isPublished = false`, transitions to `results_revoked`.
-    - `correctCommunityWinnerService`: Governed replacement (queries actual raw stars from `challenge_ballot_stars`) or clearing of Community Winner.
+    - `correctCommunityWinnerService`: Mode-guarded (`vote_only` and `vote_and_jury` allowed; `jury_only` and `showcase_only` rejected), mixed-mode jury award conflict rejection, governed replacement (queries actual raw stars strictly from main round) or clearing of Community Winner.
     - `republishChallengeResultsService`: Mode-specific reconciliation and publication to `finished`.
-    - `getJuryWorkspaceData`: Full workspace dataset with candidate gallery, raw stars, draft awards, and authorization flags.
+    - `getJuryWorkspaceData`: Full workspace dataset with candidate gallery, raw stars, draft awards, available active members, and authorization flags.
   - UI Components:
-    - `JuryAwardWorkspace.tsx`: Studio Atelier compliant workspace for Jury Recorder, panel badge display, candidate gallery, category builder, lifecycle-aware permissions, and publication/cancellation controls.
-    - `challenges/[slug]/jury/page.tsx` and `challenges/[slug]/results/page.tsx` integrated (winner-only results, unranked jury awards with `categoryLabel`).
+    - `JuryAwardWorkspace.tsx`: Studio Atelier compliant workspace for Jury Recorder, panel management controls (Add Juror from available members, Remove Juror, Set Recorder), zero-juror recovery banner, candidate gallery, category builder, lifecycle-aware permissions, Governance Community Winner Correction panel during `RESULTS_REVOKED`, and publication/cancellation controls.
+    - `challenges/[slug]/jury/page.tsx` and `challenges/[slug]/results/page.tsx` integrated (winner-only results, unranked jury awards with `categoryLabel`, legacy `StoryCardGenerator` entry point removed to prevent synthetic numeric ranks).
     - `ChallengeTransitionButtons.tsx`: migrated to Gate C (no `Hitung Hasil` from `jury_selection_open`, direct link to jury workspace).
   - Dedicated Test Matrix (`src/lib/__tests__/testPhase3SimplifiedJury.ts`):
-    - Verified all 50 test scenarios covering displayed juror model, recorder partial unique index, atomic transfer, authorization, readiness guards (scheduler, finalize, manual resolve), block generic `jury_selection_open` transition, readiness inside publication, dynamic award creation, free-text flexibility, mixed mode exclusion, duplicate artwork confirmation, category sanitization, award CRUD, protected recorder deletion, zero-award cancellation invariant, manual publication matrix, strict `publishCommunityOnly` invariants, zero-award cancellation, revocation with snapshot, legacy engine blocks, main-round raw Community Star authority, strengthened republish validations, governed winner correction (replace/clear), award correction under revocation, reconciliation republishing, audit regression, and 4 production-path concurrency tests.
+    - Verified all 63 test scenarios covering displayed juror model, recorder partial unique index, atomic transfer, authorization, readiness guards (scheduler, finalize, manual resolve), block generic `jury_selection_open` transition, readiness inside publication, dynamic award creation, free-text flexibility, mixed mode exclusion, duplicate artwork confirmation, category sanitization, award CRUD, protected recorder deletion, zero-award cancellation invariant, manual publication matrix, strict `publishCommunityOnly` invariants, zero-award cancellation, revocation with snapshot, legacy engine blocks, main-round raw Community Star authority, strengthened republish validations, governed winner correction (replace/clear), award correction under revocation, reconciliation republishing, audit regression, 4 production-path concurrency tests, admin/mod panel management (add/remove juror, authorization, duplicate rejection), zero-juror recovery to operational readiness, mode guards on Community Winner correction, mixed-mode replacement conflict rejection, and static/unit assertion for unranked jury awards (`finalRank === null`).
   - Verification Suite:
     - `npm run test:migrate`: 7/7 scenarios passed (including Scenario 7 forward migration 0009 -> 0010 upgrade path with ON DELETE SET NULL and duplicate award schema checks).
-    - `npx tsx src/lib/__tests__/testPhase3SimplifiedJury.ts`: 50/50 scenarios passed.
+    - `npx tsx src/lib/__tests__/testPhase3SimplifiedJury.ts`: 63/63 scenarios passed.
     - `npx tsx src/lib/__tests__/testPhase2VotingAndTiebreak.ts`: 20/20 scenarios passed.
     - `npm run test:all`: 15/15 test suites passed cleanly.
     - `npm run lint`: 0 errors.
