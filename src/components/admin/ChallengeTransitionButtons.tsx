@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
   transitionChallengeStatusAction,
   revokeChallengeResultsAction,
 } from "@/app/actions/challenges";
 import {
-  computeChallengeResultsAction,
   publishChallengeResultsAction,
 } from "@/app/actions/voting";
 import {
@@ -17,7 +17,7 @@ import {
   Calendar,
   RotateCcw,
   CheckCircle2,
-  Users,
+  Award,
 } from "lucide-react";
 import type { EffectiveChallengeStatus } from "@/lib/challenges";
 
@@ -25,12 +25,14 @@ interface ChallengeTransitionButtonsProps {
   challengeId: string;
   currentStatus: EffectiveChallengeStatus;
   awardMode?: string;
+  slug?: string;
 }
 
 export function ChallengeTransitionButtons({
   challengeId,
   currentStatus,
   awardMode = "vote_and_jury",
+  slug,
 }: ChallengeTransitionButtonsProps) {
   const [isLoading, setIsLoading] = useState(false);
 
@@ -41,19 +43,6 @@ export function ChallengeTransitionButtons({
       await transitionChallengeStatusAction(challengeId, status);
     } catch (err: any) {
       alert(err?.message || "Gagal mengubah status.");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleCompute = async () => {
-    if (!confirm("Kunci tahapan dan hitung akumulasi hasil challenge?")) return;
-    setIsLoading(true);
-    try {
-      const res = await computeChallengeResultsAction(challengeId);
-      alert("Hasil berhasil dihitung dan masuk ke tahap Review.");
-    } catch (err: any) {
-      alert(err?.message || "Gagal menghitung hasil.");
     } finally {
       setIsLoading(false);
     }
@@ -93,6 +82,8 @@ export function ChallengeTransitionButtons({
     return <Loader2 className="h-4 w-4 animate-spin text-amber-400" />;
   }
 
+  const juryWorkspaceUrl = slug ? `/challenges/${slug}/jury` : `/challenges/${challengeId}/jury`;
+
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
       {/* Draft -> Scheduled */}
@@ -119,43 +110,32 @@ export function ChallengeTransitionButtons({
         </button>
       ) : null}
 
-      {/* Submission Locked -> Award Mode Aware Next Stage */}
-      {currentStatus === "submission_locked" ? (
-        awardMode === "jury_only" ? (
-          <button
-            onClick={() => handleTransition("jury_selection_open")}
-            title="Buka Sesi Penilaian Juri"
-            className="p-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 text-xs font-mono font-bold transition-all flex items-center gap-1 cursor-pointer"
-          >
-            <Users className="h-3 w-3" />
-            <span>Buka Sesi Juri</span>
-          </button>
-        ) : awardMode === "showcase_only" ? (
-          <button
-            onClick={() => handleTransition("review")}
-            title="Masuk Tahap Review Kurator"
-            className="p-1.5 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 text-xs font-mono font-bold transition-all flex items-center gap-1 cursor-pointer"
-          >
-            <Sparkles className="h-3 w-3" />
-            <span>Masuk Review</span>
-          </button>
-        ) : null
-      ) : null}
-
-      {/* Jury Selection Open -> Compute Results & Transition to Review */}
-      {currentStatus === "jury_selection_open" ? (
+      {/* Submission Locked -> Showcase Only Review */}
+      {currentStatus === "submission_locked" && awardMode === "showcase_only" ? (
         <button
-          onClick={handleCompute}
-          title="Kunci Penilaian Juri & Hitung Hasil (Masuk Review)"
-          className="p-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 text-xs font-mono font-bold transition-all flex items-center gap-1 cursor-pointer"
+          onClick={() => handleTransition("review")}
+          title="Masuk Tahap Review Kurator"
+          className="p-1.5 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 text-xs font-mono font-bold transition-all flex items-center gap-1 cursor-pointer"
         >
           <Sparkles className="h-3 w-3" />
-          <span>Hitung Hasil</span>
+          <span>Masuk Review</span>
         </button>
       ) : null}
 
-      {/* Review -> Publish Results */}
-      {currentStatus === "review" ? (
+      {/* Jury Selection Open -> Link into Dedicated Jury Workspace */}
+      {currentStatus === "jury_selection_open" ? (
+        <Link
+          href={juryWorkspaceUrl}
+          title="Buka Workspace Penjurian"
+          className="p-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 text-xs font-mono font-bold transition-all flex items-center gap-1 cursor-pointer"
+        >
+          <Award className="h-3 w-3" />
+          <span>Workspace Juri</span>
+        </Link>
+      ) : null}
+
+      {/* Review (Showcase Only) -> Publish Results */}
+      {currentStatus === "review" && awardMode === "showcase_only" ? (
         <button
           onClick={handlePublish}
           title="Publikasikan Hasil Resmi (Finished)"
@@ -178,20 +158,20 @@ export function ChallengeTransitionButtons({
         </button>
       ) : null}
 
-      {/* Results Revoked -> Return to Review */}
+      {/* Results Revoked -> Link into Jury Workspace for Governance Correction / Republish */}
       {currentStatus === "results_revoked" ? (
-        <button
-          onClick={() => handleTransition("review")}
-          title="Kembalikan ke Tahap Review Ulang"
-          className="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-xs font-mono transition-colors flex items-center gap-1 cursor-pointer"
+        <Link
+          href={juryWorkspaceUrl}
+          title="Kelola & Koreksi Hasil Challenge"
+          className="p-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 text-xs font-mono font-bold transition-all flex items-center gap-1 cursor-pointer"
         >
-          <Sparkles className="h-3 w-3" />
-          <span>Masuk Review Ulang</span>
-        </button>
+          <Award className="h-3 w-3" />
+          <span>Koreksi Hasil</span>
+        </Link>
       ) : null}
 
-      {/* Cancel button */}
-      {currentStatus !== "cancelled" && currentStatus !== "finished" ? (
+      {/* Cancel button: strictly for early pre-voting/pre-jury stages */}
+      {["draft", "scheduled", "submission_open", "submission_locked"].includes(currentStatus) ? (
         <button
           onClick={() => handleTransition("cancelled")}
           title="Batalkan Challenge"

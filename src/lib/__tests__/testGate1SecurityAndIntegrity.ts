@@ -162,6 +162,7 @@ async function runSecurityAndIntegrityTests() {
     challengeId: testChallenge.id,
     userId: juryMember.id,
     profileId: juryProfile.id,
+    isRecorder: true,
   });
 
   // Regular member attempt to score -> MUST BE DENIED

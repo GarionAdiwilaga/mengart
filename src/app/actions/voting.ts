@@ -234,178 +234,29 @@ export async function resolveTieManuallyAction(params: {
 }
 
 /**
- * Shared Jury Winner-Slot Assignment with Optimistic Concurrency Locking
+ * Shared Jury Winner-Slot Assignment (Deprecated under Blueprint 2.2.1)
  */
-export async function assignJurySlotAction(params: {
+export async function assignJurySlotAction(_params: {
   challengeId: string;
   winnerSlotId: string;
   submissionId: string;
   expectedVersion?: number;
   notes?: string;
 }) {
-  const { challengeId, winnerSlotId, submissionId, expectedVersion = 1, notes } = params;
-  const user = await requireAuth("/login");
-
-  // Validate Jury Authorization
-  const juryPolicy = await canSubmitJuryScore(user as any, challengeId, submissionId);
-  if (!juryPolicy.allowed) {
-    throw new Error(juryPolicy.reason || "Anda tidak diizinkan menetapkan slot juri.");
-  }
-
-  return db.transaction(async (tx) => {
-    // 1. Lock challenge and winner slot row
-    const [challenge] = await tx
-      .select()
-      .from(challenges)
-      .where(eq(challenges.id, challengeId))
-      .for("update")
-      .limit(1);
-
-    if (!challenge) throw new Error("Challenge tidak ditemukan.");
-    if (challenge.status === "finished" || challenge.status === "cancelled") {
-      throw new Error(`Challenge tidak dapat menerima penetapan juri pada status "${challenge.status}".`);
-    }
-
-    // 2. Validate target winner slot exists and is a jury award slot
-    const [slot] = await tx
-      .select()
-      .from(challengeWinnerSlots)
-      .where(
-        and(
-          eq(challengeWinnerSlots.id, winnerSlotId),
-          eq(challengeWinnerSlots.challengeId, challengeId),
-          eq(challengeWinnerSlots.slotType, "jury_award")
-        )
-      )
-      .for("update")
-      .limit(1);
-
-    if (!slot) {
-      throw new Error("Slot penghargaan juri tidak valid untuk challenge ini.");
-    }
-
-    // 3. Optimistic Concurrency Version Verification
-    const [existingAssignment] = await tx
-      .select()
-      .from(challengeJurySlotAssignments)
-      .where(
-        and(
-          eq(challengeJurySlotAssignments.challengeId, challengeId),
-          eq(challengeJurySlotAssignments.winnerSlotId, winnerSlotId)
-        )
-      )
-      .for("update")
-      .limit(1);
-
-    if (existingAssignment) {
-      if (existingAssignment.version !== expectedVersion) {
-        throw new Error(
-          `Konflik konkurensi (409 Conflict): Slot ini telah diperbarui oleh juri lain (Versi terkini: ${existingAssignment.version}, Versi Anda: ${expectedVersion}). Harap muat ulang halaman.`
-        );
-      }
-
-      const nextVersion = existingAssignment.version + 1;
-      await tx
-        .update(challengeJurySlotAssignments)
-        .set({
-          submissionId,
-          assignedByUserId: user.id,
-          version: nextVersion,
-          notes: notes?.trim() || null,
-          updatedAt: new Date(),
-        })
-        .where(eq(challengeJurySlotAssignments.id, existingAssignment.id));
-    } else {
-      await tx.insert(challengeJurySlotAssignments).values({
-        challengeId,
-        winnerSlotId,
-        submissionId,
-        assignedByUserId: user.id,
-        version: 1,
-        notes: notes?.trim() || null,
-      });
-    }
-
-    // 4. Audit Log
-    await tx.insert(auditLogs).values({
-      actorId: user.id,
-      action: "jury.assign_slot",
-      targetType: "challenge_winner_slot",
-      targetId: winnerSlotId,
-      reason: `Penetapan slot "${slot.title}" ke karya submisi ${submissionId}`,
-    });
-
-    revalidatePath(`/challenges/${challenge.slug}/jury`);
-    return { success: true };
-  });
+  throw new Error("Sistem penetapan slot juri legacy telah dinonaktifkan (Blueprint 2.2.1). Gunakan createJuryAwardAction.");
 }
 
 /**
- * Submit or update jury evaluation notes and winner slot recommendation
+ * Submit jury score evaluation (Deprecated under Blueprint 2.2.1)
  */
 export async function submitJuryScoreAction(
-  challengeId: string,
-  submissionId: string,
-  winnerSlotId?: string,
-  score?: number,
-  critiqueNotes?: string
+  _challengeId: string,
+  _submissionId: string,
+  _winnerSlotId?: string,
+  _score?: number,
+  _critiqueNotes?: string
 ) {
-  const user = await requireAuth("/login");
-
-  // Validate Jury Authorization
-  const juryPolicy = await canSubmitJuryScore(user as any, challengeId, submissionId);
-  if (!juryPolicy.allowed) {
-    throw new Error(juryPolicy.reason || "Anda tidak diizinkan mengevaluasi karya ini.");
-  }
-
-  return db.transaction(async (tx) => {
-    // 1. If winnerSlotId is provided, assign jury slot
-    if (winnerSlotId) {
-      await assignJurySlotAction({
-        challengeId,
-        winnerSlotId,
-        submissionId,
-        notes: critiqueNotes,
-      });
-    }
-
-    // 2. Upsert challenge_jury_scores evaluation record
-    const [existingScore] = await tx
-      .select()
-      .from(challengeJuryScores)
-      .where(
-        and(
-          eq(challengeJuryScores.challengeId, challengeId),
-          eq(challengeJuryScores.juryUserId, user.id),
-          eq(challengeJuryScores.submissionId, submissionId)
-        )
-      )
-      .limit(1);
-
-    if (existingScore) {
-      await tx
-        .update(challengeJuryScores)
-        .set({
-          winnerSlotId: winnerSlotId || null,
-          score: score || null,
-          critiqueNotes: critiqueNotes || null,
-          updatedAt: new Date(),
-        })
-        .where(eq(challengeJuryScores.id, existingScore.id));
-    } else {
-      await tx.insert(challengeJuryScores).values({
-        challengeId,
-        juryUserId: user.id,
-        submissionId,
-        winnerSlotId: winnerSlotId || null,
-        score: score || null,
-        critiqueNotes: critiqueNotes || null,
-      });
-    }
-
-    revalidatePath(`/challenges/${challengeId}`);
-    return { success: true };
-  });
+  throw new Error("Sistem penilaian skor numerik juri legacy telah dinonaktifkan (Blueprint 2.2.1). Gunakan createJuryAwardAction.");
 }
 
 import {

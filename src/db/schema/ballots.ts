@@ -17,6 +17,7 @@ import {
   challengeSubmissions,
   challengeWinnerSlots,
   challengeVotingRounds,
+  challengeJuryAwards,
 } from "./challenges";
 
 export const ballotRoundTypeEnum = pgEnum("ballot_round_type", ["main", "tiebreak"]);
@@ -117,8 +118,15 @@ export const challengeResults = pgTable(
     winnerSlotId: uuid("winner_slot_id").references(() => challengeWinnerSlots.id, {
       onDelete: "set null",
     }),
-    finalRank: integer("final_rank"), // Nullable for non-ranked jury award winners
-    awardType: text("award_type").default("community_rank").notNull(), // 'community_vote_winner' | 'community_rank' | 'jury_award' | 'honorable_mention'
+    finalRank: integer("final_rank"), // Nullable for non-ranked jury award winners; 1 for community_vote_winner
+    awardType: text("award_type").default("community_vote_winner").notNull(), // 'community_vote_winner' | 'jury_award' | legacy 'community_rank'
+    categoryLabel: text("category_label"),
+    juryAwardId: uuid("jury_award_id").references(() => challengeJuryAwards.id, {
+      onDelete: "set null",
+    }),
+    recordedByUserId: uuid("recorded_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     totalCommunityStars: integer("total_community_stars").default(0).notNull(),
     juryScore: numeric("jury_score", { precision: 5, scale: 2 }),
     resolutionMethod: text("resolution_method"),
@@ -132,9 +140,13 @@ export const challengeResults = pgTable(
   (table) => [
     index("idx_results_challenge_id").on(table.challengeId),
     index("idx_results_submission_id").on(table.submissionId),
-    uniqueIndex("uniq_challenge_result").on(table.challengeId, table.submissionId),
+    index("idx_results_jury_award_id").on(table.juryAwardId),
     uniqueIndex("uniq_challenge_community_winner")
       .on(table.challengeId)
       .where(sql`"award_type" = 'community_vote_winner'`),
+    uniqueIndex("uniq_challenge_result_jury_award")
+      .on(table.juryAwardId)
+      .where(sql`"jury_award_id" IS NOT NULL`),
   ]
 );
+

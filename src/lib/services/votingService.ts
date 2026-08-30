@@ -17,6 +17,7 @@ import {
 import { eq, and, sql, desc, asc, inArray } from "drizzle-orm";
 import type { ServiceContext } from "./challengeService";
 import { internalTransitionChallengeStatus } from "./challengeService";
+import { validateJuryPhaseReadinessService } from "./juryService";
 
 /**
  * Deterministic candidate shuffle per voter to prevent position bias.
@@ -764,6 +765,10 @@ export async function finalizeVotingRoundService(
           "Babak voting utama selesai tanpa ada suara (0 Stars). Challenge selesai tanpa pemenang komunitas."
         );
       } else if (challenge.awardMode === "vote_and_jury") {
+        const readiness = await validateJuryPhaseReadinessService(dbOrTx, challenge.id);
+        if (!readiness.ready) {
+          throw new Error(`Transisi ke 'jury_selection_open' diblokir: ${readiness.reason}`);
+        }
         await internalTransitionChallengeStatus(
           dbOrTx,
           actor,
@@ -809,6 +814,10 @@ export async function finalizeVotingRoundService(
           `Voting utama selesai: Pemenang komunitas ditetapkan (${tally.maxStars} Stars).`
         );
       } else if (challenge.awardMode === "vote_and_jury") {
+        const readiness = await validateJuryPhaseReadinessService(dbOrTx, challenge.id);
+        if (!readiness.ready) {
+          throw new Error(`Transisi ke 'jury_selection_open' diblokir: ${readiness.reason}`);
+        }
         await internalTransitionChallengeStatus(
           dbOrTx,
           actor,
@@ -875,6 +884,10 @@ export async function finalizeVotingRoundService(
           `Babak tiebreak selesai: Pemenang komunitas ditetapkan (${tally.maxStars} Stars).`
         );
       } else if (challenge.awardMode === "vote_and_jury") {
+        const readiness = await validateJuryPhaseReadinessService(dbOrTx, challenge.id);
+        if (!readiness.ready) {
+          throw new Error(`Transisi ke 'jury_selection_open' diblokir: ${readiness.reason}`);
+        }
         await internalTransitionChallengeStatus(
           dbOrTx,
           actor,
@@ -1177,6 +1190,10 @@ export async function resolveTieManuallyService(
       `Resolusi manual pemenang seri oleh ${actor.role}: ${reason.trim()}`
     );
   } else if (challenge.awardMode === "vote_and_jury") {
+    const readiness = await validateJuryPhaseReadinessService(dbOrTx, challenge.id);
+    if (!readiness.ready) {
+      throw new Error(`Transisi ke 'jury_selection_open' diblokir: ${readiness.reason}`);
+    }
     await internalTransitionChallengeStatus(
       dbOrTx,
       actor,

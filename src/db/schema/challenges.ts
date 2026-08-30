@@ -160,6 +160,7 @@ export const challengeJuryAssignments = pgTable(
     profileId: uuid("profile_id")
       .notNull()
       .references(() => profiles.id, { onDelete: "cascade" }),
+    isRecorder: boolean("is_recorder").default(false).notNull(),
     assignedAt: timestamp("assigned_at", { withTimezone: true }).defaultNow().notNull(),
     assignedBy: uuid("assigned_by").references(() => users.id, { onDelete: "set null" }),
   },
@@ -167,6 +168,9 @@ export const challengeJuryAssignments = pgTable(
     index("idx_jury_challenge_id").on(table.challengeId),
     index("idx_jury_user_id").on(table.userId),
     uniqueIndex("uniq_challenge_jury").on(table.challengeId, table.userId),
+    uniqueIndex("uniq_challenge_jury_recorder")
+      .on(table.challengeId)
+      .where(sql`"is_recorder" = true`),
   ]
 );
 
@@ -299,3 +303,29 @@ export const challengeJurySlotAssignments = pgTable(
     uniqueIndex("uniq_jury_slot_submission").on(table.challengeId, table.submissionId),
   ]
 );
+
+// Dynamic Jury Awards (Blueprint 2.2.1)
+export const challengeJuryAwards = pgTable(
+  "challenge_jury_awards",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    challengeId: uuid("challenge_id")
+      .notNull()
+      .references(() => challenges.id, { onDelete: "cascade" }),
+    submissionId: uuid("submission_id")
+      .notNull()
+      .references(() => challengeSubmissions.id, { onDelete: "cascade" }),
+    categoryLabel: text("category_label"),
+    recordedByUserId: uuid("recorded_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_jury_awards_challenge_id").on(table.challengeId),
+    index("idx_jury_awards_submission_id").on(table.submissionId),
+    index("idx_jury_awards_recorder_id").on(table.recordedByUserId),
+  ]
+);
+

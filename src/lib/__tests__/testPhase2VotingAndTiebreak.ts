@@ -16,6 +16,7 @@ import {
   challengeBallots,
   challengeBallotStars,
   challengeResults,
+  challengeJuryAssignments,
   auditLogs,
 } from "@/db/schema";
 import { eq, and, sql, desc } from "drizzle-orm";
@@ -362,10 +363,12 @@ async function runTests() {
       })
       .returning();
 
-    await db.insert(challengeVotingRoundCandidates).values([
-      { votingRoundId: round2b.id, submissionId: sub2B1.id },
-      { votingRoundId: round2b.id, submissionId: sub2B2.id },
-    ]);
+    await db.insert(challengeJuryAssignments).values({
+      challengeId: ch2b.id,
+      userId: artist1.id,
+      profileId: prof1.id,
+      isRecorder: true,
+    });
 
     const fin2b = await finalizeVotingRoundService(db, adminCtx, { votingRoundId: round2b.id });
     if (fin2b.outcome !== "no_votes") {
@@ -1045,6 +1048,13 @@ async function runTests() {
       .returning();
     await createSubmission(chJury.id, artist1, prof1, "Jury Art 1");
     await createSubmission(chJury.id, artist2, prof2, "Jury Art 2");
+
+    await db.insert(challengeJuryAssignments).values({
+      challengeId: chJury.id,
+      userId: artist1.id,
+      profileId: prof1.id,
+      isRecorder: true,
+    });
 
     await materializeScheduledTransitionsService(db, new Date());
     const [chJuryAfter] = await db.select().from(challenges).where(eq(challenges.id, chJury.id));

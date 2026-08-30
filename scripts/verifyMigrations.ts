@@ -26,15 +26,17 @@ async function runMigrationVerification() {
   const freshDbName = `mengart_test_fresh_${Date.now()}`;
   const upgradeDbName = `mengart_test_upgrade_${Date.now()}`;
   const upgradeDbName0008 = `mengart_test_upgrade_0008_${Date.now()}`;
+  const upgradeDbName0009 = `mengart_test_upgrade_0009_${Date.now()}`;
   const failDbName1 = `mengart_test_fail1_${Date.now()}`;
   const failDbName2 = `mengart_test_fail2_${Date.now()}`;
   const failDbName3 = `mengart_test_fail3_${Date.now()}`;
   const temp0006Dir = path.resolve("./.tmp_drizzle_0006");
   const temp0008Dir = path.resolve("./.tmp_drizzle_0008");
+  const temp0009Dir = path.resolve("./.tmp_drizzle_0009");
 
   try {
     // --------------------------------------------------------------------------
-    // SCENARIO 1: FRESH EMPTY DATABASE -> ALL COMMITTED MIGRATIONS (0000 -> 0009)
+    // SCENARIO 1: FRESH EMPTY DATABASE -> ALL COMMITTED MIGRATIONS (0000 -> 0010)
     // --------------------------------------------------------------------------
     console.log(`[Scenario 1] Creating fresh empty database: ${freshDbName}...`);
     await adminClient.unsafe(`CREATE DATABASE "${freshDbName}";`);
@@ -43,9 +45,9 @@ async function runMigrationVerification() {
     const freshClient = postgres(freshDbUrl, { max: 1 });
     const freshDrizzle = drizzle(freshClient, { schema });
 
-    console.log("-> Running all committed migrations (0000 -> 0009) on fresh database via Drizzle migrator...");
+    console.log("-> Running all committed migrations (0000 -> 0010) on fresh database via Drizzle migrator...");
     await migrate(freshDrizzle, { migrationsFolder: "./drizzle" });
-    console.log("✓ Migration 0000 -> 0009 succeeded on fresh empty database!");
+    console.log("✓ Migration 0000 -> 0010 succeeded on fresh empty database!");
 
     // Verify critical tables exist in fresh database
     const freshTables = await freshClient`
@@ -57,15 +59,16 @@ async function runMigrationVerification() {
           'challenge_voting_rounds', 
           'challenge_voting_round_candidates', 
           'challenge_jury_slot_assignments', 
+          'challenge_jury_awards',
           'challenge_ballots', 
           'challenge_results'
         );
     `;
 
-    if (freshTables.length !== 6) {
-      throw new Error(`Expected 6 core challenge tables on fresh database, found ${freshTables.length}`);
+    if (freshTables.length !== 7) {
+      throw new Error(`Expected 7 core challenge tables on fresh database, found ${freshTables.length}`);
     }
-    console.log("✓ All 6 core challenge tables verified in fresh database schema.");
+    console.log("✓ All 7 core challenge tables verified in fresh database schema.");
 
     // Verify unique indexes and new columns exist
     const freshIndexes = await freshClient`
@@ -76,13 +79,15 @@ async function runMigrationVerification() {
           'uniq_challenge_community_winner', 
           'uniq_challenge_main_round', 
           'uniq_challenge_tiebreak_round', 
-          'uniq_challenge_open_round'
+          'uniq_challenge_open_round',
+          'uniq_challenge_jury_recorder',
+          'uniq_challenge_result_jury_award'
         );
     `;
-    if (freshIndexes.length !== 5) {
-      throw new Error(`Expected 5 unique partial indexes in fresh database, found ${freshIndexes.length}`);
+    if (freshIndexes.length !== 7) {
+      throw new Error(`Expected 7 unique partial indexes in fresh database, found ${freshIndexes.length}`);
     }
-    console.log("✓ All 5 partial unique indexes verified in fresh database schema.");
+    console.log("✓ All 7 partial unique indexes verified in fresh database schema.");
 
     await freshClient.end();
     console.log("🎉 SCENARIO 1 (FRESH DATABASE) PASSED!\n");
@@ -832,8 +837,212 @@ async function runMigrationVerification() {
     await upgradeClient0008.end();
     console.log("🎉 SCENARIO 6 (FORWARD MIGRATION 0008 -> 0009 UPGRADE PATH) PASSED!\n");
 
+    // --------------------------------------------------------------------------
+    // SCENARIO 7: FORWARD MIGRATION 0009 -> 0010 UPGRADE PATH & BACKFILL INTEGRITY
+    // --------------------------------------------------------------------------
+    console.log(`[Scenario 7] Creating upgrade database for 0009 -> 0010: ${upgradeDbName0009}...`);
+    await adminClient.unsafe(`CREATE DATABASE "${upgradeDbName0009}";`);
+
+    const upgradeDbUrl0009 = `${urlObj.protocol}//${urlObj.username}:${urlObj.password}@${urlObj.host}/${upgradeDbName0009}`;
+    const upgradeClient0009 = postgres(upgradeDbUrl0009, { max: 1 });
+    const upgradeDrizzle0009 = drizzle(upgradeClient0009, { schema });
+
+    // 1. Create temporary migration folder containing ONLY migrations 0000 through 0009
+    await fs.mkdir(temp0009Dir, { recursive: true });
+    await fs.mkdir(path.join(temp0009Dir, "meta"), { recursive: true });
+
+    const journalContent = await fs.readFile("./drizzle/meta/_journal.json", "utf-8");
+    const fullJournal = JSON.parse(journalContent);
+    const subsetJournal0009 = {
+      ...fullJournal,
+      entries: fullJournal.entries.filter((e: any) => e.idx <= 9),
+    };
+    await fs.writeFile(
+      path.join(temp0009Dir, "meta/_journal.json"),
+      JSON.stringify(subsetJournal0009, null, 2)
+    );
+
+    for (let i = 0; i <= 9; i++) {
+      const entry = subsetJournal0009.entries[i];
+      const filename = `${entry.tag}.sql`;
+      await fs.copyFile(path.join("./drizzle", filename), path.join(temp0009Dir, filename));
+    }
+
+    console.log("-> Running migrations 0000 -> 0009 on pre-0010 database...");
+    await migrate(upgradeDrizzle0009, { migrationsFolder: temp0009Dir });
+    console.log("✓ Pre-0010 baseline (0000 -> 0009) applied cleanly.");
+
+    // 2. Verify pre-0010 state does not have is_recorder column
+    const [isRecorderColPre] = await upgradeClient0009`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'challenge_jury_assignments' AND column_name = 'is_recorder';
+    `;
+    if (isRecorderColPre) {
+      throw new Error("Expected challenge_jury_assignments to NOT have is_recorder column prior to 0010.");
+    }
+    console.log("✓ Verified pre-0010 challenge_jury_assignments does not have is_recorder column.");
+
+    // 3. Seed pre-0010 data: user, profile, challenge, jury assignment, winner slot, legacy result
+    const [user7A] = await upgradeClient0009`INSERT INTO users (email, role) VALUES ('juror1_0010@mengart.local', 'member') RETURNING id;`;
+    const [user7B] = await upgradeClient0009`INSERT INTO users (email, role) VALUES ('juror2_0010@mengart.local', 'member') RETURNING id;`;
+    const [user7Artist] = await upgradeClient0009`INSERT INTO users (email, role) VALUES ('artist_0010@mengart.local', 'member') RETURNING id;`;
+    const [prof7A] = await upgradeClient0009`INSERT INTO profiles (user_id, display_name, slug) VALUES (${user7A.id}, 'Juror 1', 'juror-1') RETURNING id;`;
+    const [prof7B] = await upgradeClient0009`INSERT INTO profiles (user_id, display_name, slug) VALUES (${user7B.id}, 'Juror 2', 'juror-2') RETURNING id;`;
+    const [prof7Artist] = await upgradeClient0009`INSERT INTO profiles (user_id, display_name, slug) VALUES (${user7Artist.id}, 'Artist 7', 'artist-7') RETURNING id;`;
+
+    const [ch7] = await upgradeClient0009`
+      INSERT INTO challenges (title, slug, theme, description, prompt_rules, status, award_mode, created_by_user_id)
+      VALUES ('Legacy 0010 Challenge', 'ch-0010', 'Theme', 'Desc', 'Rules', 'jury_selection_open', 'jury_only', ${user7A.id})
+      RETURNING id;
+    `;
+
+    await upgradeClient0009`
+      INSERT INTO challenge_jury_assignments (challenge_id, user_id, profile_id)
+      VALUES (${ch7.id}, ${user7A.id}, ${prof7A.id}), (${ch7.id}, ${user7B.id}, ${prof7B.id});
+    `;
+
+    const [jurySlot7] = await upgradeClient0009`
+      INSERT INTO challenge_winner_slots (challenge_id, slot_type, rank, title, display_order)
+      VALUES (${ch7.id}, 'jury_award', 1, 'Pilihan Juri — Best Composition', 1)
+      RETURNING id;
+    `;
+
+    const [sub7] = await upgradeClient0009`
+      INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status)
+      VALUES (${ch7.id}, ${user7Artist.id}, ${prof7Artist.id}, 'submitted')
+      RETURNING id;
+    `;
+
+    const [legacyResult7] = await upgradeClient0009`
+      INSERT INTO challenge_results (challenge_id, submission_id, winner_slot_id, award_type, final_rank, total_community_stars, is_published)
+      VALUES (${ch7.id}, ${sub7.id}, ${jurySlot7.id}, 'jury_award', 1, 0, true)
+      RETURNING id;
+    `;
+
+    console.log("✓ Pre-0010 legacy challenge, jury members, and jury result row seeded.");
+
+    // 4. Apply forward migration 0010
+    console.log("-> Applying forward migration 0010 via Drizzle migrator...");
+    await migrate(upgradeDrizzle0009, { migrationsFolder: "./drizzle" });
+    console.log("✓ Migration 0010 applied cleanly.");
+
+    // 5. Verify post-0010 column defaults and backfill
+    const [isRecorderColPost] = await upgradeClient0009`
+      SELECT column_default 
+      FROM information_schema.columns 
+      WHERE table_name = 'challenge_jury_assignments' AND column_name = 'is_recorder';
+    `;
+    if (!isRecorderColPost?.column_default?.includes("false")) {
+      throw new Error(`Expected is_recorder column default to be false, got ${isRecorderColPost?.column_default}`);
+    }
+    console.log("✓ Verified challenge_jury_assignments.is_recorder exists with default false.");
+
+    // Verify existing jury members have is_recorder = false (migration 0010 did NOT invent a recorder)
+    const postAssignments = await upgradeClient0009`
+      SELECT user_id, is_recorder FROM challenge_jury_assignments WHERE challenge_id = ${ch7.id};
+    `;
+    if (postAssignments.length !== 2 || postAssignments.some((a: any) => a.is_recorder !== false)) {
+      throw new Error("Expected existing jury assignments to have is_recorder = false without invented recorders.");
+    }
+    console.log("✓ Verified existing jury members retained is_recorder = false without synthetic recorder invention.");
+
+    // Verify backfill in challenge_results.category_label from challenge_winner_slots.title
+    const [backfilledResult] = await upgradeClient0009`
+      SELECT category_label FROM challenge_results WHERE id = ${legacyResult7.id};
+    `;
+    if (backfilledResult.category_label !== "Pilihan Juri — Best Composition") {
+      throw new Error(`Expected category_label to be backfilled as 'Pilihan Juri — Best Composition', got '${backfilledResult.category_label}'`);
+    }
+    console.log("✓ Verified legacy challenge_results.category_label successfully backfilled from winner slot title.");
+
+    // Verify unique partial index on is_recorder prevents > 1 recorder
+    await upgradeClient0009`
+      UPDATE challenge_jury_assignments SET is_recorder = true WHERE challenge_id = ${ch7.id} AND user_id = ${user7A.id};
+    `;
+    let duplicateRecorderFailed = false;
+    try {
+      await upgradeClient0009`
+        UPDATE challenge_jury_assignments SET is_recorder = true WHERE challenge_id = ${ch7.id} AND user_id = ${user7B.id};
+      `;
+    } catch (_err) {
+      duplicateRecorderFailed = true;
+    }
+    if (!duplicateRecorderFailed) {
+      throw new Error("Expected partial unique index uniq_challenge_jury_recorder to reject 2 recorders on same challenge.");
+    }
+    console.log("✓ Verified partial unique index uniq_challenge_jury_recorder enforces at most one recorder per challenge.");
+
+    // Verify challenge_jury_awards table
+    const [newAward7] = await upgradeClient0009`
+      INSERT INTO challenge_jury_awards (challenge_id, submission_id, category_label, recorded_by_user_id)
+      VALUES (${ch7.id}, ${sub7.id}, 'Best Concept Art', ${user7A.id})
+      RETURNING id, category_label;
+    `;
+    if (!newAward7 || newAward7.category_label !== "Best Concept Art") {
+      throw new Error("Failed to insert into new challenge_jury_awards table.");
+    }
+    console.log("✓ Verified challenge_jury_awards table operates correctly.");
+
+    // Verify two distinct Jury Awards for the same submission are allowed
+    const [secondAward7] = await upgradeClient0009`
+      INSERT INTO challenge_jury_awards (challenge_id, submission_id, category_label, recorded_by_user_id)
+      VALUES (${ch7.id}, ${sub7.id}, 'Best Lighting & Mood', ${user7A.id})
+      RETURNING id, category_label;
+    `;
+    if (!secondAward7) {
+      throw new Error("Failed to insert second distinct jury award for the same submission.");
+    }
+    console.log("✓ Verified multiple distinct Jury Awards for the same submission are permitted in challenge_jury_awards.");
+
+    // Verify materialization of two distinct awards for same submission in challenge_results
+    const [matResult1] = await upgradeClient0009`
+      INSERT INTO challenge_results (challenge_id, submission_id, award_type, jury_award_id, category_label, is_published)
+      VALUES (${ch7.id}, ${sub7.id}, 'jury_award', ${newAward7.id}, ${newAward7.category_label}, true)
+      RETURNING id;
+    `;
+    const [matResult2] = await upgradeClient0009`
+      INSERT INTO challenge_results (challenge_id, submission_id, award_type, jury_award_id, category_label, is_published)
+      VALUES (${ch7.id}, ${sub7.id}, 'jury_award', ${secondAward7.id}, ${secondAward7.category_label}, true)
+      RETURNING id;
+    `;
+    if (!matResult1 || !matResult2) {
+      throw new Error("Failed to materialize two distinct jury awards for the same submission in challenge_results.");
+    }
+    console.log("✓ Verified two distinct Jury Awards for the same submission materialize into challenge_results.");
+
+    // Verify one jury_award_id cannot materialize twice into challenge_results
+    let duplicateJuryAwardResultFailed = false;
+    try {
+      await upgradeClient0009`
+        INSERT INTO challenge_results (challenge_id, submission_id, award_type, jury_award_id, category_label, is_published)
+        VALUES (${ch7.id}, ${sub7.id}, 'jury_award', ${newAward7.id}, 'Duplicate Materialization', true);
+      `;
+    } catch (_err) {
+      duplicateJuryAwardResultFailed = true;
+    }
+    if (!duplicateJuryAwardResultFailed) {
+      throw new Error("Expected partial unique index uniq_challenge_result_jury_award to reject duplicate jury_award_id in challenge_results.");
+    }
+    console.log("✓ Verified partial unique index uniq_challenge_result_jury_award prevents duplicate materialization of the same jury_award_id.");
+
+    // Verify deleting a user/recorder sets challenge_jury_awards.recorded_by_user_id = NULL without deleting the award
+    await upgradeClient0009`
+      DELETE FROM users WHERE id = ${user7A.id};
+    `;
+    const [persistedAward] = await upgradeClient0009`
+      SELECT id, recorded_by_user_id FROM challenge_jury_awards WHERE id = ${newAward7.id};
+    `;
+    if (!persistedAward || persistedAward.recorded_by_user_id !== null) {
+      throw new Error(`Expected recorded_by_user_id to become NULL upon user deletion, got ${persistedAward?.recorded_by_user_id}`);
+    }
+    console.log("✓ Verified deleting user/recorder sets challenge_jury_awards.recorded_by_user_id = NULL without deleting the award (ON DELETE SET NULL).");
+
+    await upgradeClient0009.end();
+    console.log("🎉 SCENARIO 7 (FORWARD MIGRATION 0009 -> 0010 UPGRADE PATH) PASSED!\n");
+
     console.log("=================================================================");
-    console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A & B)");
+    console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A, B, C)");
     console.log("=================================================================\n");
     process.exit(0);
   } finally {
@@ -841,6 +1050,7 @@ async function runMigrationVerification() {
     try {
       await fs.rm(temp0006Dir, { recursive: true, force: true });
       await fs.rm(temp0008Dir, { recursive: true, force: true });
+      await fs.rm(temp0009Dir, { recursive: true, force: true });
     } catch (_e) {
       // Ignored cleanup error
     }
@@ -849,6 +1059,7 @@ async function runMigrationVerification() {
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${freshDbName}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0008}";`);
+      await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0009}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName1}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName2}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName3}";`);

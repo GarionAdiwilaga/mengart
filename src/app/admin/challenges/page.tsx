@@ -135,6 +135,7 @@ export default async function AdminChallengesOverviewPage() {
                           challengeId={item.id}
                           currentStatus={item.effectiveStatus}
                           awardMode={item.awardMode}
+                          slug={item.slug}
                         />
                       </td>
                       <td className="p-4 text-right">

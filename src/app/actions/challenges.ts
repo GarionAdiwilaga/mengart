@@ -303,41 +303,14 @@ export async function createOrUpdateChallengeAction(formData: FormData) {
       })
       .returning();
 
-    // Default Winner Slots
-    await db.insert(challengeWinnerSlots).values([
-      {
-        challengeId: created.id,
-        slotType: "community_vote",
-        rank: 1,
-        title: "Juara 1 Favorit Komunitas",
-        displayOrder: 1,
-      },
-      {
-        challengeId: created.id,
-        slotType: "community_vote",
-        rank: 2,
-        title: "Juara 2 Favorit Komunitas",
-        displayOrder: 2,
-      },
-      {
-        challengeId: created.id,
-        slotType: "jury_award",
-        rank: 1,
-        title: "Pilihan Juri — Best Overall Craft",
-        displayOrder: 3,
-      },
-    ]);
-
     revalidatePath("/admin/challenges");
     revalidatePath("/challenges");
     return { success: true, id: created.id, slug: created.slug };
   }
 }
 
-import {
-  transitionChallengeStatusService,
-  revokeChallengeResultsService,
-} from "@/lib/services/challengeService";
+import { transitionChallengeStatusService } from "@/lib/services/challengeService";
+import { revokeChallengeResultsService } from "@/lib/services/juryService";
 
 export async function transitionChallengeStatusAction(
   challengeId: string,

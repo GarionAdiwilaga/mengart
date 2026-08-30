@@ -71,6 +71,13 @@
       "when": 1788020000000,
       "tag": "0009_default_stars_per_member_one",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788050000000,
+      "tag": "0010_simplified_jury_awards_and_recorder",
+      "breakpoints": true
     }
   ]
 }

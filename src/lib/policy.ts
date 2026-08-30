@@ -214,15 +214,15 @@ export function canVoteInChallenge(
 }
 
 /**
- * Validates whether a user can submit jury evaluations for a challenge.
+ * Validates whether a user can record or mutate jury awards for a challenge (Blueprint 2.2.1).
  */
-export async function canSubmitJuryScore(
+export async function canRecordJuryAward(
   viewer: PolicyUser | null | undefined,
   challengeId: string,
   submissionId: string
 ): Promise<{ allowed: boolean; reason?: string }> {
   if (!viewer) {
-    return { allowed: false, reason: "Harus masuk untuk mengevaluasi sebagai juri." };
+    return { allowed: false, reason: "Harus masuk untuk mencatat penghargaan juri." };
   }
 
   if (viewer.membershipStatus !== "active") {
@@ -240,31 +240,34 @@ export async function canSubmitJuryScore(
   }
 
   const dynamicStatus = getEffectiveChallengeStatus(challenge as any);
-  if (dynamicStatus !== "jury_selection_open" && dynamicStatus !== "review" && dynamicStatus !== "voting_open") {
-    return { allowed: false, reason: "Periode evaluasi juri sedang tidak aktif." };
+  if (dynamicStatus !== "jury_selection_open" && dynamicStatus !== "results_revoked") {
+    return { allowed: false, reason: "Sesi kurasi juri sedang tidak aktif." };
   }
 
-  // Check jury assignment or admin
   const isAdmin = viewer.role === "admin";
-  let isAssignedJury = false;
+  const isModerator = viewer.role === "moderator";
 
-  const [assignment] = await db
-    .select()
-    .from(challengeJuryAssignments)
-    .where(
-      and(
-        eq(challengeJuryAssignments.challengeId, challengeId),
-        eq(challengeJuryAssignments.userId, viewer.id)
+  if (dynamicStatus === "results_revoked") {
+    if (!isAdmin && !isModerator) {
+      return { allowed: false, reason: "Hanya Administrator atau Moderator yang dapat mengoreksi penghargaan pada status hasil dicabut." };
+    }
+  } else {
+    // jury_selection_open
+    const [assignment] = await db
+      .select()
+      .from(challengeJuryAssignments)
+      .where(
+        and(
+          eq(challengeJuryAssignments.challengeId, challengeId),
+          eq(challengeJuryAssignments.userId, viewer.id)
+        )
       )
-    )
-    .limit(1);
+      .limit(1);
 
-  if (assignment) {
-    isAssignedJury = true;
-  }
-
-  if (!isAdmin && !isAssignedJury) {
-    return { allowed: false, reason: "Anda bukan dewan juri yang ditugaskan untuk challenge ini." };
+    const isRecorder = assignment?.isRecorder === true;
+    if (!isAdmin && !isRecorder) {
+      return { allowed: false, reason: "Hanya Jury Recorder yang ditunjuk atau Administrator yang dapat mencatat penghargaan juri." };
+    }
   }
 
   // Check target submission
@@ -284,10 +287,20 @@ export async function canSubmitJuryScore(
     return { allowed: false, reason: "Karya submisi tidak valid atau tidak aktif pada challenge ini." };
   }
 
-  // Anti-self scoring rule
-  if (submission.userId === viewer.id) {
-    return { allowed: false, reason: "Juri dilarang menilai karya milik sendiri." };
+  if (submission.userId === viewer.id && !isAdmin) {
+    return { allowed: false, reason: "Anggota juri tidak dapat menilai atau memberikan penghargaan pada karya milik sendiri." };
   }
 
   return { allowed: true };
+}
+
+/**
+ * Validates whether a user can submit jury evaluations for a challenge (Legacy / Compatibility).
+ */
+export async function canSubmitJuryScore(
+  viewer: PolicyUser | null | undefined,
+  challengeId: string,
+  submissionId: string
+): Promise<{ allowed: boolean; reason?: string }> {
+  return canRecordJuryAward(viewer, challengeId, submissionId);
 }

@@ -3,6 +3,7 @@ import {
   challenges,
   challengeWinnerSlots,
   challengeSubmissions,
+  challengeJuryAssignments,
   challengeVotingRounds,
   challengeVotingRoundCandidates,
   challengeBallots,
@@ -12,14 +13,17 @@ import {
   users,
   profiles,
 } from "@/db/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import {
   transitionChallengeStatusService,
-  revokeChallengeResultsService,
   computeChallengeResultsService,
   publishChallengeResultsService,
   materializeScheduledTransitionsService,
 } from "@/lib/services/challengeService";
+import {
+  revokeChallengeResultsService,
+  republishChallengeResultsService,
+} from "@/lib/services/juryService";
 import { finalizeVotingRoundService } from "@/lib/services/votingService";
 import { getEffectiveChallengeStatus } from "@/lib/challenges";
 import { getChallengeResultsData, getModeratorReviewResultsData } from "@/lib/voting";
@@ -90,6 +94,13 @@ async function runPhase1LifecycleTests() {
     { challengeId: juryChallenge.id, userId: member.id, profileId: prof.id, submissionStatus: "submitted" },
     { challengeId: juryChallenge.id, userId: admin.id, profileId: prof.id, submissionStatus: "submitted" },
   ]);
+
+  await db.insert(challengeJuryAssignments).values({
+    challengeId: juryChallenge.id,
+    userId: admin.id,
+    profileId: prof.id,
+    isRecorder: true,
+  });
 
   await db
     .update(challenges)
@@ -276,16 +287,15 @@ async function runPhase1LifecycleTests() {
     throw new Error("Revoking results must set isPublished = false!");
   }
 
-  // Verify transition from results_revoked to review and re-publish
-  await transitionChallengeStatusService(db, adminCtx, finChallenge.id, "review");
-  const [reviewAgain] = await db.select().from(challenges).where(eq(challenges.id, finChallenge.id));
-  if (reviewAgain.status !== "review") {
-    throw new Error(`Expected status review, got "${reviewAgain.status}"`);
-  }
-
-  const republishRes = await publishChallengeResultsService(db, adminCtx, finChallenge.id);
-  if (republishRes.outcome !== "published") {
-    throw new Error(`Expected published, got ${republishRes.outcome}`);
+  // Verify republishing from results_revoked to finished via republishChallengeResultsService
+  const republishRes = await republishChallengeResultsService(
+    db,
+    adminCtx,
+    finChallenge.id,
+    "Publikasi ulang hasil setelah audit dan perbaikan."
+  );
+  if (republishRes.outcome !== "republished") {
+    throw new Error(`Expected republished, got ${republishRes.outcome}`);
   }
   const [republishedRow] = await db.select().from(challenges).where(eq(challenges.id, finChallenge.id));
   if (republishedRow.status !== "finished") {
@@ -299,7 +309,7 @@ async function runPhase1LifecycleTests() {
     .where(
       and(
         eq(auditLogs.targetId, finChallenge.id),
-        eq(auditLogs.action, "challenge.revoke_results")
+        inArray(auditLogs.action, ["challenge.revoke_results", "challenge.results_revoked"])
       )
     )
     .orderBy(desc(auditLogs.createdAt))

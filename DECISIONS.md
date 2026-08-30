@@ -280,5 +280,34 @@
 **Business Rule:** Committed migrations are strictly immutable; schema default alterations must proceed via forward migrations.
 **Reason:** Prevent migration checksum/drift failure on existing databases that already ran migration 0008.
 
+### Blueprint 2.2.1 Gate C / Phase 3: Simplified Jury & Result Model Architecture
+**Decision:** Implement the simplified Jury & Results architecture under Blueprint 2.2.1:
+1. **Dynamic Jury Awards Model (`challenge_jury_awards`):** Replaced legacy predefined winner slots, numeric 1–100 scoring, and rubrics with dynamic free-text category awards (`id`, `challenge_id`, `submission_id`, `category_label`, `recorded_by_user_id`, `created_at`, `updated_at`). Blank category label defaults to `"Jury Winner"`.
+2. **Jury Panel & Designated Recorder:** Displayed panel (`challenge_jury_assignments`) with exactly one designated Jury Recorder (`is_recorder = true`, enforced by partial unique index and domain service `validateJuryPhaseReadinessService`). Ordinary jurors have read-only workspace access; Recorder has draft award write authority during `JURY_SELECTION_OPEN`.
+3. **Community Winner Exclusion in Mixed Mode:** In `vote_and_jury` mode, the resolved Community Vote Winner is strictly excluded from receiving any Jury Award.
+4. **Direct Manual Publication & Protected Cancellation:** Direct transition `JURY_SELECTION_OPEN -> FINISHED` via `publishJuryChallengeResultsService`, explicitly marking existing `community_vote_winner` as `is_published = true` and materializing Jury Awards. Dedicated `cancelJuryChallengeService` requires staff reason and prevents empty published results.
+5. **Separated Governance Correction Authority (`RESULTS_REVOKED`):** In `RESULTS_REVOKED`, Admin/Moderator hold exclusive governance authority to correct/reconcile awards or replace/clear Community Winner (`correctCommunityWinnerService` with actual raw Star lookup). `republishChallengeResultsService` reconciles active awards and suppresses deleted awards.
+6. **Forward Migration 0010:** Created `drizzle/0010_simplified_jury_awards_and_recorder.sql` adding `challenge_jury_assignments.is_recorder`, `challenge_jury_awards`, partial unique index `uniq_challenge_result_jury_award`, and deterministic backfill of legacy results without inventing recorders.
+**Business Rule:** Deliberation occurs outside app; app records agreed awards. At most 1 Jury Recorder per challenge. Community Winner excluded from jury awards in mixed mode. All mutations locked and audited.
+**Reason:** Authoritative product requirement under Blueprint 2.2.1.
+
+### Blueprint 2.2.1 Gate C / Phase 3: Focused Corrections & Invariant Hardening
+**Decision:** Applied 11 focused architectural and operational corrections to Gate C / Phase 3 under Blueprint 2.2.1:
+1. **QA Patch Discipline:** Standardized export of full Gate B→Gate C git format-patch artifacts (`git format-patch --stdout --binary --full-index dc9d81aa4bb53efbdd8a6602ca897a4b04383da4..CORRECTED_GATE_C_SHA > gatec.patch`) starting with `From <SHA>` mail envelope headers.
+2. **Migrated `ChallengeTransitionButtons`:** Removed manual `computeChallengeResultsAction` / `Hitung Hasil` from `jury_selection_open`, removed manual generic "Buka Sesi Juri", and linked directly to `/challenges/[slug]/jury` for active jury sessions and result corrections. Generic cancel restricted to early pre-voting stages.
+3. **Winner-Only Results Page:** Updated `/challenges/[slug]/results` to render exclusively official winners (at most 1 Community Vote Winner and zero or more unranked Jury Awards with `categoryLabel` and fallback to "Jury Winner"), removing review stage publication flows.
+4. **Blocked Generic Entry to `JURY_SELECTION_OPEN`:** Generic `transitionChallengeStatusService(..., "jury_selection_open")` is strictly rejected; entry is reserved for the automated scheduler and Gate B finalization services after readiness verification.
+5. **Readiness-First Publication Guard:** `publishJuryChallengeResultsService` strictly enforces `if (!readiness.ready) throw` prior to actor authorization checks, preventing Admins/Moderators from bypassing the single-recorder operational invariant.
+6. **Enforced Zero-Award Cancellation Invariant:** `cancelJuryChallengeService` queries current Jury Awards and enforces: 0 awards $\rightarrow$ cancel allowed, $\ge 1$ awards $\rightarrow$ cancel rejected with guidance to publish or delete awards first.
+7. **Main-Round Raw Community Star Authority (`getAuthoritativeMainRoundStarsService`):** Raw Community Stars are queried strictly from main rounds (`round_type = 'main'`), preventing tiebreak allocations from inflating main Star scores in workspace candidate displays or governance winner replacements.
+8. **Strengthened Publish / Republish Invariant Validation:** Revalidates every current Jury Award (valid candidate, submitted status, mixed-mode Community Winner exclusion) and validates `vote_only` mode republishing (positive main round votes require a community winner).
+9. **Lifecycle-Aware Jury Workspace Permissions:** In `JURY_SELECTION_OPEN`: Recorder $\rightarrow$ edit, Admin $\rightarrow$ override/edit, Moderator $\rightarrow$ read-only unless designated Recorder. In `RESULTS_REVOKED`: Admin/Moderator $\rightarrow$ governance correction, former Recorder alone $\rightarrow$ read-only.
+10. **4 Production-Path Concurrency Tests:** Added multi-transaction test coverage for: (1) simultaneous Recorder reassignment, (2) Jury Award write vs publication race, (3) publication vs result revocation race, and (4) result correction vs republish race.
+11. **Expanded Migration Scenario 7:** Verified `ON DELETE SET NULL` on recorder deletion, partial unique index `uniq_challenge_result_jury_award` duplicate rejection, and multiple distinct Jury Awards for the same artwork.
+**Business Rule:** Panel readiness is required before publication. Main round stars are isolated from tiebreak rounds. Cancellation is restricted to zero-award states.
+**Reason:** Addressed all independent QA review findings for Gate C / Phase 3 under Blueprint 2.2.1.
+
+
+
 
 

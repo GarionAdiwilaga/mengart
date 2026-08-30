@@ -8,7 +8,7 @@ import {
   challengeWinnerSlots,
   challengeResults,
 } from "@/db/schema";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, sql } from "drizzle-orm";
 import {
   getAuthoritativeVotingRoundData,
   getDeterministicVoterCandidateOrder,
@@ -80,11 +80,14 @@ export async function getChallengeResultsData(
       resultId: challengeResults.id,
       finalRank: challengeResults.finalRank,
       awardType: challengeResults.awardType,
+      categoryLabel: challengeResults.categoryLabel,
+      juryAwardId: challengeResults.juryAwardId,
+      recordedByUserId: challengeResults.recordedByUserId,
       resolutionMethod: challengeResults.resolutionMethod,
       totalCommunityStars: challengeResults.totalCommunityStars,
       juryScore: challengeResults.juryScore,
       isPublished: challengeResults.isPublished,
-      slotTitle: challengeWinnerSlots.title,
+      slotTitle: sql<string>`COALESCE(${challengeResults.categoryLabel}, ${challengeWinnerSlots.title}, 'Pilihan Juri')`,
       slotType: challengeWinnerSlots.slotType,
       submissionId: challengeSubmissions.id,
       artistName: profiles.displayName,
@@ -107,7 +110,11 @@ export async function getChallengeResultsData(
     .leftJoin(artworkVersions, eq(artworkVersions.id, challengeSubmissionVersions.artworkVersionId))
     .leftJoin(challengeWinnerSlots, eq(challengeWinnerSlots.id, challengeResults.winnerSlotId))
     .where(whereCondition)
-    .orderBy(asc(challengeResults.finalRank));
+    .orderBy(
+      asc(sql`CASE WHEN ${challengeResults.awardType} = 'community_vote_winner' THEN 0 ELSE 1 END`),
+      asc(challengeResults.finalRank),
+      asc(challengeResults.createdAt)
+    );
 
   return {
     challenge,

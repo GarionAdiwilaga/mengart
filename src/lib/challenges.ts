@@ -88,6 +88,7 @@ export async function getChallengeBySlug(slug: string) {
     .select({
       id: challengeJuryAssignments.id,
       userId: challengeJuryAssignments.userId,
+      isRecorder: challengeJuryAssignments.isRecorder,
       displayName: profiles.displayName,
       slug: profiles.slug,
       avatarUrl: profiles.avatarUrl,

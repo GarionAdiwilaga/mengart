@@ -14,6 +14,7 @@ import {
 } from "@/db/schema";
 import { eq, and, sql, desc, asc, lte, isNull } from "drizzle-orm";
 import type { EffectiveChallengeStatus } from "@/lib/challenges";
+import { validateJuryPhaseReadinessService } from "./juryService";
 
 export interface ServiceContext {
   userId: string | null;
@@ -63,10 +64,10 @@ export const LEGAL_TRANSITIONS: Record<string, Record<string, string[]>> = {
     voting_open: ["cancelled"],
     tie_pending: ["cancelled"],
     tiebreak_open: ["cancelled"],
-    jury_selection_open: ["review", "cancelled"],
+    jury_selection_open: ["finished", "cancelled"],
     review: ["finished", "cancelled"],
     finished: ["results_revoked"],
-    results_revoked: ["review", "cancelled"],
+    results_revoked: ["finished", "cancelled"],
     cancelled: [],
   },
 
@@ -81,7 +82,7 @@ export const LEGAL_TRANSITIONS: Record<string, Record<string, string[]>> = {
     tiebreak_open: ["cancelled"],
     review: ["finished", "cancelled"],
     finished: ["results_revoked"],
-    results_revoked: ["review", "cancelled"],
+    results_revoked: ["finished", "cancelled"],
     cancelled: [],
   },
 
@@ -91,10 +92,10 @@ export const LEGAL_TRANSITIONS: Record<string, Record<string, string[]>> = {
     scheduled: ["submission_open", "cancelled"],
     submission_open: ["cancelled"],
     submission_locked: ["jury_selection_open", "cancelled"],
-    jury_selection_open: ["review", "cancelled"],
+    jury_selection_open: ["finished", "cancelled"],
     review: ["finished", "cancelled"],
     finished: ["results_revoked"],
-    results_revoked: ["review", "cancelled"],
+    results_revoked: ["finished", "cancelled"],
     cancelled: [],
   },
 
@@ -106,7 +107,7 @@ export const LEGAL_TRANSITIONS: Record<string, Record<string, string[]>> = {
     submission_locked: ["review", "finished", "cancelled"],
     review: ["finished", "cancelled"],
     finished: ["results_revoked"],
-    results_revoked: ["review", "cancelled"],
+    results_revoked: ["finished", "cancelled"],
     cancelled: [],
   },
 };
@@ -149,7 +150,7 @@ export async function transitionChallengeStatusService(
   // Protected Transitions: REVIEW -> FINISHED and FINISHED -> RESULTS_REVOKED must go through their dedicated services
   if (newStatus === "finished") {
     throw new Error(
-      "Transisi langsung ke 'finished' dilarang. Gunakan layanan publishChallengeResultsService atau finalizeVotingRoundService untuk menyelesaikan challenge."
+      "Transisi langsung ke 'finished' dilarang. Gunakan layanan publishJuryChallengeResultsService atau finalizeVotingRoundService untuk menyelesaikan challenge."
     );
   }
   if (newStatus === "results_revoked") {
@@ -190,6 +191,19 @@ export async function transitionChallengeStatusService(
   if (!challenge) throw new Error("Challenge tidak ditemukan.");
 
   const currentStatus = challenge.status;
+
+  if (newStatus === "jury_selection_open") {
+    throw new Error(
+      "Transisi langsung ke 'jury_selection_open' dilarang. Sesi penjurian hanya dapat dibuka secara otomatis melalui scheduler (setelah validasi readiness juri) atau melalui layanan voting/tiebreak Gate B."
+    );
+  }
+
+  if (currentStatus === "jury_selection_open") {
+    throw new Error(
+      "Transisi langsung dari 'jury_selection_open' dilarang. Gunakan publishJuryChallengeResultsService untuk publikasi atau cancelJuryChallengeService untuk pembatalan (Blueprint 2.2.1)."
+    );
+  }
+
 
   if (
     ["voting_open", "tiebreak_open", "tie_pending"].includes(currentStatus) &&
@@ -359,8 +373,15 @@ export async function computeChallengeResultsService(
     );
   }
 
-  // Only allowed during non-live-voting result stages (e.g. jury_selection_open, review, results_revoked)
-  const allowedStatuses = ["jury_selection_open", "review", "results_revoked"];
+  // Hard-block legacy compute engine from Gate C live jury/revocation states
+  if (["jury_selection_open", "results_revoked"].includes(challenge.status)) {
+    throw new Error(
+      `Operasi legacy computeChallengeResultsService dilarang pada status "${challenge.status}". Gunakan layanan penjurian dan publikasi Blueprint 2.2.1.`
+    );
+  }
+
+  // Only allowed during review stage for backward compatibility
+  const allowedStatuses = ["review"];
   if (!allowedStatuses.includes(challenge.status)) {
     throw new Error(`Hasil tidak dapat dihitung pada status "${challenge.status}".`);
   }
@@ -513,6 +534,12 @@ export async function publishChallengeResultsService(
     .limit(1);
 
   if (!challenge) throw new Error("Challenge tidak ditemukan.");
+
+  if (["jury_selection_open", "results_revoked"].includes(challenge.status)) {
+    throw new Error(
+      `Operasi legacy publishChallengeResultsService dilarang pada status "${challenge.status}". Gunakan publishJuryChallengeResultsService atau republishChallengeResultsService (Blueprint 2.2.1).`
+    );
+  }
 
   if (challenge.status !== "review") {
     throw new Error(`Publikasi hasil ditolak: Challenge harus berada dalam status "review" (Status saat ini: "${challenge.status}").`);
@@ -733,18 +760,34 @@ export async function materializeScheduledTransitionsService(
             reason: "Pemenang komunitas tunggal ditetapkan secara otomatis karena hanya terdapat 1 karya submisi valid.",
           });
         } else if (challenge.awardMode === "jury_only") {
-          targetStatus = "jury_selection_open";
-          await tx
-            .update(challenges)
-            .set({ status: targetStatus, updatedAt: now })
-            .where(eq(challenges.id, challenge.id));
+          const readiness = await validateJuryPhaseReadinessService(tx, challenge.id);
+          if (readiness.ready) {
+            targetStatus = "jury_selection_open";
+            await tx
+              .update(challenges)
+              .set({ status: targetStatus, updatedAt: now })
+              .where(eq(challenges.id, challenge.id));
 
-          await tx.insert(auditLogs).values({
-            action: "scheduler.challenge_jury_selection_opened",
-            targetType: "challenge",
-            targetId: challenge.id,
-            reason: "Submisi ditutup, lanjut ke tahap penjurian (jury_only).",
-          });
+            await tx.insert(auditLogs).values({
+              action: "scheduler.challenge_jury_selection_opened",
+              targetType: "challenge",
+              targetId: challenge.id,
+              reason: "Submisi ditutup, lanjut ke tahap penjurian (jury_only).",
+            });
+          } else {
+            targetStatus = "submission_locked";
+            await tx
+              .update(challenges)
+              .set({ status: targetStatus, updatedAt: now })
+              .where(eq(challenges.id, challenge.id));
+
+            await tx.insert(auditLogs).values({
+              action: "scheduler.challenge_jury_selection_blocked_unready",
+              targetType: "challenge",
+              targetId: challenge.id,
+              reason: `Tahap penjurian diblokir karena panel juri belum siap: ${readiness.reason}`,
+            });
+          }
         } else if (challenge.awardMode === "showcase_only") {
           targetStatus = "finished";
           await tx
@@ -762,11 +805,34 @@ export async function materializeScheduledTransitionsService(
       } else {
         // subCount >= 2
         if (challenge.awardMode === "jury_only") {
-          targetStatus = "jury_selection_open";
-          await tx
-            .update(challenges)
-            .set({ status: targetStatus, updatedAt: now })
-            .where(eq(challenges.id, challenge.id));
+          const readiness = await validateJuryPhaseReadinessService(tx, challenge.id);
+          if (readiness.ready) {
+            targetStatus = "jury_selection_open";
+            await tx
+              .update(challenges)
+              .set({ status: targetStatus, updatedAt: now })
+              .where(eq(challenges.id, challenge.id));
+
+            await tx.insert(auditLogs).values({
+              action: "scheduler.challenge_jury_selection_opened",
+              targetType: "challenge",
+              targetId: challenge.id,
+              reason: "Submisi ditutup, lanjut ke tahap penjurian (jury_only).",
+            });
+          } else {
+            targetStatus = "submission_locked";
+            await tx
+              .update(challenges)
+              .set({ status: targetStatus, updatedAt: now })
+              .where(eq(challenges.id, challenge.id));
+
+            await tx.insert(auditLogs).values({
+              action: "scheduler.challenge_jury_selection_blocked_unready",
+              targetType: "challenge",
+              targetId: challenge.id,
+              reason: `Tahap penjurian diblokir karena panel juri belum siap: ${readiness.reason}`,
+            });
+          }
         } else if (challenge.awardMode === "showcase_only") {
           targetStatus = "finished";
           await tx

@@ -1,7 +1,5 @@
 import { getChallengeBySlug } from "@/lib/challenges";
-import { getChallengeResultsData, getModeratorReviewResultsData } from "@/lib/voting";
-import { getCurrentUser } from "@/lib/rbac";
-import { publishChallengeResultsAction } from "@/app/actions/voting";
+import { getChallengeResultsData } from "@/lib/voting";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
@@ -13,8 +11,6 @@ import {
   User,
   Image as ImageIcon,
   AlertTriangle,
-  ShieldCheck,
-  Sparkles,
 } from "lucide-react";
 
 import { StoryCardGenerator } from "@/components/challenges/StoryCardGenerator";
@@ -31,18 +27,11 @@ export default async function ChallengeResultsPage({ params }: ResultsPageProps)
     notFound();
   }
 
-  const currentUser = await getCurrentUser();
-  const isModOrAdmin = currentUser?.role === "admin" || currentUser?.role === "moderator";
-
-  // Results Query based on authority
-  const resultsData = isModOrAdmin && (challenge.status === "review" || challenge.status === "results_revoked")
-    ? await getModeratorReviewResultsData(challenge.id)
-    : await getChallengeResultsData(challenge.id);
-
+  // Official Results Query
+  const resultsData = await getChallengeResultsData(challenge.id);
   const results = resultsData?.results || [];
   const isFinished = challenge.status === "finished";
   const isRevoked = challenge.status === "results_revoked";
-  const isReview = challenge.status === "review";
 
   const communityWinner = results.find(
     (r) => r.awardType === "community_vote_winner" || (r.awardType === "community_rank" && r.finalRank === 1)
@@ -58,7 +47,7 @@ export default async function ChallengeResultsPage({ params }: ResultsPageProps)
         artistSlug: r.artistSlug || "",
         starsCount: r.totalCommunityStars,
         imageUrl: r.thumbnailStorageKey ? `/api/media/public/${r.thumbnailStorageKey}` : null,
-        awardTitle: r.slotTitle || (r.awardType === "community_vote_winner" ? "Pemenang Komunitas" : undefined),
+        awardTitle: r.categoryLabel || r.slotTitle || (r.awardType === "community_vote_winner" ? "Pemenang Komunitas" : "Jury Winner"),
       }))
     : [];
 
@@ -103,9 +92,9 @@ export default async function ChallengeResultsPage({ params }: ResultsPageProps)
               <span>HASIL DICABUT</span>
             </span>
           ) : (
-            <span className="px-3 py-2 min-h-[44px] rounded-2xl text-xs font-mono font-bold uppercase border bg-blue-500/10 text-blue-400 border-blue-500/30 flex items-center gap-1.5">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              <span>TAHAP REVIEW</span>
+            <span className="px-3 py-2 min-h-[44px] rounded-2xl text-xs font-mono font-bold uppercase border bg-zinc-500/10 text-zinc-400 border-zinc-500/30 flex items-center gap-1.5">
+              <Award className="h-3.5 w-3.5" />
+              <span>HASIL BELUM DIPUBLIKASIKAN</span>
             </span>
           )}
         </div>
@@ -131,54 +120,8 @@ export default async function ChallengeResultsPage({ params }: ResultsPageProps)
         </section>
       ) : null}
 
-      {/* Review Stage Notice for Public vs Moderator */}
-      {isReview ? (
-        <section className="glass-panel p-8 sm:p-10 rounded-3xl border border-blue-500/30 bg-blue-950/20 flex flex-col gap-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-2xl bg-blue-500/20 text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/30">
-                <ShieldCheck className="h-6 w-6" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-xs font-mono uppercase font-bold text-blue-400 tracking-wider">
-                  TAHAP PENINJAUAN KURATOR (REVIEW STAGE)
-                </span>
-                <h2 className="font-display font-bold text-lg text-[#f6f2e9]">
-                  {isModOrAdmin
-                    ? "Pratinjau Hasil untuk Verifikasi Moderator"
-                    : "Hasil Challenge Sedang Ditinjau"}
-                </h2>
-              </div>
-            </div>
-
-            {isModOrAdmin ? (
-              <form
-                action={async () => {
-                  "use server";
-                  await publishChallengeResultsAction(challenge.id);
-                }}
-              >
-                <button
-                  type="submit"
-                  className="px-6 py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs font-mono transition-all shadow-lg shadow-emerald-500/20 flex items-center gap-2 cursor-pointer"
-                >
-                  <Sparkles className="h-4 w-4 text-black" />
-                  <span>Publikasikan Hasil Resmi Sekarang</span>
-                </button>
-              </form>
-            ) : null}
-          </div>
-
-          {!isModOrAdmin ? (
-            <p className="text-xs sm:text-sm text-zinc-400 font-sans leading-relaxed">
-              Perhitungan suara telah selesai dan saat ini sedang dalam proses verifikasi akhir oleh dewan kurator. Hasil resmi dan podium pemenang akan segera dipublikasikan.
-            </p>
-          ) : null}
-        </section>
-      ) : null}
-
-      {/* Hero Banner (Only shown if finished or moderator preview) */}
-      {(isFinished || (isReview && isModOrAdmin)) ? (
+      {/* Hero Banner (Only shown if finished) */}
+      {isFinished ? (
         <>
           <section className="glass-panel p-8 sm:p-12 rounded-3xl flex flex-col items-center text-center gap-4 relative overflow-hidden">
             <div className="h-16 w-16 rounded-3xl bg-gradient-to-br from-amber-400 to-amber-700 flex items-center justify-center shadow-xl shadow-amber-500/20">
@@ -187,15 +130,13 @@ export default async function ChallengeResultsPage({ params }: ResultsPageProps)
 
             <div className="flex flex-col gap-2 max-w-2xl">
               <span className="text-xs font-mono uppercase text-amber-400">
-                {isReview ? "PRATINJAU HASIL TERHITUNG" : "HASIL RESMI & PENGHARGAAN ATELIER"}
+                HASIL RESMI & PENGHARGAAN ATELIER
               </span>
               <h1 className="font-display font-extrabold text-3xl sm:text-4xl text-[#f6f2e9] tracking-tight">
                 {challenge.title}
               </h1>
               <p className="text-xs sm:text-sm text-zinc-400 font-sans leading-relaxed">
-                {isReview
-                  ? "Berikut adalah konfigurasi pemenang terhitung berdasarkan akumulasi Stars dan slot juri sebelum publikasi resmi."
-                  : "Selamat kepada seluruh artist peraih penghargaan resmi komunitas dan pilihan juri atas karya luar biasa yang telah dipublikasikan!"}
+                Selamat kepada seluruh artist peraih penghargaan resmi komunitas dan pilihan juri atas karya luar biasa yang telah dipublikasikan!
               </p>
             </div>
           </section>
@@ -285,7 +226,7 @@ export default async function ChallengeResultsPage({ params }: ResultsPageProps)
                     <div className="flex items-center justify-between">
                       <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-purple-900/50 text-purple-300 border border-purple-500/30 flex items-center gap-1.5">
                         <Award className="h-3.5 w-3.5" />
-                        <span>{winner.slotTitle || "PILIHAN JURI"}</span>
+                        <span>{winner.categoryLabel || winner.slotTitle || "Jury Winner"}</span>
                       </span>
                     </div>
 

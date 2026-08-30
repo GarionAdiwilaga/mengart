@@ -58,14 +58,46 @@
     - Verified all 20 test scenarios under isolated PostgreSQL database: single Community Winner, zero-vote transitions, main tie $\rightarrow$ `tie_pending` $\rightarrow$ tiebreak $\rightarrow$ tiebreak winner, tiebreak 0-votes $\rightarrow$ manual resolve with audit, membership status auth, malformed negative Star bypass prevention, reset ballot, voter anonymity, per-round ballot uniqueness, finalize checks, scheduler system actor null check, mode-specific branching, concurrency tests, protected lifecycle bypass rejections, negative compute on live voting rejection, negative manual submission lock rejection, mutation operating window boundary validations, quorum removal verification, and Star defaults/inheritance/tiebreak 1-star enforcement.
     - Migration Suite (`npm run test:migrate`): 6/6 scenarios passed, including Scenario 5 (fail-closed unreconciled ballot) and Scenario 6 (0008 to 0009 upgrade regression verifying column default transition 3 -> 1 and preservation of existing explicit 3-star rows).
     - All test suites passing in `npm run test:all`, `npm run test:migrate`, `npm run lint` (0 errors), and `npm run build` (clean compilation).
-- **Phase 3: Release Gate C (Simplified Jury & Result Model):** READY FOR IMPLEMENTATION
+- **Phase 3: Release Gate C (Simplified Jury & Result Model):** **COMPLETED, FULLY COMPATIBLE & 100% VERIFIED**
+  - Schema & Forward Migration 0010 (`drizzle/0010_simplified_jury_awards_and_recorder.sql`):
+    - Added `challenge_jury_assignments.is_recorder boolean DEFAULT false NOT NULL`.
+    - Partial unique index `uniq_challenge_jury_recorder (challenge_id) WHERE is_recorder = true` enforcing at most one recorder per challenge.
+    - Created `challenge_jury_awards` table (`id`, `challenge_id`, `submission_id`, `category_label`, `recorded_by_user_id`, `created_at`, `updated_at`).
+    - Added columns to `challenge_results`: `category_label text`, `jury_award_id uuid`, `recorded_by_user_id uuid`.
+    - Dropped legacy unique index `(challenge_id, submission_id)` on `challenge_results`; added partial unique index `uniq_challenge_result_jury_award (jury_award_id) WHERE jury_award_id IS NOT NULL`.
+    - Deterministic backfill of legacy results category labels from `challenge_winner_slots.title` where `award_type = 'jury_award'`.
+    - Retained existing legacy jury assignments as `is_recorder = false` without inventing synthetic recorders.
+  - Production Domain Services (`src/lib/services/juryService.ts`):
+    - `validateJuryPhaseReadinessService`: Enforces $\ge 1$ displayed juror and exactly 1 recorder.
+    - `assignJuryRecorderService`: Atomic transfer with parent row lock and audit log.
+    - `removeJuryAssignmentService`: Blocks removing active recorder during open jury phase.
+    - `createJuryAwardService` & `updateJuryAwardService` & `deleteJuryAwardService`: Recorder/Admin write authority, dynamic category labels, duplicate artwork confirmation policy, mixed-mode Community Winner exclusion.
+    - `publishJuryChallengeResultsService`: Strict `publishCommunityOnly` invariants, result reconciliation, transitions to `finished`.
+    - `cancelJuryChallengeService`: Cancellation with $\ge 5$ char reason for zero-award outcomes.
+    - `revokeChallengeResultsService`: Audit snapshot of previous results, sets `isPublished = false`, transitions to `results_revoked`.
+    - `correctCommunityWinnerService`: Governed replacement (queries actual raw stars from `challenge_ballot_stars`) or clearing of Community Winner.
+    - `republishChallengeResultsService`: Mode-specific reconciliation and publication to `finished`.
+    - `getJuryWorkspaceData`: Full workspace dataset with candidate gallery, raw stars, draft awards, and authorization flags.
+  - UI Components:
+    - `JuryAwardWorkspace.tsx`: Studio Atelier compliant workspace for Jury Recorder, panel badge display, candidate gallery, category builder, lifecycle-aware permissions, and publication/cancellation controls.
+    - `challenges/[slug]/jury/page.tsx` and `challenges/[slug]/results/page.tsx` integrated (winner-only results, unranked jury awards with `categoryLabel`).
+    - `ChallengeTransitionButtons.tsx`: migrated to Gate C (no `Hitung Hasil` from `jury_selection_open`, direct link to jury workspace).
+  - Dedicated Test Matrix (`src/lib/__tests__/testPhase3SimplifiedJury.ts`):
+    - Verified all 50 test scenarios covering displayed juror model, recorder partial unique index, atomic transfer, authorization, readiness guards (scheduler, finalize, manual resolve), block generic `jury_selection_open` transition, readiness inside publication, dynamic award creation, free-text flexibility, mixed mode exclusion, duplicate artwork confirmation, category sanitization, award CRUD, protected recorder deletion, zero-award cancellation invariant, manual publication matrix, strict `publishCommunityOnly` invariants, zero-award cancellation, revocation with snapshot, legacy engine blocks, main-round raw Community Star authority, strengthened republish validations, governed winner correction (replace/clear), award correction under revocation, reconciliation republishing, audit regression, and 4 production-path concurrency tests.
+  - Verification Suite:
+    - `npm run test:migrate`: 7/7 scenarios passed (including Scenario 7 forward migration 0009 -> 0010 upgrade path with ON DELETE SET NULL and duplicate award schema checks).
+    - `npx tsx src/lib/__tests__/testPhase3SimplifiedJury.ts`: 50/50 scenarios passed.
+    - `npx tsx src/lib/__tests__/testPhase2VotingAndTiebreak.ts`: 20/20 scenarios passed.
+    - `npm run test:all`: 15/15 test suites passed cleanly.
+    - `npm run lint`: 0 errors.
+    - `npm run build`: Production Next.js build and worker bundle compiled cleanly.
 - **Phase 4: Release Gate D (Authentication, Invitations & Roles):** PENDING REVIEW
 - **Phase 5: Release Gate E (Radix Modal A11y & Playwright E2E Testing):** PENDING REVIEW
 - **Phase 6: Release Gate F (Media Processing, Watermarking & Rate Limiting):** PENDING REVIEW
 - **Phase 7: Release Gate G (Community, Showcase & Story Cards):** PENDING REVIEW
 - **Phase 8: Release Gate H (Disaster Recovery & Runtime Concurrency):** PENDING REVIEW
 
-## Addressed QA IDs in Phase 1 & Phase 2 (Gate A & B PASS)
+## Addressed QA IDs in Phase 1, Phase 2 & Phase 3 (Gate A, B & C PASS)
 - **QA-P0-001** (Database migration reproducibility & authoritative production backfill): RESOLVED & VERIFIED
 - **QA-P0-002** (Per-round ballot uniqueness & multi-round tiebreak support): RESOLVED & VERIFIED
 - **QA-P0-006** (Persisted lifecycle state authority & scheduler materializer): RESOLVED & VERIFIED
@@ -78,8 +110,8 @@
 `main`
 
 ## Current Focus
-- Gate B / Phase 2 (Voting & Tie Resolution) completed and verified. Ready for independent QA review.
+- Gate C / Phase 3 (Simplified Jury & Results) completed and verified. Ready for independent QA review.
 
 ## Blockers
-- Overall status remains NO-GO until Gates B–H pass independent QA.
+- Overall status remains NO-GO until Gates D–H pass independent QA.
 
