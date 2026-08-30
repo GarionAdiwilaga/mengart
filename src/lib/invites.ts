@@ -25,7 +25,7 @@ export interface CreateInviteParams {
   expiryPreset?: InviteExpiryPreset;
   customExpiresAt?: Date;
   maxUses?: number | null; // null = unlimited
-  createdByUserId?: string;
+  createdByUserId: string; // Mandatory active Admin actor ID per Blueprint 2.2.2
   creatorIp?: string;
 }
 
@@ -142,100 +142,111 @@ export function calculateExpiryDate(
 import { assertAdminActor } from "@/lib/services/userService";
 
 /**
- * Create a new membership invitation (Admin only) storing direct code per Blueprint 2.2.2
+ * Create a new membership invitation (Admin only) storing direct code per Blueprint 2.2.2.
+ * Executes atomically within a transaction with unconditional in-transaction ACTIVE Admin verification.
  */
 export async function createMembershipInvite(
   params: CreateInviteParams,
-  appBaseUrl: string = process.env.APP_URL || "http://localhost:3000"
+  appBaseUrl: string = process.env.APP_URL || "http://localhost:3000",
+  dbOrTx: any = db
 ): Promise<GeneratedInviteResult> {
-  // Enforce domain authorization: only active Admin can create invitations
-  if (params.createdByUserId) {
-    await assertAdminActor(db, params.createdByUserId);
+  // 1. Mandatory actor presence check
+  if (
+    !params.createdByUserId ||
+    typeof params.createdByUserId !== "string" ||
+    params.createdByUserId.trim().length === 0
+  ) {
+    throw new Error("Akses ditolak: Aktor Administrator wajib dicantumkan.");
   }
 
-  let code: string;
+  return await dbOrTx.transaction(async (tx: any) => {
+    // 2. Unconditionally verify actor is an ACTIVE Admin inside the transaction
+    const actor = await assertAdminActor(tx, params.createdByUserId);
 
-  if (params.customCode && params.customCode.trim().length > 0) {
-    code = normalizeAndValidateCustomCode(params.customCode);
+    let code: string;
 
-    // Check custom code uniqueness
-    const [existing] = await db
-      .select({ id: membershipInvites.id })
-      .from(membershipInvites)
-      .where(eq(membershipInvites.code, code))
-      .limit(1);
+    if (params.customCode && params.customCode.trim().length > 0) {
+      code = normalizeAndValidateCustomCode(params.customCode);
 
-    if (existing) {
-      throw new Error("Kode undangan khusus tersebut sudah digunakan. Silakan pilih kode lain.");
-    }
-  } else {
-    // Generate default 8-char CSPRNG code with collision retry loop
-    let attempts = 0;
-    let unique = false;
-    code = "";
-
-    while (!unique && attempts < 10) {
-      attempts++;
-      const candidate = generateDefaultInviteCode(8);
-      const [existing] = await db
+      // Check custom code uniqueness inside transaction
+      const [existing] = await tx
         .select({ id: membershipInvites.id })
         .from(membershipInvites)
-        .where(eq(membershipInvites.code, candidate))
+        .where(eq(membershipInvites.code, code))
         .limit(1);
 
-      if (!existing) {
-        code = candidate;
-        unique = true;
+      if (existing) {
+        throw new Error("Kode undangan khusus tersebut sudah digunakan. Silakan pilih kode lain.");
+      }
+    } else {
+      // Generate default 8-char CSPRNG code with collision retry loop inside transaction
+      let attempts = 0;
+      let unique = false;
+      code = "";
+
+      while (!unique && attempts < 10) {
+        attempts++;
+        const candidate = generateDefaultInviteCode(8);
+        const [existing] = await tx
+          .select({ id: membershipInvites.id })
+          .from(membershipInvites)
+          .where(eq(membershipInvites.code, candidate))
+          .limit(1);
+
+        if (!existing) {
+          code = candidate;
+          unique = true;
+        }
+      }
+
+      if (!unique || !code) {
+        throw new Error("Gagal menghasilkan kode undangan unik. Silakan coba lagi.");
       }
     }
 
-    if (!unique || !code) {
-      throw new Error("Gagal menghasilkan kode undangan unik. Silakan coba lagi.");
-    }
-  }
+    const expiresAt = params.customExpiresAt
+      ? params.customExpiresAt
+      : calculateExpiryDate(params.expiryPreset || "7d");
 
-  const expiresAt = params.customExpiresAt
-    ? params.customExpiresAt
-    : calculateExpiryDate(params.expiryPreset || "7d");
+    const [createdInvite] = await tx
+      .insert(membershipInvites)
+      .values({
+        code,
+        label: params.label?.trim() || null,
+        expiresAt,
+        maxUses: params.maxUses !== undefined ? params.maxUses : 1, // Default 1 use
+        usesCount: 0,
+        createdBy: actor.id,
+      })
+      .returning();
 
-  const [createdInvite] = await db
-    .insert(membershipInvites)
-    .values({
-      code,
-      label: params.label?.trim() || null,
-      expiresAt,
-      maxUses: params.maxUses !== undefined ? params.maxUses : 1, // Default 1 use
-      usesCount: 0,
-      createdBy: params.createdByUserId || null,
-    })
-    .returning();
+    // Audit log creation (DO NOT put raw code in reason or metadata)
+    await tx.insert(auditLogs).values({
+      actorId: actor.id,
+      actorIp: params.creatorIp || "127.0.0.1",
+      action: "invite_created",
+      targetType: "invite",
+      targetId: createdInvite.id,
+      reason: params.label || "Undangan membership baru dibuat oleh administrator",
+      metadata: {
+        inviteId: createdInvite.id,
+        label: createdInvite.label,
+        expiresAt,
+        maxUses: params.maxUses,
+      },
+    });
 
-  // Audit log creation (DO NOT put raw code in reason or metadata)
-  await db.insert(auditLogs).values({
-    actorId: params.createdByUserId || null,
-    actorIp: params.creatorIp || "127.0.0.1",
-    action: "invite_created",
-    targetType: "invite",
-    targetId: createdInvite.id,
-    reason: params.label || "Undangan membership baru dibuat oleh administrator",
-    metadata: {
-      inviteId: createdInvite.id,
+    return {
+      id: createdInvite.id,
+      code: createdInvite.code,
+      inviteUrl: `${appBaseUrl}/invite/${createdInvite.code}`,
       label: createdInvite.label,
-      expiresAt,
-      maxUses: params.maxUses,
-    },
+      expiresAt: createdInvite.expiresAt,
+      maxUses: createdInvite.maxUses,
+      usesCount: createdInvite.usesCount,
+      createdAt: createdInvite.createdAt,
+    };
   });
-
-  return {
-    id: createdInvite.id,
-    code: createdInvite.code,
-    inviteUrl: `${appBaseUrl}/invite/${createdInvite.code}`,
-    label: createdInvite.label,
-    expiresAt: createdInvite.expiresAt,
-    maxUses: createdInvite.maxUses,
-    usesCount: createdInvite.usesCount,
-    createdAt: createdInvite.createdAt,
-  };
 }
 
 /**

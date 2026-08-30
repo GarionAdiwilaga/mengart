@@ -4,22 +4,36 @@ import { artworks, artworkVersions, profiles, users } from "@/db/schema";
 import { eq, and, desc, sql, ilike, isNull } from "drizzle-orm";
 import { auth } from "@/auth";
 
-export async function GET(request: Request) {
+export async function handleGetArtworks(
+  request: Request,
+  sessionUserOverride?: { id: string; role?: string; membershipStatus?: string | null }
+) {
   const { searchParams } = new URL(request.url);
   const search = searchParams.get("search")?.trim();
   const mediaType = searchParams.get("mediaType");
   const critiqueMode = searchParams.get("critiqueMode");
   const limit = Math.min(Number(searchParams.get("limit")) || 30, 100);
 
-  const session = await auth();
-  const isMember = !!session?.user?.id && session.user.membershipStatus === "active";
-  const isAdmin = session?.user?.role === "admin";
+  let sessionUser = sessionUserOverride;
+  if (!sessionUser) {
+    try {
+      const session = await auth();
+      sessionUser = session?.user as any;
+    } catch {
+      sessionUser = undefined;
+    }
+  }
+
+  const isActiveMember =
+    !!sessionUser?.id && sessionUser.membershipStatus === "active";
+  const isActiveAdmin =
+    isActiveMember && sessionUser?.role === "admin";
 
   const conditions = [
     eq(artworks.publicationStatus, "published"),
     isNull(artworks.deletedAt),
     eq(users.membershipStatus, "active"),
-    isMember
+    isActiveMember
       ? sql`(${artworks.audience} IN ('public', 'members_only'))`
       : eq(artworks.audience, "public"),
   ];
@@ -65,14 +79,18 @@ export async function GET(request: Request) {
     .orderBy(desc(artworks.createdAt))
     .limit(limit);
 
-  // Sanitize masterStorageKey: Only expose to artwork owner or platform admin
+  // Sanitize masterStorageKey: Expose only to ACTIVE artwork owner or ACTIVE platform admin
   const sanitizedItems = items.map((item) => {
-    const isOwner = session?.user?.id === item.userId;
+    const isOwner = isActiveMember && sessionUser?.id === item.userId;
     return {
       ...item,
-      masterStorageKey: isOwner || isAdmin ? item.masterStorageKey : null,
+      masterStorageKey: isOwner || isActiveAdmin ? item.masterStorageKey : null,
     };
   });
 
   return NextResponse.json({ items: sanitizedItems });
+}
+
+export async function GET(request: Request) {
+  return handleGetArtworks(request);
 }

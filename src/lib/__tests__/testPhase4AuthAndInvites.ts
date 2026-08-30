@@ -35,6 +35,7 @@ import {
 import { resolveGoogleSignInIdentity } from "@/auth";
 import { canAccessMasterMedia } from "@/lib/policy";
 import { handleGetMasterMedia } from "@/app/api/media/master/[key]/route";
+import { handleGetArtworks } from "@/app/api/artworks/route";
 import { handleRedeemCallback } from "@/app/api/auth/redeem-callback/route";
 import {
   updateUserMembershipStatusService,
@@ -511,9 +512,9 @@ async function runPhase4AuthAndInvitesTests() {
     console.log(`✓ Test 12 Passed: Revoke vs redeem final state strictly verified (usesCount=${raceInviteFinal.usesCount}, userStatus=${raceUserFinal.membershipStatus}).\n`);
 
     // --------------------------------------------------------------------------
-    // TEST 13: PRODUCTION-PATH MODERATOR INVITATION ADMINISTRATION DENIAL (ITEM 2)
+    // TEST 13: PRODUCTION-PATH ADMIN-ONLY INVITATION ADMINISTRATION (ITEMS 1 & 2)
     // --------------------------------------------------------------------------
-    console.log("[Test 13] Testing production-path Moderator invitation administration denial (Item 2)...");
+    console.log("[Test 13] Testing production-path Admin-only invitation administration (Items 1 & 2)...");
     const [modUser] = await db
       .insert(users)
       .values({
@@ -523,7 +524,43 @@ async function runPhase4AuthAndInvitesTests() {
       })
       .returning();
 
-    // 1. Moderator cannot create invite via domain service
+    const [ordinaryMember] = await db
+      .insert(users)
+      .values({
+        email: `ordinary.member.${Date.now()}@example.com`,
+        role: "member",
+        membershipStatus: "active",
+      })
+      .returning();
+
+    const [suspendedAdminUser] = await db
+      .insert(users)
+      .values({
+        email: `suspended.admin.${Date.now()}@example.com`,
+        role: "admin",
+        membershipStatus: "suspended",
+      })
+      .returning();
+
+    // 1. Missing actor -> rejected fail-closed at runtime
+    let missingActorBlocked = false;
+    try {
+      await (createMembershipInvite as any)({ label: "Missing Actor Invite" });
+    } catch (err: any) {
+      if (err.message.includes("Aktor Administrator wajib dicantumkan")) missingActorBlocked = true;
+    }
+    if (!missingActorBlocked) throw new Error("Expected invite creation without actor to be rejected!");
+
+    // 2. Ordinary Member cannot create invite via domain service
+    let memberCreateBlocked = false;
+    try {
+      await createMembershipInvite({ label: "Member Forbidden Invite", createdByUserId: ordinaryMember.id });
+    } catch (err: any) {
+      if (err.message.includes("Wewenang Administrator diperlukan")) memberCreateBlocked = true;
+    }
+    if (!memberCreateBlocked) throw new Error("Expected ordinary Member invite creation to be denied!");
+
+    // 3. Active Moderator cannot create invite via domain service
     let modCreateBlocked = false;
     try {
       await createMembershipInvite({ label: "Mod Forbidden Invite", createdByUserId: modUser.id });
@@ -532,7 +569,16 @@ async function runPhase4AuthAndInvitesTests() {
     }
     if (!modCreateBlocked) throw new Error("Expected Moderator invite creation via domain service to be denied!");
 
-    // 2. Moderator cannot revoke invite via domain service
+    // 4. Suspended Admin cannot create invite via domain service
+    let suspendedAdminCreateBlocked = false;
+    try {
+      await createMembershipInvite({ label: "Suspended Admin Invite", createdByUserId: suspendedAdminUser.id });
+    } catch (err: any) {
+      if (err.message.includes("ditangguhkan atau belum aktif")) suspendedAdminCreateBlocked = true;
+    }
+    if (!suspendedAdminCreateBlocked) throw new Error("Expected Suspended Admin invite creation to be denied!");
+
+    // 5. Moderator cannot revoke invite via domain service
     let modRevokeBlocked = false;
     try {
       await revokeInviteService(db, { inviteId: replayInvite.id, adminUserId: modUser.id, reason: "Unauthorized mod revoke" });
@@ -541,7 +587,7 @@ async function runPhase4AuthAndInvitesTests() {
     }
     if (!modRevokeBlocked) throw new Error("Expected Moderator invite revocation via domain service to be denied!");
 
-    // 3. Moderator cannot list/administer invites via domain service
+    // 6. Moderator cannot list/administer invites via domain service
     let modListBlocked = false;
     try {
       await listMembershipInvitesService(db, modUser.id);
@@ -550,8 +596,19 @@ async function runPhase4AuthAndInvitesTests() {
     }
     if (!modListBlocked) throw new Error("Expected Moderator invite listing via domain service to be denied!");
 
-    // 4. Active Admin is permitted for create, revoke, and list
+    // 7. Active Admin is permitted for create, revoke, and list
     const adminCreatedInvite = await createMembershipInvite({ label: "Admin Allowed Invite", createdByUserId: adminUser.id });
+    if (!adminCreatedInvite.id || !adminCreatedInvite.code) {
+      throw new Error("Expected Admin invite creation to succeed!");
+    }
+    const [persistedAdminInvite] = await db
+      .select()
+      .from(membershipInvites)
+      .where(eq(membershipInvites.id, adminCreatedInvite.id));
+    if (!persistedAdminInvite || persistedAdminInvite.createdBy !== adminUser.id) {
+      throw new Error(`Expected created_by to be set to ${adminUser.id}, got ${persistedAdminInvite?.createdBy}`);
+    }
+
     const adminRevoked = await revokeInviteService(db, { inviteId: adminCreatedInvite.id, adminUserId: adminUser.id });
     if (!adminRevoked.invite.revokedAt) {
       throw new Error("Expected Admin invite revocation to succeed!");
@@ -561,7 +618,7 @@ async function runPhase4AuthAndInvitesTests() {
       throw new Error("Expected Admin invite listing to return array of invites!");
     }
 
-    console.log("✓ Test 13 Passed: Production invitation domain services strictly deny Moderator and permit Admin.\n");
+    console.log("✓ Test 13 Passed: Production invitation domain services strictly enforce ACTIVE Admin and fail closed on missing/invalid actors.\n");
 
     // --------------------------------------------------------------------------
     // TEST 14: PRODUCTION GOOGLE OAUTH IDENTITY RESOLUTION HELPER
@@ -922,7 +979,52 @@ async function runPhase4AuthAndInvitesTests() {
     }
     if (!reportAgainstPendingBlocked) throw new Error("Expected report suspension against pending user via resolveReportService to be blocked!");
 
-    console.log("✓ Test 17 Passed: resolveReportService strictly binds moderation suspension through canonical userService.\n");
+    // 5. Concurrency: Two simultaneous resolutions on the same pending report (Item 2)
+    const [repTargetConc] = await db.insert(users).values({ email: `rep.conc.${Date.now()}@example.com`, role: "member", membershipStatus: "active" }).returning();
+    const [repConc] = await db.insert(reports).values({ reporterUserId: adminUser.id, targetType: "user", targetId: repTargetConc.id, reason: "harassment", status: "pending" }).returning();
+
+    const concReportResults = await Promise.allSettled([
+      resolveReportService(db, {
+        actorUserId: transMod.id,
+        reportId: repConc.id,
+        resolution: "dismissed",
+        resolutionNotes: "Laporan diabaikan oleh moderator A",
+      }),
+      resolveReportService(db, {
+        actorUserId: transMod.id,
+        reportId: repConc.id,
+        resolution: "resolved",
+        resolutionNotes: "Pelanggaran diverifikasi oleh moderator B",
+        enforceAction: "suspend_user",
+      }),
+    ]);
+
+    const reportSuccesses = concReportResults.filter((r) => r.status === "fulfilled");
+    const reportRejections = concReportResults.filter((r) => r.status === "rejected");
+
+    if (reportSuccesses.length !== 1 || reportRejections.length !== 1) {
+      throw new Error(`Expected exactly 1 success and 1 rejection for concurrent report resolution, got successes=${reportSuccesses.length}, rejections=${reportRejections.length}`);
+    }
+
+    const rejectionReason = (reportRejections[0] as PromiseRejectedResult).reason?.message || "";
+    if (!rejectionReason.includes("Laporan telah diproses sebelumnya")) {
+      throw new Error(`Expected rejection message 'Laporan telah diproses sebelumnya', got '${rejectionReason}'`);
+    }
+
+    const [finalReportState] = await db.select().from(reports).where(eq(reports.id, repConc.id));
+    const [finalTargetUserState] = await db.select().from(users).where(eq(users.id, repTargetConc.id));
+
+    if (finalReportState.status === "dismissed") {
+      if (finalTargetUserState.membershipStatus !== "active") {
+        throw new Error(`Contradiction detected: Report was dismissed, but user status is ${finalTargetUserState.membershipStatus}`);
+      }
+    } else if (finalReportState.status === "resolved") {
+      if (finalTargetUserState.membershipStatus !== "suspended") {
+        throw new Error(`Contradiction detected: Report was resolved with suspend_user, but user status is ${finalTargetUserState.membershipStatus}`);
+      }
+    }
+
+    console.log(`✓ Test 17 Passed: resolveReportService strictly serializes report resolutions with FOR UPDATE and eliminates resolution race conditions.\n`);
 
     // --------------------------------------------------------------------------
     // TEST 18: PRESERVE PROFILE PRIVACY ACROSS PRODUCTION SUSPENSION/REACTIVATION (ITEM 5)
@@ -1173,9 +1275,9 @@ async function runPhase4AuthAndInvitesTests() {
     console.log("✓ Scenario B Passed: Concurrent authority-removal on 2 active Admins correctly serialized via advisory lock (final activeAdminCount = exactly 1).\n");
 
     // --------------------------------------------------------------------------
-    // TEST 21: SUSPENDED ARTWORK OWNER CANNOT ACCESS CLEAN MASTER MEDIA (403)
+    // TEST 21: MASTER CLEAN-MEDIA AUTHORIZATION & NON-ACTIVE DISCLOSURE GUARDS
     // --------------------------------------------------------------------------
-    console.log("[Test 21] Testing master clean-media authorization: suspended owner receives 403 Forbidden...");
+    console.log("[Test 21] Testing master clean-media authorization and non-ACTIVE staff disclosure guards (Item 3)...");
     const [suspendedArtist] = await db
       .insert(users)
       .values({
@@ -1185,18 +1287,34 @@ async function runPhase4AuthAndInvitesTests() {
       })
       .returning();
 
+    const [activeArtist] = await db
+      .insert(users)
+      .values({
+        email: `active.artist.${Date.now()}@example.com`,
+        role: "member",
+        membershipStatus: "active",
+      })
+      .returning();
+    await db.insert(profiles).values({
+      userId: activeArtist.id,
+      displayName: "Active Master Artist",
+      slug: `active-artist-${Date.now()}`,
+    });
+
     const [artistArtwork] = await db
       .insert(artworks)
       .values({
-        userId: suspendedArtist.id,
-        title: "Suspended Masterpiece",
-        slug: `suspended-artwork-${Date.now()}`,
+        userId: activeArtist.id,
+        title: `Protected Masterpiece ${Date.now()}`,
+        slug: `protected-artwork-${Date.now()}`,
         mediaType: "image",
+        publicationStatus: "published",
+        audience: "public",
       })
       .returning();
 
     const testMasterStorageKey = `master-media-test-${Date.now()}.png`;
-    await db.insert(artworkVersions).values({
+    const [createdVersion] = await db.insert(artworkVersions).values({
       artworkId: artistArtwork.id,
       versionNumber: 1,
       mediaType: "image",
@@ -1205,8 +1323,11 @@ async function runPhase4AuthAndInvitesTests() {
       publicStorageKey: `public-${Date.now()}.png`,
       fileSizeBytes: 1024,
       checksumSha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    });
+    }).returning();
 
+    await db.update(artworks).set({ currentVersionId: createdVersion.id }).where(eq(artworks.id, artistArtwork.id));
+
+    // 1. Direct clean-master route test: Suspended owner receives 403
     const isMasterAccessible = await canAccessMasterMedia(
       {
         id: suspendedArtist.id,
@@ -1230,7 +1351,41 @@ async function runPhase4AuthAndInvitesTests() {
     if (masterRes.status !== 403 && masterRes.status !== 401) {
       throw new Error(`Expected HTTP 403 or 401 for suspended master clean-media request, got HTTP ${masterRes.status}`);
     }
-    console.log(`✓ Test 21 Passed: Suspended artwork owner strictly denied clean master media (HTTP ${masterRes.status}).\n`);
+
+    // 2. API /api/artworks masterStorageKey metadata disclosure tests (Item 3)
+    const artworksApiReq = new Request(`http://localhost:3000/api/artworks?search=${encodeURIComponent(artistArtwork.title)}`);
+
+    // (a) ACTIVE Admin -> masterStorageKey is exposed
+    const resActiveAdmin = await (await handleGetArtworks(artworksApiReq, { id: adminUser.id, role: "admin", membershipStatus: "active" })).json();
+    if (!resActiveAdmin.items[0] || resActiveAdmin.items[0].masterStorageKey !== testMasterStorageKey) {
+      throw new Error(`Expected ACTIVE Admin to receive masterStorageKey '${testMasterStorageKey}', got ${resActiveAdmin.items[0]?.masterStorageKey}`);
+    }
+
+    // (b) SUSPENDED Admin -> masterStorageKey is NULL
+    const resSuspendedAdmin = await (await handleGetArtworks(artworksApiReq, { id: suspendedAdminUser.id, role: "admin", membershipStatus: "suspended" })).json();
+    if (resSuspendedAdmin.items[0] && resSuspendedAdmin.items[0].masterStorageKey !== null) {
+      throw new Error(`Security Violation: SUSPENDED Admin was exposed masterStorageKey: ${resSuspendedAdmin.items[0].masterStorageKey}`);
+    }
+
+    // (c) DELETED Admin -> masterStorageKey is NULL
+    const resDeletedAdmin = await (await handleGetArtworks(artworksApiReq, { id: "deleted_admin_id", role: "admin", membershipStatus: "deleted" })).json();
+    if (resDeletedAdmin.items[0] && resDeletedAdmin.items[0].masterStorageKey !== null) {
+      throw new Error(`Security Violation: DELETED Admin was exposed masterStorageKey: ${resDeletedAdmin.items[0].masterStorageKey}`);
+    }
+
+    // (d) SUSPENDED Owner -> masterStorageKey is NULL
+    const resSuspendedOwner = await (await handleGetArtworks(artworksApiReq, { id: activeArtist.id, role: "member", membershipStatus: "suspended" })).json();
+    if (resSuspendedOwner.items[0] && resSuspendedOwner.items[0].masterStorageKey !== null) {
+      throw new Error(`Security Violation: SUSPENDED artwork owner was exposed masterStorageKey: ${resSuspendedOwner.items[0].masterStorageKey}`);
+    }
+
+    // (e) ACTIVE Owner -> masterStorageKey is exposed
+    const resActiveOwner = await (await handleGetArtworks(artworksApiReq, { id: activeArtist.id, role: "member", membershipStatus: "active" })).json();
+    if (!resActiveOwner.items[0] || resActiveOwner.items[0].masterStorageKey !== testMasterStorageKey) {
+      throw new Error(`Expected ACTIVE Owner to receive masterStorageKey '${testMasterStorageKey}', got ${resActiveOwner.items[0]?.masterStorageKey}`);
+    }
+
+    console.log(`✓ Test 21 Passed: Suspended owner denied master media (HTTP ${masterRes.status}), and masterStorageKey metadata is strictly gated to ACTIVE members/admins.\n`);
 
     // --------------------------------------------------------------------------
     // TEST 22: STATIC REGRESSION & ARCHITECTURAL INVARIANTS

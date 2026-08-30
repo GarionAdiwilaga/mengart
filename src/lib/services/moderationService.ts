@@ -13,7 +13,8 @@ export interface ResolveReportParams {
 /**
  * Authoritative Canonical Domain Service for Report Resolution & Enforcement
  * 
- * Enforces active staff authorization (loaded inside transaction) and delegates user suspension
+ * Enforces active staff authorization (loaded inside transaction), serializes concurrent
+ * report resolutions with FOR UPDATE, strictly requires pending status, and delegates user suspension
  * through updateUserMembershipStatusService, preserving role boundaries and invariants.
  */
 export async function resolveReportService(
@@ -32,15 +33,19 @@ export async function resolveReportService(
     // 1. Verify actor active staff role inside transaction
     const actor = await assertModeratorOrAdminActor(tx, actorUserId);
 
-    // 2. Fetch and lock target report
+    // 2. Fetch and lock target report row FOR UPDATE
     const [report] = await tx
       .select()
       .from(reports)
       .where(eq(reports.id, reportId))
-      .limit(1);
+      .for("update");
 
     if (!report) {
       throw new Error("Laporan tidak ditemukan.");
+    }
+
+    if (report.status !== "pending") {
+      throw new Error("Laporan telah diproses sebelumnya.");
     }
 
     // 3. Update report status
