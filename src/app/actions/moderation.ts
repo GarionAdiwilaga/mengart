@@ -12,7 +12,7 @@ import {
 } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { updateUserMembershipStatusService } from "@/lib/services/userService";
+import { resolveReportService } from "@/lib/services/moderationService";
 
 export async function createReportAction(formData: FormData) {
   const user = await requireAuth("/login");
@@ -49,63 +49,16 @@ export async function resolveReportAction(
 ) {
   const user = await requireModerator("/dashboard");
 
-  const [report] = await db
-    .select()
-    .from(reports)
-    .where(eq(reports.id, reportId))
-    .limit(1);
-
-  if (!report) throw new Error("Laporan tidak ditemukan.");
-
-  await db.transaction(async (tx) => {
-    // 1. Update report status
-    await tx
-      .update(reports)
-      .set({
-        status: resolution,
-        resolvedByUserId: user.id,
-        resolutionNotes,
-        resolvedAt: new Date(),
-      })
-      .where(eq(reports.id, reportId));
-
-    // 2. Perform enforcement actions
-    if (enforceAction === "takedown_artwork" && report.targetType === "artwork") {
-      await tx
-        .update(artworks)
-        .set({ publicationStatus: "hidden", updatedAt: new Date() })
-        .where(eq(artworks.id, report.targetId));
-    } else if (enforceAction === "suspend_user") {
-      const targetUserId = report.targetId;
-      await updateUserMembershipStatusService(tx, {
-        actor: {
-          id: user.id,
-          role: user.role,
-          membershipStatus: user.membershipStatus,
-        },
-        targetUserId,
-        newStatus: "suspended",
-        reason: `Penangguhan akun pengguna melalui penyelesaian laporan: ${resolutionNotes}`,
-        auditAction: "moderation.suspend_user",
-        auditMetadata: { reportId, reportReason: report.reason },
-      });
-    }
-
-    // 3. Record in audit logs (for non-user-suspend actions, since updateUserMembershipStatusService writes user audit log)
-    if (enforceAction !== "suspend_user") {
-      await tx.insert(auditLogs).values({
-        actorId: user.id,
-        action: `moderation.report_${resolution}`,
-        targetType: report.targetType,
-        targetId: report.targetId,
-        reason: resolutionNotes,
-        metadata: { enforceAction, reportReason: report.reason },
-      });
-    }
+  const result = await resolveReportService(db, {
+    actorUserId: user.id,
+    reportId,
+    resolution,
+    resolutionNotes,
+    enforceAction,
   });
 
   revalidatePath("/admin/moderation");
-  return { success: true };
+  return result;
 }
 
 export async function setMonthlySpotlightAction(

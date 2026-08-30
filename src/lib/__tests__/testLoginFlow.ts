@@ -68,6 +68,7 @@ async function testGoogleOAuthLoginFlow() {
         .set({
           googleId: acc.googleId,
           username: acc.username,
+          role: acc.role,
           emailVerified: now,
           membershipStatus: "active",
         })

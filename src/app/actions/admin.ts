@@ -13,11 +13,7 @@ export async function updateUserRoleAction(
 
   const result = await db.transaction(async (tx) => {
     return await updateUserRoleService(tx, {
-      actor: {
-        id: admin.id,
-        role: admin.role,
-        membershipStatus: admin.membershipStatus,
-      },
+      actorUserId: admin.id,
       targetUserId,
       newRole,
     });
@@ -36,11 +32,7 @@ export async function updateUserStatusAction(
 
   const result = await db.transaction(async (tx) => {
     return await updateUserMembershipStatusService(tx, {
-      actor: {
-        id: actor.id,
-        role: actor.role,
-        membershipStatus: actor.membershipStatus,
-      },
+      actorUserId: actor.id,
       targetUserId,
       newStatus,
       reason,

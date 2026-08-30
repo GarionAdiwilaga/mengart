@@ -139,6 +139,8 @@ export function calculateExpiryDate(
   }
 }
 
+import { assertAdminActor } from "@/lib/services/userService";
+
 /**
  * Create a new membership invitation (Admin only) storing direct code per Blueprint 2.2.2
  */
@@ -146,6 +148,11 @@ export async function createMembershipInvite(
   params: CreateInviteParams,
   appBaseUrl: string = process.env.APP_URL || "http://localhost:3000"
 ): Promise<GeneratedInviteResult> {
+  // Enforce domain authorization: only active Admin can create invitations
+  if (params.createdByUserId) {
+    await assertAdminActor(db, params.createdByUserId);
+  }
+
   let code: string;
 
   if (params.customCode && params.customCode.trim().length > 0) {
@@ -479,6 +486,9 @@ export async function revokeInviteService(
   const now = new Date();
 
   return await dbOrTx.transaction(async (tx: any) => {
+    // Enforce domain authorization: only active Admin can revoke invitations
+    await assertAdminActor(tx, params.adminUserId);
+
     const [invite] = await tx
       .select()
       .from(membershipInvites)
@@ -518,4 +528,29 @@ export async function revokeInviteService(
 
     return { invite: updated, alreadyRevoked: false };
   });
+}
+
+/**
+ * List all membership invitations (Admin only domain service)
+ */
+export async function listMembershipInvitesService(
+  dbOrTx: any,
+  actorUserId: string
+) {
+  await assertAdminActor(dbOrTx, actorUserId);
+
+  return await dbOrTx
+    .select({
+      id: membershipInvites.id,
+      code: membershipInvites.code,
+      label: membershipInvites.label,
+      expiresAt: membershipInvites.expiresAt,
+      maxUses: membershipInvites.maxUses,
+      usesCount: membershipInvites.usesCount,
+      revokedAt: membershipInvites.revokedAt,
+      revocationReason: membershipInvites.revocationReason,
+      createdAt: membershipInvites.createdAt,
+    })
+    .from(membershipInvites)
+    .orderBy(membershipInvites.createdAt);
 }

@@ -1151,15 +1151,28 @@ async function runMigrationVerification() {
       VALUES (${legacyUser1.id}, 'reset_hash_1', NOW() + INTERVAL '2 hours');
     `;
 
-    // Seed legacy hash-only invite and redemption row
-    const [legacyInvite] = await upgradeClient0010`
-      INSERT INTO membership_invites (token_hash, token_prefix, label, max_uses, uses_count)
-      VALUES ('abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890', 'abcd', 'Legacy Token Invite', 1, 1)
+    // Seed multiple legacy hash-only invites and redemption rows to test deterministic surrogate code assignment
+    const [legacyInvite1] = await upgradeClient0010`
+      INSERT INTO membership_invites (token_hash, token_prefix, label, max_uses, uses_count, created_at)
+      VALUES ('abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567891', 'abcd', 'Legacy Token Invite 1', 1, 1, NOW() - INTERVAL '3 days')
       RETURNING id;
     `;
+    const [legacyInvite2] = await upgradeClient0010`
+      INSERT INTO membership_invites (token_hash, token_prefix, label, max_uses, uses_count, created_at)
+      VALUES ('abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567892', 'abcd', 'Legacy Token Invite 2', 5, 2, NOW() - INTERVAL '2 days')
+      RETURNING id;
+    `;
+    const [legacyInvite3] = await upgradeClient0010`
+      INSERT INTO membership_invites (token_hash, token_prefix, label, max_uses, uses_count, created_at)
+      VALUES ('abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567893', 'abcd', 'Legacy Token Invite 3', 10, 0, NOW() - INTERVAL '1 day')
+      RETURNING id;
+    `;
+
     await upgradeClient0010`
       INSERT INTO invite_redemptions (invite_id, user_id, ip_address)
-      VALUES (${legacyInvite.id}, ${legacyUser1.id}, '127.0.0.1');
+      VALUES 
+        (${legacyInvite1.id}, ${legacyUser1.id}, '127.0.0.1'),
+        (${legacyInvite2.id}, ${legacyUser2.id}, '127.0.0.2');
     `;
     console.log("✓ Pre-0011 legacy data seeded.");
 
@@ -1309,26 +1322,49 @@ async function runMigrationVerification() {
     }
     console.log("✓ Verified uniq_membership_invites_code unique index exists and rejects duplicate invite codes.");
 
-    // Assert 10: Legacy hash-only invite was migrated to revoked state with surrogate code and preserved redemption history
-    const [migratedLegacyInvite] = await upgradeClient0010`
+    // Assert 10: Legacy hash-only invites were migrated to revoked state with deterministic unique surrogate codes
+    const migratedLegacyInvites = await upgradeClient0010`
       SELECT id, code, revoked_at, revocation_reason, uses_count
       FROM membership_invites
-      WHERE id = ${legacyInvite.id};
+      WHERE id IN (${legacyInvite1.id}, ${legacyInvite2.id}, ${legacyInvite3.id})
+      ORDER BY code ASC;
     `;
-    if (!migratedLegacyInvite || !migratedLegacyInvite.revoked_at) {
-      throw new Error("Expected legacy hash-only invite to be explicitly revoked in migration 0011.");
+
+    if (migratedLegacyInvites.length !== 3) {
+      throw new Error(`Expected 3 migrated legacy invites, got ${migratedLegacyInvites.length}`);
     }
-    if (!migratedLegacyInvite.code.startsWith("legacy-revoked-")) {
-      throw new Error(`Expected legacy invite code to be a non-secret surrogate starting with 'legacy-revoked-', got ${migratedLegacyInvite.code}`);
+
+    const uniqueCodes = new Set(migratedLegacyInvites.map((i: any) => i.code));
+    if (uniqueCodes.size !== 3) {
+      throw new Error(`Duplicate surrogate codes detected across migrated legacy invites: ${Array.from(uniqueCodes).join(', ')}`);
     }
-    const [migratedRedemption] = await upgradeClient0010`
+
+    for (const inv of migratedLegacyInvites) {
+      if (!inv.revoked_at) {
+        throw new Error(`Expected migrated legacy invite ${inv.id} to be revoked!`);
+      }
+      if (!/^legacy-revoked-[0-9]{8}$/.test(inv.code)) {
+        throw new Error(`Expected surrogate code matching pattern /^legacy-revoked-[0-9]{8}$/, got '${inv.code}'`);
+      }
+      if (inv.code.length > 25) {
+        throw new Error(`Expected surrogate code length <= 25, got ${inv.code.length} ('${inv.code}')`);
+      }
+    }
+
+    const [migratedRedemption1] = await upgradeClient0010`
       SELECT id, invite_id, user_id
       FROM invite_redemptions
-      WHERE invite_id = ${legacyInvite.id};
+      WHERE invite_id = ${legacyInvite1.id};
     `;
-    if (!migratedRedemption || migratedRedemption.user_id !== legacyUser1.id) {
+    const [migratedRedemption2] = await upgradeClient0010`
+      SELECT id, invite_id, user_id
+      FROM invite_redemptions
+      WHERE invite_id = ${legacyInvite2.id};
+    `;
+    if (!migratedRedemption1 || migratedRedemption1.user_id !== legacyUser1.id || !migratedRedemption2 || migratedRedemption2.user_id !== legacyUser2.id) {
       throw new Error("Expected legacy redemption history to be preserved in migration 0011.");
     }
+
     const [activeLegacyBearer] = await upgradeClient0010`
       SELECT count(*) AS cnt
       FROM membership_invites
@@ -1337,7 +1373,7 @@ async function runMigrationVerification() {
     if (Number(activeLegacyBearer.cnt) > 0) {
       throw new Error("Found active 32-character legacy hash-derived bearer credentials after migration 0011!");
     }
-    console.log("✓ Verified legacy hash-only invite is revoked with surrogate code, redemption history preserved, and no active hash-derived credentials exist.");
+    console.log("✓ Verified multiple legacy hash-only invites are deterministically assigned unique surrogate codes, revoked, redemption history preserved, and no active hash credentials exist.");
 
     await upgradeClient0010.end();
     console.log("🎉 SCENARIO 8B (0010 -> 0011 UPGRADE & GATE D SCHEMA VERIFICATION) PASSED!\n");

@@ -3,11 +3,7 @@ import { users, profiles, auditLogs } from "@/db/schema";
 import { assertActiveAdminInvariant } from "@/lib/rbac";
 
 export interface UpdateUserMembershipStatusParams {
-  actor: {
-    id: string;
-    role: "member" | "moderator" | "admin";
-    membershipStatus?: "active" | "suspended" | "deleted" | null;
-  };
+  actorUserId: string;
   targetUserId: string;
   newStatus: "active" | "suspended" | "deleted";
   reason?: string;
@@ -16,36 +12,69 @@ export interface UpdateUserMembershipStatusParams {
 }
 
 export interface UpdateUserRoleParams {
-  actor: {
-    id: string;
-    role: "member" | "moderator" | "admin";
-    membershipStatus?: "active" | "suspended" | "deleted" | null;
-  };
+  actorUserId: string;
   targetUserId: string;
   newRole: "member" | "moderator" | "admin";
   reason?: string;
 }
 
 /**
- * Authoritative Canonical Domain Service for User Membership Status Mutations
- * (Blueprint 2.2.2 Sections E, F, G, H)
- * 
- * Enforces the complete transition matrix, staff boundaries, Last-Active-Admin invariant,
- * and profile privacy across all caller surfaces (admin UI actions, moderation reports, etc.).
+ * Domain Authorization Helper: Load actor from DB inside transaction and assert active Admin role
  */
-export async function updateUserMembershipStatusService(
-  tx: any,
-  params: UpdateUserMembershipStatusParams
-) {
-  const { actor, targetUserId, newStatus, reason, auditAction, auditMetadata } = params;
+export async function assertAdminActor(txOrDb: any, actorUserId: string) {
+  const [actor] = await txOrDb
+    .select()
+    .from(users)
+    .where(eq(users.id, actorUserId));
 
-  // 1. Actor Active Staff Verification
+  if (!actor) {
+    throw new Error("Pengguna tidak ditemukan.");
+  }
+  if (actor.membershipStatus !== "active") {
+    throw new Error("Akun Anda sedang ditangguhkan atau belum aktif.");
+  }
+  if (actor.role !== "admin") {
+    throw new Error("Akses ditolak: Wewenang Administrator diperlukan.");
+  }
+  return actor;
+}
+
+/**
+ * Domain Authorization Helper: Load actor from DB inside transaction and assert active Moderator or Admin role
+ */
+export async function assertModeratorOrAdminActor(txOrDb: any, actorUserId: string) {
+  const [actor] = await txOrDb
+    .select()
+    .from(users)
+    .where(eq(users.id, actorUserId));
+
+  if (!actor) {
+    throw new Error("Pengguna tidak ditemukan.");
+  }
   if (actor.membershipStatus !== "active") {
     throw new Error("Akun Anda sedang ditangguhkan atau belum aktif.");
   }
   if (actor.role !== "admin" && actor.role !== "moderator") {
     throw new Error("Akses ditolak: Wewenang Administrator atau Moderator diperlukan.");
   }
+  return actor;
+}
+
+/**
+ * Authoritative Canonical Domain Service for User Membership Status Mutations
+ * (Blueprint 2.2.2 Sections E, F, G, H)
+ * 
+ * Loads and verifies actor status/role inside the transaction, enforcing the complete
+ * transition matrix, staff boundaries, Last-Active-Admin invariant, and profile privacy.
+ */
+export async function updateUserMembershipStatusService(
+  tx: any,
+  params: UpdateUserMembershipStatusParams
+) {
+  const { actorUserId, targetUserId, newStatus, reason, auditAction, auditMetadata } = params;
+
+  // 1. Actor Active Staff Verification (loaded inside transaction)
+  const actor = await assertModeratorOrAdminActor(tx, actorUserId);
 
   // 2. Lock Target User Row FOR UPDATE
   const [target] = await tx
@@ -161,15 +190,10 @@ export async function updateUserRoleService(
   tx: any,
   params: UpdateUserRoleParams
 ) {
-  const { actor, targetUserId, newRole, reason } = params;
+  const { actorUserId, targetUserId, newRole, reason } = params;
 
-  // 1. Actor Active Admin Verification
-  if (actor.membershipStatus !== "active") {
-    throw new Error("Akun Anda sedang ditangguhkan atau belum aktif.");
-  }
-  if (actor.role !== "admin") {
-    throw new Error("Akses ditolak: Hanya Administrator yang dapat mengubah peran pengguna.");
-  }
+  // 1. Actor Active Admin Verification (loaded inside transaction)
+  const actor = await assertAdminActor(tx, actorUserId);
 
   // 2. Lock Target User Row FOR UPDATE
   const [target] = await tx
