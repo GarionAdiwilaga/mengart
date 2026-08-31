@@ -1,35 +1,38 @@
-# Handoff Context — Gate D: Authentication, Invitations, Membership & Roles (Blueprint 2.2.2 Correction)
+# Handoff Context — Gate E: Submission & Portfolio Simplification + Additive Artwork Spoiler Presentation
 
-**Date:** 2026-08-30  
-**Gate C Baseline Commit:** `94ab50040bf226039fc5c1a1f464faf9d95236a5`  
-**Current Phase:** Gate D (Authentication, Invitations, Membership & Roles — Blueprint 2.2.2) — **IMPLEMENTED / PENDING INDEPENDENT QA**  
-**Overall Status:** **NO-GO** (Until Gates D–H pass independent QA)
+**Date:** 2026-08-31  
+**Gate D Baseline Commit:** `46ccdca661de9240ff364ee63d9f5ccb5ca242bc`  
+**Current Phase:** Gate E (Submission & Portfolio Simplification + Additive Artwork Spoiler Presentation) — **IMPLEMENTED & 100% VERIFIED / PENDING INDEPENDENT QA**  
+**Overall Status:** **NO-GO** (Until Gates E–H pass independent QA)
 
 ## Session Summary
-- **Gate D Implementation & Blueprint 2.2.2 Correction Completed:**
-  1. **Google-Only OAuth Authentication:** Migrated NextAuth in `src/auth.ts` to exclusive Google OAuth 2.0. Completely removed credentials provider, bcrypt password hashing, and SMTP verification/password reset flows. Dropped `password_hash` column and deprecated token tables without cascade.
-  2. **Strict Google Identity Resolution (`resolveGoogleSignInIdentity`):** Enforces literal `profile.email_verified === true` (rejects `false`, `undefined`, `null`, and missing claims), lowercases emails, binds Google IDs to existing verified accounts, and fails closed on collisions and deleted accounts.
-  3. **PENDING_INVITE Separation from Persistent Membership:** Persistent membership states in PostgreSQL enum `membership_status` are strictly `active | suspended | deleted` (nullable, no default). Authenticated Google users start with `membership_status IS NULL` (`PENDING_INVITE` derived state).
-  4. **Direct Discord-Style Invitation Codes & Admin Management:** Stored invitation codes directly as unique plaintext `membership_invites.code`. Dropped `token_hash` and `token_prefix`. Generated codes use unbiased CSPRNG producing 8 alphanumeric chars `[A-Za-z0-9]`. Custom codes are normalized to lowercase `[a-z0-9-]` (max length 25). Deterministic code lookup (`findInviteByCode`) handles exact matches first. Admins can list, view, and copy actual stored codes and links. Moderators denied invite administration.
-  5. **Deterministic Two-Phase Locking Redemption:** `redeemInviteService` locks `users` FOR UPDATE then `membership_invites` FOR UPDATE by `code`. Enforces transition matrix: `NULL -> ACTIVE` only (invite consumed); `ACTIVE -> ACTIVE` idempotent pass-through (zero usage consumed); `SUSPENDED` and `DELETED` rejected.
-  6. **Canonical Membership Transition Domain Service (`updateUserMembershipStatusService`):** Unified domain service enforcing transition matrix, staff role boundaries, Last-Active-Admin invariant, and profile privacy across both `updateUserStatusAction` and `resolveReportAction(..., "suspend_user")`. Eliminates moderation suspension bypass.
-  7. **OAuth Continuation Invariant:** Removed Server Component cookie mutations. Pre-login Server Action sets HttpOnly cookie `mengart_pending_invite` (TTL 15m). Google OAuth initiates with clean callback `/api/auth/redeem-callback` (zero query tokens). Production route handler `/api/auth/redeem-callback` reads cookie, executes `redeemInviteService`, deletes cookie across all terminal paths, and redirects cleanly.
-  8. **Preserved Profile Privacy:** `updateUserMembershipStatusService` leaves `profiles.profileStatus` unchanged (`active_hidden` preserved across suspension/reactivation).
-  9. **Live Staff Authorization:** Replaced role-only session checks with live database assertions (`requireModerator()`, `requireAdmin()`). Suspended staff members lose authority immediately.
-  10. **Master Clean-Media Authorization Invariant:** Strictly requires `membershipStatus === 'active'` AND independent passage of Gate A media ACL (`canAccessMasterMedia`). Suspended artwork owners receive 403 Forbidden.
-  11. **Last-Active-Admin Invariant Protection:** Advisory lock (`pg_advisory_xact_lock(4281729)`) serializes staff mutations, preventing the system from reaching 0 active Admins.
-  12. **Forward Migration 0011 & Scenario 8 Verification:** `drizzle/0011_gate_d_auth_roles_membership.sql` verified with email collisions fail-closed (`RAISE EXCEPTION`), email lowercase normalization, `uniq_users_lower_email` index, legacy hash-only invites revoked with surrogate codes, and `uniq_membership_invites_code`.
-  13. **Full Test Matrix:**
-      - `npm run test:migrate`: 8/8 scenarios passed (including Scenario 8A & 8B).
-      - `npx tsx src/lib/__tests__/testPhase4AuthAndInvites.ts`: 22/22 scenarios passed.
-      - `npx tsx src/lib/__tests__/testPhase2VotingAndTiebreak.ts`: 20/20 scenarios passed.
-      - `npx tsx src/lib/__tests__/testPhase3SimplifiedJury.ts`: 63/63 scenarios passed.
-      - `npm run test:all`: 14/14 test suites passed cleanly.
-      - `npm run lint`: 0 errors.
-      - `npm run build`: Production build and worker bundle compiled cleanly.
+- **Gate E Implementation & Verification Completed:**
+  1. **Pre-Production Database Reset Policy:** Development/QA database rows are treated as disposable test fixtures while migration history remains immutable in version control. Forward migration `0012_gate_e_submission_portfolio_spoiler.sql` asserts `COUNT(*) = 0` on `challenge_submissions` before canonical conversion and fails closed on unreset databases. Drops `challenge_submission_versions` table cleanly without `CASCADE`.
+  2. **Canonical Direct Submission Schema:** `challenge_submissions` directly owns canonical columns `(artwork_id, artwork_version_id, title, description, software_used)` with `ON DELETE RESTRICT` foreign keys. Unique index `uniq_challenge_submission_user` strictly prevents duplicate submissions by the same member in the same challenge.
+  3. **Dual Upload Paths & Zero-Entry Invariant:**
+     - *Ordinary Portfolio Upload:* Atomically creates `artworks` + `artwork_versions` + `portfolio_entries` (`isVisible = true`, `systemCaption = null`, `customCaption = null`).
+     - *Direct Challenge Upload:* Atomically creates `artworks` + `artwork_versions` + `challenge_submissions` with 0 `portfolio_entries` before challenge finish.
+  4. **Deterministic Caption Resolver & Automatic Portfolio Promotion:**
+     - All 6 FINISHED paths (`finalizeVotingRoundService` vote_only, `finalizeVotingRoundService` vote_and_jury community winner, `publishJuryChallengeResultsService`, `republishChallengeResultsService`, `showcase_only` deadline finish, and single submission auto-winner) invoke `autoAddChallengeSubmissionsToPortfolioService` to auto-add entries with award captions.
+     - `RESULTS_REVOKED` reverts achievement captions to participant fallback text, and republishing restores award captions.
+     - `portfolio_entries.system_caption` stores canonical achievement captions; `portfolio_entries.custom_caption` stores artist overrides; `effectiveCaption` resolves `custom_caption ?? system_caption ?? null`.
+  5. **PostgreSQL-Safe Slug Retry & Two-Phase Media Promotion:**
+     - `createArtworkWithUniqueSlug` uses `INSERT ... ON CONFLICT (slug) DO NOTHING RETURNING ...` bounded to 5 retry attempts to avoid aborted PostgreSQL transaction states.
+     - Initial submission and replacement stage/promote media before DB transactions and execute `cleanupPromotedMedia` on transaction abort.
+     - Pre-deadline replacement swaps `artwork_version_id` while preserving `artwork.slug` and recording an audit log.
+  6. **Additive Artwork Spoiler Presentation:** Added `artworks.is_spoiler` boolean (`NOT NULL DEFAULT false`) serialized across all 8 surfaces with zero impact on ACL, voting, or Stars.
+  7. **Full Verification Matrix:**
+     - `npm run test:migrate`: 9/9 scenarios passed (including Scenario 9A dirty fail-closed and Scenario 9B clean 0011 -> 0012 upgrade).
+     - `npx tsx src/lib/__tests__/testGateESubmissionAndPortfolio.ts`: 38/38 scenarios passed.
+     - `npx tsx src/lib/__tests__/testPhase4AuthAndInvites.ts`: 22/22 scenarios passed.
+     - `npx tsx src/lib/__tests__/testPhase2VotingAndTiebreak.ts`: 20/20 scenarios passed.
+     - `npx tsx src/lib/__tests__/testPhase3SimplifiedJury.ts`: 63/63 scenarios passed.
+     - `npm run test:all`: 15/15 test suites passed cleanly.
+     - `npm run lint`: 0 errors (clean).
+     - `npm run build`: Next.js production build and worker bundle compiled cleanly.
 
 ## Next Steps
-- Submit Gate D for independent QA review.
-- Commit complete implementation, report `NEW_GATE_D_SHA`, and export format-patch artifact `gated_222_final_correction.patch`.
-- Stop after Gate D. Do NOT begin Gate E until Gate D is formally closed.
+- Submit Gate E for independent QA review.
+- Commit complete implementation, report `NEW_GATE_E_SHA`, and export format-patch artifact `gate_e.patch`.
+- Stop after Gate E. Do NOT begin Gate F until Gate E is formally closed and authorized.
 

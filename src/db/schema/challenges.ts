@@ -13,7 +13,7 @@ import {
 import { sql } from "drizzle-orm";
 import { users } from "./users";
 import { profiles } from "./profiles";
-import { artworkVersions } from "./artworks";
+import { artworks, artworkVersions } from "./artworks";
 import { badges } from "./badges";
 
 export const challengeStatusEnum = pgEnum("challenge_status", [
@@ -187,7 +187,15 @@ export const challengeSubmissions = pgTable(
     profileId: uuid("profile_id")
       .notNull()
       .references(() => profiles.id, { onDelete: "cascade" }),
-    currentVersionId: uuid("current_version_id"),
+    artworkId: uuid("artwork_id")
+      .notNull()
+      .references(() => artworks.id, { onDelete: "restrict" }),
+    artworkVersionId: uuid("artwork_version_id")
+      .notNull()
+      .references(() => artworkVersions.id, { onDelete: "restrict" }),
+    title: text("title").notNull(),
+    description: text("description"),
+    softwareUsed: text("software_used"),
     submissionStatus: submissionStatusEnum("submission_status").default("submitted").notNull(),
     disqualificationReason: text("disqualification_reason"),
     disqualifiedBy: uuid("disqualified_by").references(() => users.id, { onDelete: "set null" }),
@@ -199,28 +207,7 @@ export const challengeSubmissions = pgTable(
     index("idx_submissions_challenge_id").on(table.challengeId),
     index("idx_submissions_user_id").on(table.userId),
     index("idx_submissions_status").on(table.submissionStatus),
-  ]
-);
-
-export const challengeSubmissionVersions = pgTable(
-  "challenge_submission_versions",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    submissionId: uuid("submission_id")
-      .notNull()
-      .references(() => challengeSubmissions.id, { onDelete: "cascade" }),
-    versionNumber: integer("version_number").notNull(),
-    title: text("title").notNull(),
-    description: text("description"),
-    softwareUsed: text("software_used"),
-    artworkVersionId: uuid("artwork_version_id")
-      .notNull()
-      .references(() => artworkVersions.id, { onDelete: "cascade" }),
-    submittedAt: timestamp("submitted_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => [
-    index("idx_submission_versions_submission_id").on(table.submissionId),
-    uniqueIndex("uniq_submission_version").on(table.submissionId, table.versionNumber),
+    uniqueIndex("uniq_challenge_submission_user").on(table.challengeId, table.userId),
   ]
 );
 

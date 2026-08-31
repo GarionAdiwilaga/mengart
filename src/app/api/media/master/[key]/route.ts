@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { resolveStoragePath } from "@/lib/storage";
 import { db } from "@/db";
-import { artworkVersions, artworks, challengeSubmissionVersions, challengeSubmissions, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { resolveStoragePath } from "@/lib/storage";
+import { artworkVersions, artworks, users } from "@/db/schema";
 import { canAccessMasterMedia } from "@/lib/policy";
 import fs from "fs";
 import fsp from "fs/promises";

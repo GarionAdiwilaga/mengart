@@ -3,6 +3,7 @@ import {
   profiles,
   artworks,
   artworkVersions,
+  portfolioEntries,
   commissionServices,
   commissionScopeRules,
 } from "@/db/schema";
@@ -42,23 +43,34 @@ export default async function ArtistProfilePage({ params }: ArtistProfilePagePro
     notFound();
   }
 
-  // Fetch Artist Portfolio Artworks
+  // Fetch Artist Portfolio Artworks (Visible to Public)
   const portfolioArtworks = await db
     .select({
       id: artworks.id,
       title: artworks.title,
       slug: artworks.slug,
       mediaType: artworks.mediaType,
+      isSpoiler: artworks.isSpoiler,
       thumbnailStorageKey: artworkVersions.thumbnailStorageKey,
+      systemCaption: portfolioEntries.systemCaption,
+      customCaption: portfolioEntries.customCaption,
     })
     .from(artworks)
+    .innerJoin(
+      portfolioEntries,
+      and(
+        eq(portfolioEntries.artworkId, artworks.id),
+        eq(portfolioEntries.profileId, artist.id)
+      )
+    )
     .innerJoin(artworkVersions, eq(artworkVersions.id, artworks.currentVersionId))
     .where(
       and(
         eq(artworks.userId, artist.userId),
         isNull(artworks.deletedAt),
         eq(artworks.audience, "public"),
-        eq(artworks.publicationStatus, "published")
+        eq(artworks.publicationStatus, "published"),
+        eq(portfolioEntries.isVisible, true)
       )
     )
     .orderBy(desc(artworks.createdAt));

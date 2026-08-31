@@ -12,6 +12,8 @@ import {
   auditLogs,
   users,
   profiles,
+  artworks,
+  artworkVersions,
 } from "@/db/schema";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import {
@@ -90,9 +92,17 @@ async function runPhase1LifecycleTests() {
   console.log("✓ Manual generic transition to submission_locked safely rejected.");
 
   // Insert 2 submissions and let scheduler lock submissions and transition jury_only to jury_selection_open
+  const [artP1A] = await db.insert(artworks).values({ userId: member.id, title: "Jury Sub 1", slug: `jury-sub-1-${Date.now()}`, mediaType: "image", publicationStatus: "published" }).returning();
+  const [verP1A] = await db.insert(artworkVersions).values({ artworkId: artP1A.id, versionNumber: 1, mediaType: "image", masterStorageKey: `k-p1a-${Date.now()}`, mimeType: "image/png", fileSizeBytes: 100, checksumSha256: `c-p1a-${Date.now()}`, processingStatus: "ready" }).returning();
+  await db.update(artworks).set({ currentVersionId: verP1A.id }).where(eq(artworks.id, artP1A.id));
+
+  const [artP1B] = await db.insert(artworks).values({ userId: admin.id, title: "Jury Sub 2", slug: `jury-sub-2-${Date.now()}`, mediaType: "image", publicationStatus: "published" }).returning();
+  const [verP1B] = await db.insert(artworkVersions).values({ artworkId: artP1B.id, versionNumber: 1, mediaType: "image", masterStorageKey: `k-p1b-${Date.now()}`, mimeType: "image/png", fileSizeBytes: 100, checksumSha256: `c-p1b-${Date.now()}`, processingStatus: "ready" }).returning();
+  await db.update(artworks).set({ currentVersionId: verP1B.id }).where(eq(artworks.id, artP1B.id));
+
   await db.insert(challengeSubmissions).values([
-    { challengeId: juryChallenge.id, userId: member.id, profileId: prof.id, submissionStatus: "submitted" },
-    { challengeId: juryChallenge.id, userId: admin.id, profileId: prof.id, submissionStatus: "submitted" },
+    { challengeId: juryChallenge.id, userId: member.id, profileId: prof.id, artworkId: artP1A.id, artworkVersionId: verP1A.id, title: "Jury Sub 1", submissionStatus: "submitted" },
+    { challengeId: juryChallenge.id, userId: admin.id, profileId: prof.id, artworkId: artP1B.id, artworkVersionId: verP1B.id, title: "Jury Sub 2", submissionStatus: "submitted" },
   ]);
 
   await db.insert(challengeJuryAssignments).values({
@@ -190,12 +200,19 @@ async function runPhase1LifecycleTests() {
     })
     .returning();
 
+  const [artSubA] = await db.insert(artworks).values({ userId: member.id, title: "Sub A Art", slug: `sub-a-art-${Date.now()}`, mediaType: "image", publicationStatus: "published" }).returning();
+  const [verSubA] = await db.insert(artworkVersions).values({ artworkId: artSubA.id, versionNumber: 1, mediaType: "image", masterStorageKey: `k-suba-${Date.now()}`, mimeType: "image/png", fileSizeBytes: 100, checksumSha256: `c-suba-${Date.now()}`, processingStatus: "ready" }).returning();
+  await db.update(artworks).set({ currentVersionId: verSubA.id }).where(eq(artworks.id, artSubA.id));
+
   const [subA] = await db
     .insert(challengeSubmissions)
     .values({
       challengeId: finChallenge.id,
       userId: member.id,
       profileId: prof.id,
+      artworkId: artSubA.id,
+      artworkVersionId: verSubA.id,
+      title: "Sub A Art",
       submissionStatus: "submitted",
     })
     .returning();

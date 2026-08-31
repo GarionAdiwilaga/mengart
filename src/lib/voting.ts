@@ -2,8 +2,8 @@ import { db } from "@/db";
 import {
   challenges,
   challengeSubmissions,
-  challengeSubmissionVersions,
   artworkVersions,
+  artworks,
   profiles,
   challengeWinnerSlots,
   challengeResults,
@@ -90,24 +90,24 @@ export async function getChallengeResultsData(
       slotTitle: sql<string>`COALESCE(${challengeResults.categoryLabel}, ${challengeWinnerSlots.title}, 'Pilihan Juri')`,
       slotType: challengeWinnerSlots.slotType,
       submissionId: challengeSubmissions.id,
+      artworkId: challengeSubmissions.artworkId,
+      artworkVersionId: challengeSubmissions.artworkVersionId,
+      isSpoiler: artworks.isSpoiler,
       artistName: profiles.displayName,
       artistSlug: profiles.slug,
       artistAvatar: profiles.avatarUrl,
-      title: challengeSubmissionVersions.title,
-      description: challengeSubmissionVersions.description,
-      softwareUsed: challengeSubmissionVersions.softwareUsed,
+      title: challengeSubmissions.title,
+      description: challengeSubmissions.description,
+      softwareUsed: challengeSubmissions.softwareUsed,
       thumbnailStorageKey: artworkVersions.thumbnailStorageKey,
       publicStorageKey: artworkVersions.publicStorageKey,
       mediaType: artworkVersions.mediaType,
     })
     .from(challengeResults)
     .innerJoin(challengeSubmissions, eq(challengeSubmissions.id, challengeResults.submissionId))
+    .innerJoin(artworks, eq(artworks.id, challengeSubmissions.artworkId))
     .leftJoin(profiles, eq(profiles.id, challengeSubmissions.profileId))
-    .leftJoin(
-      challengeSubmissionVersions,
-      eq(challengeSubmissionVersions.id, challengeSubmissions.currentVersionId)
-    )
-    .leftJoin(artworkVersions, eq(artworkVersions.id, challengeSubmissionVersions.artworkVersionId))
+    .leftJoin(artworkVersions, eq(artworkVersions.id, challengeSubmissions.artworkVersionId))
     .leftJoin(challengeWinnerSlots, eq(challengeWinnerSlots.id, challengeResults.winnerSlotId))
     .where(whereCondition)
     .orderBy(

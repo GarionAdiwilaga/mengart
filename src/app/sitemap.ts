@@ -1,6 +1,6 @@
 import type { MetadataRoute } from "next";
 import { db } from "@/db";
-import { artworks, profiles, challenges, users } from "@/db/schema";
+import { artworks, profiles, challenges, users, portfolioEntries } from "@/db/schema";
 import { eq, and, isNull, ne } from "drizzle-orm";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
@@ -23,7 +23,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     {
       url: `${siteUrl}/challenges`,
       lastModified: new Date(),
-      changeFrequency: "daily",
+      changeFrequency: "hourly",
       priority: 0.9,
     },
     {
@@ -49,10 +49,15 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       })
       .from(artworks)
       .innerJoin(users, eq(users.id, artworks.userId))
+      .innerJoin(
+        portfolioEntries,
+        eq(portfolioEntries.artworkId, artworks.id)
+      )
       .where(
         and(
           eq(artworks.publicationStatus, "published"),
           eq(artworks.audience, "public"),
+          eq(portfolioEntries.isVisible, true),
           isNull(artworks.deletedAt),
           eq(users.membershipStatus, "active")
         )

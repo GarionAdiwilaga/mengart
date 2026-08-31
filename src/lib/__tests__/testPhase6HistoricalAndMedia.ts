@@ -3,7 +3,6 @@ import {
   challenges,
   challengeWinnerSlots,
   challengeSubmissions,
-  challengeSubmissionVersions,
   challengeResults,
   users,
   profiles,
@@ -233,25 +232,12 @@ async function runPhase6Tests() {
         challengeId: historicalChallenge.id,
         userId: entry.user.id,
         profileId: entry.profile.id,
+        artworkId: art.id,
+        artworkVersionId: artVer.id,
+        title: entry.title,
         submissionStatus: "submitted",
       })
       .returning();
-
-    // Create Submission Version
-    const [subVer] = await db
-      .insert(challengeSubmissionVersions)
-      .values({
-        submissionId: sub.id,
-        versionNumber: 1,
-        title: entry.title,
-        artworkVersionId: artVer.id,
-      })
-      .returning();
-
-    await db
-      .update(challengeSubmissions)
-      .set({ currentVersionId: subVer.id })
-      .where(eq(challengeSubmissions.id, sub.id));
 
     // Create Result
     await db.insert(challengeResults).values({

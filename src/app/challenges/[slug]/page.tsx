@@ -475,7 +475,7 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
                     </div>
 
                     <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-zinc-500">
-                      <span>Versi {sub.versionNumber}</span>
+                      <span>{sub.softwareUsed || "Submisi Resmi"}</span>
                       <span className="uppercase">{sub.mediaType}</span>
                     </div>
                   </div>

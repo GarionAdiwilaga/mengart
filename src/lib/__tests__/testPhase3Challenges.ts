@@ -7,7 +7,6 @@ import {
   challenges,
   challengeWinnerSlots,
   challengeSubmissions,
-  challengeSubmissionVersions,
 } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import sharp from "sharp";
@@ -97,13 +96,13 @@ async function runPhase3Tests() {
     throw new Error(`Status should be submission_open, got ${effectiveStatus}`);
   }
 
-  // Test 3: Member Uploads Artwork Version & Submits to Challenge
-  console.log("\n[Test 3] Submitting artwork entry (Version 1)...");
+  // Test 3: Member Submits Initial Artwork (Version 1)
+  console.log("\n[Test 3] Member submitting initial artwork to challenge...");
   const tempFilename1 = `test_art_v1_${Date.now()}.png`;
   const tempPath1 = resolveStoragePath("temp", tempFilename1);
 
   const imgBuffer1 = await sharp({
-    create: { width: 1000, height: 1000, channels: 4, background: { r: 50, g: 30, b: 80, alpha: 1 } },
+    create: { width: 800, height: 800, channels: 4, background: { r: 50, g: 100, b: 150, alpha: 1 } },
   }).png().toBuffer();
   await fs.writeFile(tempPath1, imgBuffer1);
 
@@ -112,7 +111,7 @@ async function runPhase3Tests() {
     .values({
       userId: memberUser.id,
       title: "Moonweaver's Descent",
-      slug: `moonweaver-${Date.now()}`,
+      slug: `moonweavers-descent-${Date.now()}`,
       mediaType: "image",
       publicationStatus: "published",
     })
@@ -134,35 +133,27 @@ async function runPhase3Tests() {
     })
     .returning();
 
-  // Create submission
+  await db
+    .update(artworks)
+    .set({ currentVersionId: artVersion1.id })
+    .where(eq(artworks.id, artwork.id));
+
   const [submission] = await db
     .insert(challengeSubmissions)
     .values({
       challengeId: challenge.id,
       userId: memberUser.id,
       profileId: memberProfile.id,
+      artworkId: artwork.id,
+      artworkVersionId: artVersion1.id,
+      title: "Moonweaver's Descent (Draft 1)",
+      description: "Initial concept painting.",
+      softwareUsed: "Clip Studio Paint",
       submissionStatus: "submitted",
     })
     .returning();
 
-  const [subVersion1] = await db
-    .insert(challengeSubmissionVersions)
-    .values({
-      submissionId: submission.id,
-      versionNumber: 1,
-      title: "Moonweaver's Descent (Draft 1)",
-      description: "Initial concept painting.",
-      softwareUsed: "Clip Studio Paint",
-      artworkVersionId: artVersion1.id,
-    })
-    .returning();
-
-  await db
-    .update(challengeSubmissions)
-    .set({ currentVersionId: subVersion1.id })
-    .where(eq(challengeSubmissions.id, submission.id));
-
-  console.log(`✓ Submission Created: ID=${submission.id}, Version=1, Title="${subVersion1.title}"`);
+  console.log(`✓ Submission Created: ID=${submission.id}, Title="${submission.title}"`);
 
   // Test 4: Member Submits Revision (Version 2) Before Deadline
   console.log("\n[Test 4] Submitting revision (Version 2) before deadline...");
@@ -190,32 +181,35 @@ async function runPhase3Tests() {
     })
     .returning();
 
-  const [subVersion2] = await db
-    .insert(challengeSubmissionVersions)
-    .values({
-      submissionId: submission.id,
-      versionNumber: 2,
+  await db
+    .update(artworks)
+    .set({ currentVersionId: artVersion2.id })
+    .where(eq(artworks.id, artwork.id));
+
+  const [updatedSub] = await db
+    .update(challengeSubmissions)
+    .set({
+      artworkVersionId: artVersion2.id,
       title: "Moonweaver's Descent (Final Polish)",
       description: "Updated composition and rim lighting.",
       softwareUsed: "Clip Studio Paint, Photoshop",
-      artworkVersionId: artVersion2.id,
+      updatedAt: new Date(),
     })
+    .where(eq(challengeSubmissions.id, submission.id))
     .returning();
 
-  await db
-    .update(challengeSubmissions)
-    .set({ currentVersionId: subVersion2.id, updatedAt: new Date() })
-    .where(eq(challengeSubmissions.id, submission.id));
-
-  console.log(`✓ Revision Created: Version=2, Title="${subVersion2.title}"`);
+  console.log(`✓ Revision Created: Title="${updatedSub.title}"`);
 
   // Test 5: Verify Challenge Candidate Query Returns Latest Version (Anti-Bias Uniform Set)
   console.log("\n[Test 5] Querying challenge candidate submissions...");
   const candidates = await getChallengeCandidates(challenge.id);
-  console.log(`✓ Retrieved ${candidates.length} candidate(s). Top candidate version: ${candidates[0].versionNumber} ("${candidates[0].title}")`);
+  console.log(`✓ Retrieved ${candidates.length} candidate(s). Candidate title: "${candidates[0].title}"`);
 
-  if (candidates[0].versionNumber !== 2) {
-    throw new Error("Candidate query should display active current version (version 2)");
+  if (candidates[0].title !== "Moonweaver's Descent (Final Polish)") {
+    throw new Error("Candidate query should display updated current title");
+  }
+  if (candidates[0].artworkVersionId !== artVersion2.id) {
+    throw new Error("Candidate query should reference active version 2");
   }
 
   // Test 6: Authoritative Deadline Lock

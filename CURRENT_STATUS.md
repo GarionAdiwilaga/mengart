@@ -125,17 +125,44 @@
     - Verified in Scenario 8: email collision fail-closed defense (`Artist@Example.com` + `artist@example.com` throws `RAISE EXCEPTION`), email lowercase normalization, `uniq_users_lower_email` index, legacy hash-only invites revoked with surrogate codes, and `uniq_membership_invites_code` unique index.
   - Test Suite (`src/lib/__tests__/testPhase4AuthAndInvites.ts`):
     - Verified all 22 Gate D security and invariant test scenarios under Blueprint 2.2.2.
-- **Phase 5: Release Gate E (Submission & Portfolio Simplification):** PENDING REVIEW
+- **Phase 4: Release Gate D (Authentication, Invitations, Membership & Roles — Blueprint 2.2.2):** **COMPLETED & VERIFIED (Gate D Baseline: `46ccdca661de9240ff364ee63d9f5ccb5ca242bc`)**
+- **Phase 5: Release Gate E (Submission & Portfolio Simplification + Additive Spoiler):** **IMPLEMENTED & 100% VERIFIED / PENDING INDEPENDENT QA**
+  - Pre-Production Database Reset Policy:
+    - Disposable development/QA database rows; preserved migration/source history.
+    - Forward Migration 0012 (`drizzle/0012_gate_e_submission_portfolio_spoiler.sql`) asserts `challenge_submissions` row count = 0 and fails closed on unreset databases.
+    - Clean drop of `challenge_submission_versions` table without `CASCADE`.
+  - Canonical Direct Submission Schema:
+    - `challenge_submissions` directly owns canonical columns `(artwork_id, artwork_version_id, title, description, software_used)` with `ON DELETE RESTRICT` foreign keys.
+    - Unique index `uniq_challenge_submission_user` strictly blocks second submissions by the same member in the same challenge.
+  - Dual Upload Paths & Zero-Entry Invariant:
+    - Ordinary upload creates `artwork` + `version` + `portfolio_entry` (`isVisible = true`, captions null) atomically.
+    - Challenge upload creates `artwork` + `version` + `challenge_submission` with 0 `portfolio_entries` before challenge finish.
+  - Automatic Portfolio Promotion & Caption Resolver:
+    - All 6 FINISHED paths (`finalizeVotingRoundService` vote_only, `finalizeVotingRoundService` vote_and_jury community winner, `publishJuryChallengeResultsService`, `republishChallengeResultsService`, `showcase_only` deadline finish, single submission auto-winner) invoke `autoAddChallengeSubmissionsToPortfolioService` to auto-add portfolio entries with deterministic award captions.
+    - `RESULTS_REVOKED` reverts achievement captions to participant fallback text, and republishing restores award captions.
+    - `portfolio_entries.system_caption` stores canonical achievement captions; `portfolio_entries.custom_caption` stores artist overrides; `effectiveCaption` resolves `custom_caption ?? system_caption ?? null`.
+  - Safe Two-Phase Media Promotion, Slug Retry & Rollback Cleanup:
+    - `createArtworkWithUniqueSlug` implements PostgreSQL-safe `INSERT ... ON CONFLICT (slug) DO NOTHING RETURNING ...` bounded to 5 retry attempts.
+    - Initial submission and replacement stage media before transactions and execute `cleanupPromotedMedia` on transaction abort.
+    - Pre-deadline replacement preserves the existing artwork slug and records an audit log.
+  - Additive Artwork Spoiler Presentation:
+    - Added `artworks.is_spoiler` boolean (`NOT NULL DEFAULT false`) serialized across all 8 surfaces with zero impact on ACL, voting, or Stars.
+  - Verification Matrix:
+    - `scripts/verifyMigrations.ts`: 9/9 migration scenarios passed (including Scenario 9A dirty fail-closed and Scenario 9B clean 0011 -> 0012 upgrade).
+    - `src/lib/__tests__/testGateESubmissionAndPortfolio.ts`: 38/38 scenarios passed.
+    - `npm run test:all`: 15/15 test suites passed cleanly.
+    - `npm run lint`: 0 errors.
+    - `npm run build`: Next.js production build and worker bundle compiled cleanly.
 - **Phase 6: Release Gate F (Media Processing, Watermarking & Rate Limiting):** PENDING REVIEW
 - **Phase 7: Release Gate G (Community UX, Story Cards, A11y & Playwright E2E):** PENDING REVIEW
 - **Phase 8: Release Gate H (Disaster Recovery & Runtime Concurrency):** PENDING REVIEW
 
-## Addressed QA IDs in Phase 1, Phase 2, Phase 3 & Phase 4 (Gate A, B, C Closed; Gate D PENDING QA)
+## Addressed QA IDs in Phase 1, Phase 2, Phase 3, Phase 4 & Phase 5 (Gate A, B, C, D Closed; Gate E PENDING QA)
 - **QA-P0-001** (Database migration reproducibility & authoritative production backfill): RESOLVED & VERIFIED
 - **QA-P0-002** (Per-round ballot uniqueness & multi-round tiebreak support): RESOLVED & VERIFIED
-- **QA-P0-003** (Google-only authentication, invitation-gated onboarding & PENDING_INVITE separation): IMPLEMENTED / PENDING QA
-- **QA-P0-004** (Persistent membership states active | suspended | deleted, transition matrix & serialized RBAC): IMPLEMENTED / PENDING QA
-- **QA-P0-005** (Clean master-media authorization ACTIVE AND Gate A ACL, suspended owner 403): IMPLEMENTED / PENDING QA
+- **QA-P0-003** (Google-only authentication, invitation-gated onboarding & PENDING_INVITE separation): RESOLVED & VERIFIED
+- **QA-P0-004** (Persistent membership states active | suspended | deleted, transition matrix & serialized RBAC): RESOLVED & VERIFIED
+- **QA-P0-005** (Clean master-media authorization ACTIVE AND Gate A ACL, suspended owner 403): RESOLVED & VERIFIED
 - **QA-P0-006** (Persisted lifecycle state authority & scheduler materializer): RESOLVED & VERIFIED
 - **QA-P0-007** (Mode-aware state machine paths & button actions): RESOLVED & VERIFIED
 - **QA-P0-008** (Two-stage finalization via REVIEW without auto-publish bypass): RESOLVED & VERIFIED
@@ -143,16 +170,17 @@
 - **QA-P0-010** (Mixed mode Community Winner exclusion from jury awards): RESOLVED & VERIFIED
 - **QA-P0-011** (Persist only actual winners/awards; zero empty slots): RESOLVED & VERIFIED
 - **QA-P0-012** (No synthetic jury ranks / #null; single Community Winner highlight): RESOLVED & VERIFIED
+- **QA-P0-013** (Direct canonical submission schema, portfolio auto-add & safe slug collision retry): IMPLEMENTED / PENDING QA
 - **QA-P1-007** (Pause/resume deadline validation with round deadlines): RESOLVED & VERIFIED
 - **QA-P1-008** (RESULTS_REVOKED status, notice banner, snapshot audit & flow): RESOLVED & VERIFIED
 
 ## Current Branch
-`main` (Gate C Baseline: `94ab50040bf226039fc5c1a1f464faf9d95236a5`)
+`main` (Gate D Baseline: `46ccdca661de9240ff364ee63d9f5ccb5ca242bc`)
 
 ## Current Focus
-- Gate D final corrections applied against Blueprint 2.2.2. Ready for independent QA review.
+- Gate E implementation complete and 100% verified across all 38 test scenarios, migration verification suite, linter, and production build. Ready for independent QA review.
 
 ## Overall Status
-- **NO-GO** (Until Gates D–H pass independent QA. Stop after Gate D).
+- **NO-GO** (Until Gates E–H pass independent QA. Stop after Gate E).
 
 

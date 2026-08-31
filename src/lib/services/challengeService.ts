@@ -15,6 +15,7 @@ import {
 import { eq, and, sql, desc, asc, lte, isNull } from "drizzle-orm";
 import type { EffectiveChallengeStatus } from "@/lib/challenges";
 import { validateJuryPhaseReadinessService } from "./juryService";
+import { autoAddChallengeSubmissionsToPortfolioService } from "./portfolioService";
 
 export interface ServiceContext {
   userId: string | null;
@@ -47,6 +48,10 @@ export async function internalTransitionChallengeStatus(
     targetId: challengeId,
     reason,
   });
+
+  if (newStatus === "finished") {
+    await autoAddChallengeSubmissionsToPortfolioService(dbOrTx, challengeId);
+  }
 
   return challenge;
 }
@@ -759,6 +764,8 @@ export async function materializeScheduledTransitionsService(
             targetId: challenge.id,
             reason: "Pemenang komunitas tunggal ditetapkan secara otomatis karena hanya terdapat 1 karya submisi valid.",
           });
+
+          await autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id);
         } else if (challenge.awardMode === "jury_only") {
           const readiness = await validateJuryPhaseReadinessService(tx, challenge.id);
           if (readiness.ready) {
@@ -801,6 +808,8 @@ export async function materializeScheduledTransitionsService(
             targetId: challenge.id,
             reason: "Submisi ditutup, challenge showcase_only otomatis selesai.",
           });
+
+          await autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id);
         }
       } else {
         // subCount >= 2
@@ -839,6 +848,8 @@ export async function materializeScheduledTransitionsService(
             .update(challenges)
             .set({ status: targetStatus, updatedAt: now })
             .where(eq(challenges.id, challenge.id));
+
+          await autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id);
         } else {
           // vote_only or vote_and_jury with >= 2 submissions
           targetStatus = "submission_locked";

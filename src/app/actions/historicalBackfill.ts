@@ -7,7 +7,6 @@ import {
   challenges,
   challengeWinnerSlots,
   challengeSubmissions,
-  challengeSubmissionVersions,
   artworks,
   artworkVersions,
   challengeResults,
@@ -191,27 +190,14 @@ export async function importHistoricalChallengeAction(data: HistoricalChallengeI
           challengeId: challenge.id,
           userId: entry.userId,
           profileId: profile.id,
-          submissionStatus: "submitted",
-        })
-        .returning();
-
-      // Create Challenge Submission Version
-      const [subVersion] = await tx
-        .insert(challengeSubmissionVersions)
-        .values({
-          submissionId: sub.id,
-          versionNumber: 1,
+          artworkId: art.id,
+          artworkVersionId: artVersion.id,
           title: entry.artworkTitle.trim(),
           description: entry.artworkDescription?.trim() || null,
           softwareUsed: entry.softwareUsed?.trim() || null,
-          artworkVersionId: artVersion.id,
+          submissionStatus: "submitted",
         })
         .returning();
-
-      await tx
-        .update(challengeSubmissions)
-        .set({ currentVersionId: subVersion.id })
-        .where(eq(challengeSubmissions.id, sub.id));
 
       // Determine Winner Slot ID
       let assignedWinnerSlotId: string | null = null;

@@ -9,7 +9,6 @@ import {
   profiles,
   artworks,
   challengeSubmissions,
-  challengeSubmissionVersions,
   artworkVersions,
   challengeVotingRounds,
   challengeVotingRoundCandidates,
@@ -158,24 +157,14 @@ async function runTests() {
           challengeId: chId,
           userId: artistUser.id,
           profileId: artistProf.id,
+          artworkId: art.id,
+          artworkVersionId: artVer.id,
+          title,
+          description: "Test submission description",
+          softwareUsed: "Photoshop",
           submissionStatus: "submitted",
         })
         .returning();
-
-      const [subVer] = await db
-        .insert(challengeSubmissionVersions)
-        .values({
-          submissionId: sub.id,
-          versionNumber: 1,
-          artworkVersionId: artVer.id,
-          title,
-        })
-        .returning();
-
-      await db
-        .update(challengeSubmissions)
-        .set({ currentVersionId: subVer.id })
-        .where(eq(challengeSubmissions.id, sub.id));
 
       return sub;
     }

@@ -341,6 +341,30 @@
 9. **Active-Only Master Key Metadata Exposure:** `src/app/api/artworks/route.ts` exposes `masterStorageKey` strictly to ACTIVE artwork owners or ACTIVE platform admins, returning `null` for suspended/deleted admins and owners.
 10. **Strict Moderation Enforcement & Target Compatibility Invariants:** `resolveReportService` strictly rejects any enforcement action (`suspend_user` or `takedown_artwork`) on dismissed reports (`resolution === 'dismissed'`), ensuring complete transaction rollback with report remaining pending and target unchanged. Enforces strict fail-closed `targetType` compatibility (`suspend_user` permitted only on `report.targetType === 'user'`, `takedown_artwork` permitted only on `report.targetType === 'artwork'`). The UI (`ReportResolutionModal.tsx`) clears `enforceAction` on dismissal and restricts action buttons to their compatible target types.
 **Business Rule:** All status mutations must flow through canonical domain services with in-transaction actor verification. Dismissed reports can never apply enforcement actions. Enforcement actions must strictly match report target types. Invitations resolve deterministically. Legacy hash-only tokens are revoked fail-closed with deterministic surrogate codes. Master keys are never disclosed to non-ACTIVE staff.
-**Reason:** Addressed independent QA review findings for Gate D / Blueprint 2.2.2 moderation closure corrections.
+## 2026-08-31
+
+### Pre-Production Database Reset Policy
+**Decision:** Until Mengart receives real authoritative production/user data, existing development/QA database rows are disposable while migration and source history are strictly preserved. Migrations 0000–0011 remain immutable in version control. Forward migration 0012 introduces canonical Gate E schema conversions and asserts that disposable development/QA `challenge_submissions` rows are 0 before conversion, failing closed with clear reset instructions if dirty fixtures exist. Destructive fixture cleanup is kept out of migration SQL. After production launch, this pre-production reset policy expires and all future migrations must preserve production data.
+**Business Rule:** Non-production development/QA databases can be dropped and rebuilt from migrations (`npm run db:reset && npm run db:migrate`) and freshly re-seeded. Migration SQL must remain deterministic and never fabricate fake relationships.
+**Reason:** Clarified with product ownership that all existing database rows prior to Gate E were disposable test fixtures; eliminated unnecessary legacy test data reconciliation complexity in migration 0012.
+
+### Gate E: Submission & Portfolio Architecture Simplification
+**Decision:** Simplified challenge submissions to point directly to canonical artwork versions, eliminating `challenge_submission_versions` and the `current_version_id` indirection:
+1. **Canonical Submissions Schema:** `challenge_submissions` directly owns `(artwork_id, artwork_version_id, title, description, software_used)` with `ON DELETE RESTRICT` on `artworks.id` and `artwork_versions.id` to guarantee immutable contest history. Unique index `uniq_challenge_submission_user` strictly enforces one active submission per member per challenge.
+2. **Dropped Challenge Submission Versions:** Dropped `challenge_submission_versions` table without cascade.
+3. **Dual Upload Paths:**
+   - *Ordinary Portfolio Upload:* Atomically creates `artworks` + `artwork_versions` + `portfolio_entries` (`isVisible = true`, `systemCaption = null`, `customCaption = null`).
+   - *Direct Challenge Upload:* Atomically creates `artworks` + `artwork_versions` + `challenge_submissions` with 0 `portfolio_entries` before finish.
+4. **Deterministic Caption Resolver & Automatic Portfolio Promotion:**
+   - All 6 FINISHED paths (`finalizeVotingRoundService` vote_only, `finalizeVotingRoundService` vote_and_jury community winner, `publishJuryChallengeResultsService`, `republishChallengeResultsService`, `showcase_only` deadline finish, and single valid submission auto-finish) trigger `autoAddChallengeSubmissionsToPortfolioService` to auto-add entries with award captions (`Juara Favorit Komunitas — <Title>`, `Penghargaan Juri: <Category> — <Title>`, or `Peserta Challenge — <Title>`).
+   - `RESULTS_REVOKED` reverts achievement captions to participant fallback text, and republishing restores award captions.
+   - `effectiveCaption` resolves `custom_caption ?? system_caption ?? null`.
+5. **PostgreSQL-Safe Slug Retry & Two-Phase Media Lifecycle:**
+   - `createArtworkWithUniqueSlug` uses `INSERT ... ON CONFLICT (slug) DO NOTHING RETURNING ...` with a bounded 5-attempt retry loop to avoid aborted PostgreSQL transaction states.
+   - Initial submission and replacement stage/promote media before transactions and execute `cleanupPromotedMedia` on transaction failure.
+   - Pre-deadline replacement swaps `artwork_version_id` while preserving `artwork.slug` and recording an audit log.
+6. **Additive Artwork Spoiler Flag:** Added `artworks.is_spoiler` boolean (`NOT NULL DEFAULT false`) serialized across all 8 surfaces with zero impact on ACL, voting, or Stars.
+**Business Rule:** Deleting an artwork cannot delete a challenge submission (`ON DELETE RESTRICT`). Challenge submissions are hidden from portfolios until finish, then auto-added. Artists can toggle visibility and customize captions. Artwork slugs are immutable upon version replacement.
+**Reason:** Fulfills authoritative Blueprint 2.2.2 requirements and QA directives for Gate E.
 
 

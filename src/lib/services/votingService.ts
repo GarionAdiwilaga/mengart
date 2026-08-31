@@ -3,7 +3,7 @@ import { db as defaultDb } from "@/db";
 import {
   challenges,
   challengeSubmissions,
-  challengeSubmissionVersions,
+  artworks,
   artworkVersions,
   profiles,
   challengeVotingRounds,
@@ -50,6 +50,9 @@ export interface CandidateRoundData {
   artistName: string;
   artistSlug: string;
   artistAvatar: string | null;
+  artworkId: string;
+  artworkVersionId: string;
+  isSpoiler: boolean;
   versionNumber: number;
   title: string;
   description: string | null;
@@ -274,10 +277,13 @@ export async function getAuthoritativeVotingRoundData(
         artistName: profiles.displayName,
         artistSlug: profiles.slug,
         artistAvatar: profiles.avatarUrl,
-        versionNumber: challengeSubmissionVersions.versionNumber,
-        title: challengeSubmissionVersions.title,
-        description: challengeSubmissionVersions.description,
-        softwareUsed: challengeSubmissionVersions.softwareUsed,
+        artworkId: challengeSubmissions.artworkId,
+        artworkVersionId: challengeSubmissions.artworkVersionId,
+        isSpoiler: artworks.isSpoiler,
+        versionNumber: sql<number>`1`,
+        title: challengeSubmissions.title,
+        description: challengeSubmissions.description,
+        softwareUsed: challengeSubmissions.softwareUsed,
         thumbnailStorageKey: artworkVersions.thumbnailStorageKey,
         publicStorageKey: artworkVersions.publicStorageKey,
         width: artworkVersions.width,
@@ -285,14 +291,11 @@ export async function getAuthoritativeVotingRoundData(
         mediaType: artworkVersions.mediaType,
       })
       .from(challengeSubmissions)
+      .innerJoin(artworks, eq(artworks.id, challengeSubmissions.artworkId))
       .innerJoin(profiles, eq(profiles.id, challengeSubmissions.profileId))
       .innerJoin(
-        challengeSubmissionVersions,
-        eq(challengeSubmissionVersions.id, challengeSubmissions.currentVersionId)
-      )
-      .innerJoin(
         artworkVersions,
-        eq(artworkVersions.id, challengeSubmissionVersions.artworkVersionId)
+        eq(artworkVersions.id, challengeSubmissions.artworkVersionId)
       )
       .where(inArray(challengeSubmissions.id, candidateIds));
   }

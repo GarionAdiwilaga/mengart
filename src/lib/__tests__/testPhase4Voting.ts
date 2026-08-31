@@ -7,7 +7,6 @@ import {
   challenges,
   challengeWinnerSlots,
   challengeSubmissions,
-  challengeSubmissionVersions,
   challengeVotingRounds,
   challengeVotingRoundCandidates,
   challengeBallots,
@@ -157,25 +156,13 @@ async function runPhase4Tests() {
         challengeId: challenge.id,
         userId: a.user.id,
         profileId: a.profile.id,
+        artworkId: art.id,
+        artworkVersionId: ver.id,
+        title: `Sun Guardian #${i + 1}`,
+        description: `Visual illustration by ${a.profile.displayName}`,
         submissionStatus: "submitted",
       })
       .returning();
-
-    const [subVer] = await db
-      .insert(challengeSubmissionVersions)
-      .values({
-        submissionId: sub.id,
-        versionNumber: 1,
-        title: `Sun Guardian #${i + 1}`,
-        description: `Visual illustration by ${a.profile.displayName}`,
-        artworkVersionId: ver.id,
-      })
-      .returning();
-
-    await db
-      .update(challengeSubmissions)
-      .set({ currentVersionId: subVer.id })
-      .where(eq(challengeSubmissions.id, sub.id));
 
     submissionIds.push(sub.id);
   }

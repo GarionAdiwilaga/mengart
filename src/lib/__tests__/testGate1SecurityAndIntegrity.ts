@@ -3,7 +3,6 @@ import {
   challenges,
   challengeWinnerSlots,
   challengeSubmissions,
-  challengeSubmissionVersions,
   challengeJuryAssignments,
   challengeJuryScores,
   challengeResults,
@@ -137,23 +136,37 @@ async function runSecurityAndIntegrityTests() {
     .returning();
 
   // Create submission by regularMember
+  const [art1] = await db.insert(artworks).values({ userId: regularMember.id, title: `Member Art ${suffix}`, slug: `member-art-${suffix}`, mediaType: "image", publicationStatus: "published" }).returning();
+  const [ver1] = await db.insert(artworkVersions).values({ artworkId: art1.id, versionNumber: 1, mediaType: "image", masterStorageKey: `k-art1-${suffix}`, mimeType: "image/png", fileSizeBytes: 100, checksumSha256: `c-art1-${suffix}`, processingStatus: "ready" }).returning();
+  await db.update(artworks).set({ currentVersionId: ver1.id }).where(eq(artworks.id, art1.id));
+
   const [sub1] = await db
     .insert(challengeSubmissions)
     .values({
       challengeId: testChallenge.id,
       userId: regularMember.id,
       profileId: memberProfile.id,
+      artworkId: art1.id,
+      artworkVersionId: ver1.id,
+      title: `Member Art ${suffix}`,
       submissionStatus: "submitted",
     })
     .returning();
 
   // Create submission by juryMember
+  const [artJury] = await db.insert(artworks).values({ userId: juryMember.id, title: `Jury Art ${suffix}`, slug: `jury-art-${suffix}`, mediaType: "image", publicationStatus: "published" }).returning();
+  const [verJury] = await db.insert(artworkVersions).values({ artworkId: artJury.id, versionNumber: 1, mediaType: "image", masterStorageKey: `k-artjury-${suffix}`, mimeType: "image/png", fileSizeBytes: 100, checksumSha256: `c-artjury-${suffix}`, processingStatus: "ready" }).returning();
+  await db.update(artworks).set({ currentVersionId: verJury.id }).where(eq(artworks.id, artJury.id));
+
   const [jurySub] = await db
     .insert(challengeSubmissions)
     .values({
       challengeId: testChallenge.id,
       userId: juryMember.id,
       profileId: juryProfile.id,
+      artworkId: artJury.id,
+      artworkVersionId: verJury.id,
+      title: `Jury Art ${suffix}`,
       submissionStatus: "submitted",
     })
     .returning();
@@ -200,12 +213,19 @@ async function runSecurityAndIntegrityTests() {
     })
     .returning();
 
+  const [artForeign] = await db.insert(artworks).values({ userId: owner.id, title: `Foreign Art ${suffix}`, slug: `foreign-art-${suffix}`, mediaType: "image", publicationStatus: "published" }).returning();
+  const [verForeign] = await db.insert(artworkVersions).values({ artworkId: artForeign.id, versionNumber: 1, mediaType: "image", masterStorageKey: `k-artforeign-${suffix}`, mimeType: "image/png", fileSizeBytes: 100, checksumSha256: `c-artforeign-${suffix}`, processingStatus: "ready" }).returning();
+  await db.update(artworks).set({ currentVersionId: verForeign.id }).where(eq(artworks.id, artForeign.id));
+
   const [foreignSub] = await db
     .insert(challengeSubmissions)
     .values({
       challengeId: foreignChallenge.id,
       userId: owner.id,
       profileId: ownerProfile.id,
+      artworkId: artForeign.id,
+      artworkVersionId: verForeign.id,
+      title: `Foreign Art ${suffix}`,
       submissionStatus: "submitted",
     })
     .returning();

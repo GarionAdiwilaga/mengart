@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { artworks, artworkVersions, profiles, users } from "@/db/schema";
+import { artworks, artworkVersions, profiles, users, portfolioEntries } from "@/db/schema";
 import { eq, and, desc, sql, ilike, isNull } from "drizzle-orm";
 import { auth } from "@/auth";
 
@@ -33,6 +33,7 @@ export async function handleGetArtworks(
     eq(artworks.publicationStatus, "published"),
     isNull(artworks.deletedAt),
     eq(users.membershipStatus, "active"),
+    eq(portfolioEntries.isVisible, true),
     isActiveMember
       ? sql`(${artworks.audience} IN ('public', 'members_only'))`
       : eq(artworks.audience, "public"),
@@ -60,7 +61,11 @@ export async function handleGetArtworks(
       mediaType: artworks.mediaType,
       audience: artworks.audience,
       critiqueMode: artworks.critiqueMode,
+      isSpoiler: artworks.isSpoiler,
       createdAt: artworks.createdAt,
+      systemCaption: portfolioEntries.systemCaption,
+      customCaption: portfolioEntries.customCaption,
+      effectiveCaption: sql<string | null>`COALESCE(${portfolioEntries.customCaption}, ${portfolioEntries.systemCaption})`,
       artistName: profiles.displayName,
       artistSlug: profiles.slug,
       artistAvatar: profiles.avatarUrl,
@@ -74,6 +79,13 @@ export async function handleGetArtworks(
     .from(artworks)
     .innerJoin(profiles, eq(profiles.userId, artworks.userId))
     .innerJoin(users, eq(users.id, artworks.userId))
+    .innerJoin(
+      portfolioEntries,
+      and(
+        eq(portfolioEntries.artworkId, artworks.id),
+        eq(portfolioEntries.profileId, profiles.id)
+      )
+    )
     .leftJoin(artworkVersions, eq(artworkVersions.id, artworks.currentVersionId))
     .where(and(...conditions))
     .orderBy(desc(artworks.createdAt))

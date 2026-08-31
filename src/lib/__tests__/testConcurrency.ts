@@ -12,6 +12,8 @@ import {
   challengeResults,
   users,
   profiles,
+  artworks,
+  artworkVersions,
 } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import {
@@ -101,15 +103,26 @@ async function runRealConcurrencyTests() {
     })
     .returning();
 
+  const [art1] = await db.insert(artworks).values({ userId: artist1.id, title: `Art 1 ${suffix}`, slug: `art-1-${suffix}`, mediaType: "image", publicationStatus: "published" }).returning();
+  const [ver1] = await db.insert(artworkVersions).values({ artworkId: art1.id, versionNumber: 1, mediaType: "image", masterStorageKey: `k1-${suffix}`, mimeType: "image/png", fileSizeBytes: 100, checksumSha256: `c1-${suffix}`, processingStatus: "ready" }).returning();
+  await db.update(artworks).set({ currentVersionId: ver1.id }).where(eq(artworks.id, art1.id));
+
   const [sub1] = await db
     .insert(challengeSubmissions)
     .values({
       challengeId: challenge.id,
       userId: artist1.id,
       profileId: prof1.id,
+      artworkId: art1.id,
+      artworkVersionId: ver1.id,
+      title: `Art 1 ${suffix}`,
       submissionStatus: "submitted",
     })
     .returning();
+
+  const [art2] = await db.insert(artworks).values({ userId: artist2.id, title: `Art 2 ${suffix}`, slug: `art-2-${suffix}`, mediaType: "image", publicationStatus: "published" }).returning();
+  const [ver2] = await db.insert(artworkVersions).values({ artworkId: art2.id, versionNumber: 1, mediaType: "image", masterStorageKey: `k2-${suffix}`, mimeType: "image/png", fileSizeBytes: 100, checksumSha256: `c2-${suffix}`, processingStatus: "ready" }).returning();
+  await db.update(artworks).set({ currentVersionId: ver2.id }).where(eq(artworks.id, art2.id));
 
   const [sub2] = await db
     .insert(challengeSubmissions)
@@ -117,6 +130,9 @@ async function runRealConcurrencyTests() {
       challengeId: challenge.id,
       userId: artist2.id,
       profileId: prof2.id,
+      artworkId: art2.id,
+      artworkVersionId: ver2.id,
+      title: `Art 2 ${suffix}`,
       submissionStatus: "submitted",
     })
     .returning();

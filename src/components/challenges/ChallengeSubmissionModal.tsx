@@ -48,6 +48,7 @@ export function ChallengeSubmissionModal({
   const [description, setDescription] = useState(initialDescription);
   const [softwareUsed, setSoftwareUsed] = useState(initialSoftware);
 
+  const [isSpoiler, setIsSpoiler] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -80,6 +81,7 @@ export function ChallengeSubmissionModal({
     const formData = new FormData();
     formData.append("challengeId", challengeId);
     formData.append("title", title.trim());
+    formData.append("isSpoiler", isSpoiler ? "true" : "false");
     if (description) formData.append("description", description.trim());
     if (softwareUsed) formData.append("softwareUsed", softwareUsed.trim());
 
@@ -305,6 +307,19 @@ export function ChallengeSubmissionModal({
                     placeholder="Jelaskan konsep, proses pembuatan, atau latar belakang karya Anda..."
                     className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 text-xs font-sans resize-none"
                   />
+                </div>
+
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="checkbox"
+                    id="challengeIsSpoiler"
+                    checked={isSpoiler}
+                    onChange={(e) => setIsSpoiler(e.target.checked)}
+                    className="rounded border-white/20 bg-white/5 text-amber-500 focus:ring-amber-500/50 h-4 w-4"
+                  />
+                  <label htmlFor="challengeIsSpoiler" className="text-xs font-sans text-zinc-300 select-none cursor-pointer">
+                    Tandai karya ini sebagai <span className="text-amber-400 font-medium">Spoiler</span> (konten sensitif/plot cerita)
+                  </label>
                 </div>
 
                 {/* Submit Action */}

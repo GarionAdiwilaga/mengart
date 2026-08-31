@@ -12,6 +12,7 @@ import {
   inviteRedemptions,
   artworks,
   artworkVersions,
+  portfolioEntries,
   auditLogs,
   reports,
 } from "@/db/schema";
@@ -136,7 +137,8 @@ async function runPhase4AuthAndInvitesTests() {
       .returning();
 
     // Insert mixed-case generated code and lowercase custom code with identical letters
-    const mixedCaseCode = `AbCdEf${Date.now().toString().slice(-2)}`;
+    const randPart = Math.random().toString(36).substring(2, 6);
+    const mixedCaseCode = `AbCd${randPart}`;
     const lowerCaseCode = mixedCaseCode.toLowerCase();
 
     const [mixedInvite] = await db
@@ -172,7 +174,7 @@ async function runPhase4AuthAndInvitesTests() {
     }
 
     // 3. Uppercase query where only lowercase exists should resolve via lowercase fallback
-    const allUpperQuery = `UPPER-${Date.now().toString().slice(-4)}`;
+    const allUpperQuery = `UPPER-${Math.random().toString(36).substring(2, 8)}`;
     const [upperCustomInvite] = await db
       .insert(membershipInvites)
       .values({
@@ -1439,11 +1441,11 @@ async function runPhase4AuthAndInvitesTests() {
         membershipStatus: "active",
       })
       .returning();
-    await db.insert(profiles).values({
+    const [artistProfile] = await db.insert(profiles).values({
       userId: activeArtist.id,
       displayName: "Active Master Artist",
       slug: `active-artist-${Date.now()}`,
-    });
+    }).returning();
 
     const [artistArtwork] = await db
       .insert(artworks)
@@ -1470,6 +1472,11 @@ async function runPhase4AuthAndInvitesTests() {
     }).returning();
 
     await db.update(artworks).set({ currentVersionId: createdVersion.id }).where(eq(artworks.id, artistArtwork.id));
+    await db.insert(portfolioEntries).values({
+      profileId: artistProfile.id,
+      artworkId: artistArtwork.id,
+      isVisible: true,
+    });
 
     // 1. Direct clean-master route test: Suspended owner receives 403
     const isMasterAccessible = await canAccessMasterMedia(

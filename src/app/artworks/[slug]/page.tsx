@@ -2,6 +2,7 @@ import { db } from "@/db";
 import {
   artworks,
   artworkVersions,
+  portfolioEntries,
   profiles,
   tags,
   artworkTags,
@@ -48,6 +49,7 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
       mediaType: artworks.mediaType,
       audience: artworks.audience,
       critiqueMode: artworks.critiqueMode,
+      isSpoiler: artworks.isSpoiler,
       createdAt: artworks.createdAt,
       userId: artworks.userId,
       artistName: profiles.displayName,
@@ -64,14 +66,31 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
       processingStatus: artworkVersions.processingStatus,
       publicationStatus: artworks.publicationStatus,
       deletedAt: artworks.deletedAt,
+      isPortfolioVisible: portfolioEntries.isVisible,
     })
     .from(artworks)
     .innerJoin(profiles, eq(profiles.userId, artworks.userId))
+    .leftJoin(
+      portfolioEntries,
+      and(
+        eq(portfolioEntries.artworkId, artworks.id),
+        eq(portfolioEntries.profileId, profiles.id)
+      )
+    )
     .leftJoin(artworkVersions, eq(artworkVersions.id, artworks.currentVersionId))
     .where(eq(artworks.slug, slug))
     .limit(1);
 
   if (!artwork) {
+    notFound();
+  }
+
+  const isOwner = session?.user?.id === artwork.userId;
+  const isStaff = session?.user?.role === "admin" || session?.user?.role === "moderator";
+  const hasVisiblePortfolio = artwork.isPortfolioVisible === true;
+
+  // Unfinished challenge backing artworks lacking visible portfolio entries are restricted to owner or active staff
+  if (!hasVisiblePortfolio && !isOwner && !isStaff) {
     notFound();
   }
 

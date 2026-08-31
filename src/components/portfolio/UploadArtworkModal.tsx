@@ -15,6 +15,7 @@ export function UploadArtworkModal() {
   const [softwareUsed, setSoftwareUsed] = useState("Clip Studio Paint");
   const [audience, setAudience] = useState<"public" | "members_only" | "unlisted" | "private">("public");
   const [critiqueMode, setCritiqueMode] = useState<"showcase_only" | "open_for_critique">("showcase_only");
+  const [isSpoiler, setIsSpoiler] = useState(false);
   const [tags, setTags] = useState("");
 
   const [isUploading, setIsUploading] = useState(false);
@@ -39,6 +40,7 @@ export function UploadArtworkModal() {
     setFilePreviewUrl(null);
     setTitle("");
     setCaption("");
+    setIsSpoiler(false);
     setTags("");
     setError(null);
   };
@@ -63,6 +65,7 @@ export function UploadArtworkModal() {
       formData.append("softwareUsed", softwareUsed);
       formData.append("audience", audience);
       formData.append("critiqueMode", critiqueMode);
+      formData.append("isSpoiler", isSpoiler ? "true" : "false");
       formData.append("tags", tags);
 
       await createArtworkUploadAction(formData);
@@ -275,6 +278,20 @@ export function UploadArtworkModal() {
                   placeholder="fantasy, cyber, oc, mecha, anime"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-zinc-600 focus:outline-none text-xs font-sans"
                 />
+              </div>
+
+              {/* Spoiler */}
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="portfolioIsSpoiler"
+                  checked={isSpoiler}
+                  onChange={(e) => setIsSpoiler(e.target.checked)}
+                  className="rounded border-white/20 bg-white/5 text-amber-500 focus:ring-amber-500/50 h-4 w-4"
+                />
+                <label htmlFor="portfolioIsSpoiler" className="text-xs font-sans text-zinc-300 select-none cursor-pointer">
+                  Tandai karya ini sebagai <span className="text-amber-400 font-medium">Spoiler</span> (konten sensitif/plot)
+                </label>
               </div>
 
               {/* Actions */}

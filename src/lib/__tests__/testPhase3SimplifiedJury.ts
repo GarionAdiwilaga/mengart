@@ -9,7 +9,6 @@ import {
   profiles,
   artworks,
   challengeSubmissions,
-  challengeSubmissionVersions,
   artworkVersions,
   challengeVotingRounds,
   challengeVotingRoundCandidates,
@@ -135,19 +134,14 @@ async function runPhase3SimplifiedJuryTests() {
         challengeId,
         userId: user.id,
         profileId: profile.id,
-        submissionStatus: "submitted",
-      }).returning();
-
-      const [subVer] = await db.insert(challengeSubmissionVersions).values({
-        submissionId: sub.id,
+        artworkId: art.id,
         artworkVersionId: artVer.id,
-        versionNumber: 1,
         title,
         description: "Submission Description",
         softwareUsed: "Blender, Photoshop",
+        submissionStatus: "submitted",
       }).returning();
 
-      await db.update(challengeSubmissions).set({ currentVersionId: subVer.id }).where(eq(challengeSubmissions.id, sub.id));
       return sub;
     }
 

@@ -5,12 +5,22 @@ import {
   challengeWinnerSlots,
   challengeJuryAssignments,
   challengeSubmissions,
-  challengeSubmissionVersions,
   artworkVersions,
   artworks,
   profiles,
 } from "@/db/schema";
 import { eq, and, desc, asc } from "drizzle-orm";
+import crypto from "crypto";
+
+export function slugify(text: string): string {
+  const base = text
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/[\s_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return base || "karya";
+}
 
 export type EffectiveChallengeStatus =
   | "draft"
@@ -52,22 +62,22 @@ export function isChallengePhaseDeadlinePassed(
 ): boolean {
   const now = new Date();
   if (phase === "submission" && challenge.submissionDeadline) {
-    return now >= new Date(challenge.submissionDeadline);
+    return now > new Date(challenge.submissionDeadline);
   }
   if (phase === "voting" && challenge.votingDeadline) {
-    return now >= new Date(challenge.votingDeadline);
+    return now > new Date(challenge.votingDeadline);
   }
   return false;
 }
 
 /**
- * Fetch challenge by slug with kit files and winner slots
+ * Fetch full Challenge entity including associated relation records
  */
-export async function getChallengeBySlug(slug: string) {
+export async function getChallengeWithRelations(challengeId: string) {
   const [challenge] = await db
     .select()
     .from(challenges)
-    .where(eq(challenges.slug, slug))
+    .where(eq(challenges.id, challengeId))
     .limit(1);
 
   if (!challenge) return null;
@@ -75,13 +85,13 @@ export async function getChallengeBySlug(slug: string) {
   const kitFiles = await db
     .select()
     .from(challengeKitFiles)
-    .where(eq(challengeKitFiles.challengeId, challenge.id))
-    .orderBy(asc(challengeKitFiles.displayOrder));
+    .where(eq(challengeKitFiles.challengeId, challengeId))
+    .orderBy(asc(challengeKitFiles.createdAt));
 
   const winnerSlots = await db
     .select()
     .from(challengeWinnerSlots)
-    .where(eq(challengeWinnerSlots.challengeId, challenge.id))
+    .where(eq(challengeWinnerSlots.challengeId, challengeId))
     .orderBy(asc(challengeWinnerSlots.displayOrder));
 
   const juryAssignments = await db
@@ -89,13 +99,13 @@ export async function getChallengeBySlug(slug: string) {
       id: challengeJuryAssignments.id,
       userId: challengeJuryAssignments.userId,
       isRecorder: challengeJuryAssignments.isRecorder,
+      assignedAt: challengeJuryAssignments.assignedAt,
       displayName: profiles.displayName,
-      slug: profiles.slug,
       avatarUrl: profiles.avatarUrl,
     })
     .from(challengeJuryAssignments)
-    .innerJoin(profiles, eq(profiles.id, challengeJuryAssignments.profileId))
-    .where(eq(challengeJuryAssignments.challengeId, challenge.id));
+    .innerJoin(profiles, eq(profiles.userId, challengeJuryAssignments.userId))
+    .where(eq(challengeJuryAssignments.challengeId, challengeId));
 
   const effectiveStatus = getEffectiveChallengeStatus(challenge);
 
@@ -109,12 +119,48 @@ export async function getChallengeBySlug(slug: string) {
 }
 
 /**
+ * Fetch full Challenge entity by its URL slug
+ */
+export async function getChallengeBySlug(slug: string) {
+  const [challenge] = await db
+    .select()
+    .from(challenges)
+    .where(eq(challenges.slug, slug))
+    .limit(1);
+
+  if (!challenge) return null;
+
+  return getChallengeWithRelations(challenge.id);
+}
+
+/**
  * Fetch user's active submission for a challenge
  */
 export async function getUserChallengeSubmission(challengeId: string, userId: string) {
   const [submission] = await db
-    .select()
+    .select({
+      id: challengeSubmissions.id,
+      challengeId: challengeSubmissions.challengeId,
+      userId: challengeSubmissions.userId,
+      profileId: challengeSubmissions.profileId,
+      artworkId: challengeSubmissions.artworkId,
+      artworkVersionId: challengeSubmissions.artworkVersionId,
+      title: challengeSubmissions.title,
+      description: challengeSubmissions.description,
+      softwareUsed: challengeSubmissions.softwareUsed,
+      submissionStatus: challengeSubmissions.submissionStatus,
+      createdAt: challengeSubmissions.createdAt,
+      updatedAt: challengeSubmissions.updatedAt,
+      isSpoiler: artworks.isSpoiler,
+      publicStorageKey: artworkVersions.publicStorageKey,
+      thumbnailStorageKey: artworkVersions.thumbnailStorageKey,
+      width: artworkVersions.width,
+      height: artworkVersions.height,
+      mediaType: artworkVersions.mediaType,
+    })
     .from(challengeSubmissions)
+    .innerJoin(artworks, eq(artworks.id, challengeSubmissions.artworkId))
+    .innerJoin(artworkVersions, eq(artworkVersions.id, challengeSubmissions.artworkVersionId))
     .where(
       and(
         eq(challengeSubmissions.challengeId, challengeId),
@@ -123,31 +169,24 @@ export async function getUserChallengeSubmission(challengeId: string, userId: st
     )
     .limit(1);
 
-  if (!submission || !submission.currentVersionId) return null;
-
-  const [version] = await db
-    .select({
-      id: challengeSubmissionVersions.id,
-      versionNumber: challengeSubmissionVersions.versionNumber,
-      title: challengeSubmissionVersions.title,
-      description: challengeSubmissionVersions.description,
-      softwareUsed: challengeSubmissionVersions.softwareUsed,
-      submittedAt: challengeSubmissionVersions.submittedAt,
-      artworkVersionId: challengeSubmissionVersions.artworkVersionId,
-      publicStorageKey: artworkVersions.publicStorageKey,
-      thumbnailStorageKey: artworkVersions.thumbnailStorageKey,
-      width: artworkVersions.width,
-      height: artworkVersions.height,
-      mediaType: artworkVersions.mediaType,
-    })
-    .from(challengeSubmissionVersions)
-    .innerJoin(artworkVersions, eq(artworkVersions.id, challengeSubmissionVersions.artworkVersionId))
-    .where(eq(challengeSubmissionVersions.id, submission.currentVersionId))
-    .limit(1);
+  if (!submission) return null;
 
   return {
     ...submission,
-    currentVersion: version,
+    currentVersion: {
+      id: submission.artworkVersionId,
+      versionNumber: 1,
+      title: submission.title,
+      description: submission.description,
+      softwareUsed: submission.softwareUsed,
+      submittedAt: submission.createdAt,
+      artworkVersionId: submission.artworkVersionId,
+      publicStorageKey: submission.publicStorageKey,
+      thumbnailStorageKey: submission.thumbnailStorageKey,
+      width: submission.width,
+      height: submission.height,
+      mediaType: submission.mediaType,
+    },
   };
 }
 
@@ -161,14 +200,15 @@ export async function getChallengeCandidates(challengeId: string) {
       userId: challengeSubmissions.userId,
       submissionStatus: challengeSubmissions.submissionStatus,
       createdAt: challengeSubmissions.createdAt,
+      title: challengeSubmissions.title,
+      description: challengeSubmissions.description,
+      softwareUsed: challengeSubmissions.softwareUsed,
+      artworkId: challengeSubmissions.artworkId,
+      artworkVersionId: challengeSubmissions.artworkVersionId,
+      isSpoiler: artworks.isSpoiler,
       artistName: profiles.displayName,
       artistSlug: profiles.slug,
       artistAvatar: profiles.avatarUrl,
-      versionId: challengeSubmissionVersions.id,
-      versionNumber: challengeSubmissionVersions.versionNumber,
-      title: challengeSubmissionVersions.title,
-      description: challengeSubmissionVersions.description,
-      softwareUsed: challengeSubmissionVersions.softwareUsed,
       thumbnailStorageKey: artworkVersions.thumbnailStorageKey,
       publicStorageKey: artworkVersions.publicStorageKey,
       width: artworkVersions.width,
@@ -176,12 +216,9 @@ export async function getChallengeCandidates(challengeId: string) {
       mediaType: artworkVersions.mediaType,
     })
     .from(challengeSubmissions)
+    .innerJoin(artworks, eq(artworks.id, challengeSubmissions.artworkId))
     .innerJoin(profiles, eq(profiles.id, challengeSubmissions.profileId))
-    .innerJoin(
-      challengeSubmissionVersions,
-      eq(challengeSubmissionVersions.id, challengeSubmissions.currentVersionId)
-    )
-    .innerJoin(artworkVersions, eq(artworkVersions.id, challengeSubmissionVersions.artworkVersionId))
+    .innerJoin(artworkVersions, eq(artworkVersions.id, challengeSubmissions.artworkVersionId))
     .where(
       and(
         eq(challengeSubmissions.challengeId, challengeId),

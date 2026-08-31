@@ -1,44 +1,16 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { requireAuth } from "@/lib/rbac";
 import { db } from "@/db";
-import {
-  challenges,
-  challengeSubmissions,
-  challengeSubmissionVersions,
-  challengeWinnerSlots,
-  challengeKitFiles,
-  challengeVotingRounds,
-  challengeVotingRoundCandidates,
-  profiles,
-  artworks,
-  artworkVersions,
-  portfolioEntries,
-  auditLogs,
-} from "@/db/schema";
-import { eq, and, desc } from "drizzle-orm";
-import { revalidatePath } from "next/cache";
-import { z } from "zod";
-import crypto from "crypto";
-import path from "path";
-import fs from "fs/promises";
-import { getEffectiveChallengeStatus, type EffectiveChallengeStatus } from "@/lib/challenges";
-import { resolveStoragePath, ensureStorageDirectories } from "@/lib/storage";
-import { processArtworkMediaJob } from "@/lib/mediaProcessor";
-import { createNotification } from "@/lib/notifications";
-import { canSubmitChallengeEntry } from "@/lib/policy";
+import { challenges, challengeSubmissions } from "@/db/schema";
+import { eq, and } from "drizzle-orm";
 import { checkRateLimit } from "@/lib/rateLimit";
-
-function slugify(text: string): string {
-  const base = text
-    .toLowerCase()
-    .trim()
-    .replace(/[^\w\s-]/g, "")
-    .replace(/[\s_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  const rand = crypto.randomBytes(3).toString("hex");
-  return `${base || "challenge"}-${rand}`;
-}
+import { slugify, type EffectiveChallengeStatus } from "@/lib/challenges";
+import {
+  createChallengeSubmissionService,
+  replaceChallengeSubmissionMediaService,
+} from "@/lib/services/submissionService";
 
 export async function submitArtworkToChallengeAction(formData: FormData) {
   const user = await requireAuth("/login");
@@ -49,28 +21,17 @@ export async function submitArtworkToChallengeAction(formData: FormData) {
     throw new Error("Terlalu banyak pengiriman submisi. Harap tunggu beberapa saat.");
   }
 
-  const [profile] = await db
-    .select()
-    .from(profiles)
-    .where(eq(profiles.userId, user.id))
-    .limit(1);
-
-  if (!profile) {
-    throw new Error("Profil artist tidak ditemukan.");
-  }
-
   const challengeId = formData.get("challengeId") as string;
   const title = (formData.get("title") as string)?.trim();
   const description = (formData.get("description") as string)?.trim() || null;
   const softwareUsed = (formData.get("softwareUsed") as string)?.trim() || null;
-  const existingArtworkVersionId = formData.get("existingArtworkVersionId") as string | null;
+  const isSpoiler = formData.get("isSpoiler") === "true" || formData.get("isSpoiler") === "1" || formData.get("isSpoiler") === "on";
   const file = formData.get("file") as File | null;
 
   if (!challengeId || !title) {
     throw new Error("Data submisi tidak lengkap.");
   }
 
-  // 1. Fetch challenge & verify authoritative submission policy
   const [challenge] = await db
     .select()
     .from(challenges)
@@ -81,7 +42,7 @@ export async function submitArtworkToChallengeAction(formData: FormData) {
     throw new Error("Challenge tidak ditemukan.");
   }
 
-  const existingSubmissions = await db
+  const [existingSubmission] = await db
     .select()
     .from(challengeSubmissions)
     .where(
@@ -89,139 +50,53 @@ export async function submitArtworkToChallengeAction(formData: FormData) {
         eq(challengeSubmissions.challengeId, challengeId),
         eq(challengeSubmissions.userId, user.id)
       )
-    );
+    )
+    .limit(1);
 
-  const isRevision = existingSubmissions.length > 0;
-  
-  // Authoritative submission policy evaluation (even on revisions)
-  const submitPolicy = canSubmitChallengeEntry(user as any, challenge as any, isRevision ? 0 : existingSubmissions.length);
-  if (!submitPolicy.allowed) {
-    throw new Error(submitPolicy.reason || "Submisi challenge tidak diizinkan saat ini.");
-  }
-
-  if (isRevision && !challenge.allowRevisions) {
-    throw new Error("Revisi karya tidak diizinkan untuk challenge ini.");
-  }
-
-  const now = new Date();
-  if (challenge.submissionDeadline && now > new Date(challenge.submissionDeadline)) {
-    throw new Error("Batas waktu submisi telah berakhir (Authoritative Deadline Passed).");
-  }
-
-  let finalArtworkVersionId = existingArtworkVersionId;
-
-  // 2. Handle File Upload if provided
+  let filePayload: { buffer: Buffer; name: string; type: string; size: number } | null = null;
   if (file && file.size > 0) {
-    const rawBuffer = Buffer.from(await file.arrayBuffer());
-    const tempKey = `temp_sub_${Date.now()}_${crypto.randomBytes(6).toString("hex")}${path.extname(file.name)}`;
-    const tempPath = resolveStoragePath("temp", tempKey);
-
-    await ensureStorageDirectories();
-    await fs.writeFile(tempPath, rawBuffer);
-
-    // Canonical Artwork creation
-    const artSlug = slugify(title);
-    const [createdArtwork] = await db
-      .insert(artworks)
-      .values({
-        userId: user.id,
-        title,
-        slug: artSlug,
-        description,
-        mediaType: file.type.startsWith("video/") ? "video" : file.type === "image/gif" ? "gif" : "image",
-        audience: "public",
-        critiqueMode: "showcase_only",
-        publicationStatus: "published",
-      })
-      .returning();
-
-    const [createdVersion] = await db
-      .insert(artworkVersions)
-      .values({
-        artworkId: createdArtwork.id,
-        versionNumber: 1,
-        mediaType: createdArtwork.mediaType as any,
-        fileSizeBytes: file.size,
-        mimeType: file.type,
-        masterStorageKey: tempKey,
-        checksumSha256: "pending",
-        processingStatus: "pending",
-      })
-      .returning();
-
-    await processArtworkMediaJob({
-      artworkId: createdArtwork.id,
-      versionId: createdVersion.id,
-      tempFilename: tempKey,
-      mediaType: createdArtwork.mediaType as any,
-      originalFilename: file.name,
-      userId: user.id,
-    });
-
-    await db
-      .update(artworks)
-      .set({ currentVersionId: createdVersion.id })
-      .where(eq(artworks.id, createdArtwork.id));
-
-    finalArtworkVersionId = createdVersion.id;
+    filePayload = {
+      buffer: Buffer.from(await file.arrayBuffer()),
+      name: file.name,
+      type: file.type,
+      size: file.size,
+    };
   }
 
-  if (!finalArtworkVersionId) {
-    throw new Error("Karya belum dipilih atau berkas gagal diunggah.");
-  }
-
-  // 3. Upsert Submission and record Immutable Submission Version
   let submissionId: string;
-  let nextVersionNumber = 1;
 
-  if (isRevision) {
-    const existingSub = existingSubmissions[0];
-    submissionId = existingSub.id;
-
-    const [lastVersion] = await db
-      .select({ versionNumber: challengeSubmissionVersions.versionNumber })
-      .from(challengeSubmissionVersions)
-      .where(eq(challengeSubmissionVersions.submissionId, submissionId))
-      .orderBy(desc(challengeSubmissionVersions.versionNumber))
-      .limit(1);
-
-    nextVersionNumber = (lastVersion?.versionNumber || 1) + 1;
-
-    await db
-      .update(challengeSubmissions)
-      .set({
-        currentVersionId: finalArtworkVersionId,
-        submissionStatus: "submitted",
-        updatedAt: new Date(),
-      })
-      .where(eq(challengeSubmissions.id, submissionId));
+  if (existingSubmission) {
+    // Media / metadata replacement
+    const updated = await replaceChallengeSubmissionMediaService({
+      actorUserId: user.id,
+      submissionId: existingSubmission.id,
+      title,
+      description,
+      softwareUsed,
+      isSpoiler,
+      file: filePayload,
+    });
+    submissionId = updated.id;
   } else {
-    const [newSub] = await db
-      .insert(challengeSubmissions)
-      .values({
-        challengeId,
-        userId: user.id,
-        profileId: profile.id,
-        currentVersionId: finalArtworkVersionId,
-        submissionStatus: "submitted",
-      })
-      .returning();
-
-    submissionId = newSub.id;
+    // Initial challenge submission
+    if (!filePayload) {
+      throw new Error("Berkas karya wajib diunggah untuk submisi challenge.");
+    }
+    const created = await createChallengeSubmissionService({
+      actorUserId: user.id,
+      challengeId,
+      title,
+      description,
+      softwareUsed,
+      isSpoiler,
+      file: filePayload,
+    });
+    submissionId = created.submission.id;
   }
-
-  await db.insert(challengeSubmissionVersions).values({
-    submissionId,
-    versionNumber: nextVersionNumber,
-    title,
-    description,
-    softwareUsed,
-    artworkVersionId: finalArtworkVersionId,
-  });
 
   revalidatePath(`/challenges/${challenge.slug}`);
   revalidatePath("/me/portfolio");
-  return { success: true, submissionId, versionNumber: nextVersionNumber };
+  return { success: true, submissionId };
 }
 
 export async function createOrUpdateChallengeAction(formData: FormData) {

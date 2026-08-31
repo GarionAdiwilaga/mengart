@@ -2,8 +2,9 @@ import { db as defaultDb } from "@/db";
 import {
   challenges,
   challengeSubmissions,
-  challengeSubmissionVersions,
+  artworks,
   artworkVersions,
+  portfolioEntries,
   profiles,
   challengeJuryAssignments,
   challengeJuryAwards,
@@ -16,6 +17,7 @@ import {
 } from "@/db/schema";
 import { eq, and, sql, desc, asc, inArray } from "drizzle-orm";
 import type { EffectiveChallengeStatus } from "@/lib/challenges";
+import { autoAddChallengeSubmissionsToPortfolioService } from "./portfolioService";
 
 export interface ServiceContext {
   userId: string | null;
@@ -880,6 +882,9 @@ export async function publishJuryChallengeResultsService(
     .set({ status: "finished", updatedAt: new Date() })
     .where(eq(challenges.id, challengeId));
 
+  // Auto-add challenge submissions to portfolio with award-specific captions
+  await autoAddChallengeSubmissionsToPortfolioService(dbOrTx, challengeId);
+
   // 8. Collect Winner Notifications
   const winningResults = await dbOrTx
     .select({
@@ -1062,6 +1067,28 @@ export async function revokeChallengeResultsService(
       updatedAt: new Date(),
     })
     .where(eq(challenges.id, challengeId));
+
+  // 4b. Revert portfolio system_caption to participant text for all valid challenge submissions
+  const validSubmissions = await dbOrTx
+    .select({ artworkId: challengeSubmissions.artworkId })
+    .from(challengeSubmissions)
+    .where(
+      and(
+        eq(challengeSubmissions.challengeId, challengeId),
+        eq(challengeSubmissions.submissionStatus, "submitted")
+      )
+    );
+
+  const participantCaption = `Peserta Challenge — ${challenge.title}`;
+  for (const sub of validSubmissions) {
+    await dbOrTx
+      .update(portfolioEntries)
+      .set({
+        systemCaption: participantCaption,
+        updatedAt: new Date(),
+      })
+      .where(eq(portfolioEntries.artworkId, sub.artworkId));
+  }
 
   // 5. Audit Log with Snapshot Metadata
   await dbOrTx.insert(auditLogs).values({
@@ -1442,6 +1469,9 @@ export async function republishChallengeResultsService(
     .set({ status: "finished", updatedAt: new Date() })
     .where(eq(challenges.id, challengeId));
 
+  // Reconcile and auto-add challenge submissions to portfolio with award-specific captions
+  await autoAddChallengeSubmissionsToPortfolioService(dbOrTx, challengeId);
+
   // 6. Audit Log
   await dbOrTx.insert(auditLogs).values({
     actorId: actor.userId,
@@ -1563,19 +1593,17 @@ export async function getJuryWorkspaceData(
       awardType: challengeResults.awardType,
       totalCommunityStars: challengeResults.totalCommunityStars,
       resolutionMethod: challengeResults.resolutionMethod,
-      title: challengeSubmissionVersions.title,
+      title: challengeSubmissions.title,
+      isSpoiler: artworks.isSpoiler,
       artistName: profiles.displayName,
       artistSlug: profiles.slug,
       thumbnailStorageKey: artworkVersions.thumbnailStorageKey,
     })
     .from(challengeResults)
     .innerJoin(challengeSubmissions, eq(challengeSubmissions.id, challengeResults.submissionId))
+    .innerJoin(artworks, eq(artworks.id, challengeSubmissions.artworkId))
     .leftJoin(profiles, eq(profiles.id, challengeSubmissions.profileId))
-    .leftJoin(
-      challengeSubmissionVersions,
-      eq(challengeSubmissionVersions.id, challengeSubmissions.currentVersionId)
-    )
-    .leftJoin(artworkVersions, eq(artworkVersions.id, challengeSubmissionVersions.artworkVersionId))
+    .leftJoin(artworkVersions, eq(artworkVersions.id, challengeSubmissions.artworkVersionId))
     .where(
       and(
         eq(challengeResults.challengeId, challengeId),
@@ -1590,9 +1618,12 @@ export async function getJuryWorkspaceData(
       submissionId: challengeSubmissions.id,
       userId: challengeSubmissions.userId,
       submissionStatus: challengeSubmissions.submissionStatus,
-      title: challengeSubmissionVersions.title,
-      description: challengeSubmissionVersions.description,
-      softwareUsed: challengeSubmissionVersions.softwareUsed,
+      title: challengeSubmissions.title,
+      description: challengeSubmissions.description,
+      softwareUsed: challengeSubmissions.softwareUsed,
+      artworkId: challengeSubmissions.artworkId,
+      artworkVersionId: challengeSubmissions.artworkVersionId,
+      isSpoiler: artworks.isSpoiler,
       thumbnailStorageKey: artworkVersions.thumbnailStorageKey,
       publicStorageKey: artworkVersions.publicStorageKey,
       artistName: profiles.displayName,
@@ -1600,12 +1631,9 @@ export async function getJuryWorkspaceData(
       artistAvatar: profiles.avatarUrl,
     })
     .from(challengeSubmissions)
+    .innerJoin(artworks, eq(artworks.id, challengeSubmissions.artworkId))
     .innerJoin(profiles, eq(profiles.id, challengeSubmissions.profileId))
-    .leftJoin(
-      challengeSubmissionVersions,
-      eq(challengeSubmissionVersions.id, challengeSubmissions.currentVersionId)
-    )
-    .leftJoin(artworkVersions, eq(artworkVersions.id, challengeSubmissionVersions.artworkVersionId))
+    .leftJoin(artworkVersions, eq(artworkVersions.id, challengeSubmissions.artworkVersionId))
     .where(
       and(
         eq(challengeSubmissions.challengeId, challengeId),
@@ -1632,19 +1660,17 @@ export async function getJuryWorkspaceData(
       categoryLabel: challengeJuryAwards.categoryLabel,
       recordedByUserId: challengeJuryAwards.recordedByUserId,
       createdAt: challengeJuryAwards.createdAt,
-      title: challengeSubmissionVersions.title,
+      title: challengeSubmissions.title,
+      isSpoiler: artworks.isSpoiler,
       artistName: profiles.displayName,
       artistSlug: profiles.slug,
       thumbnailStorageKey: artworkVersions.thumbnailStorageKey,
     })
     .from(challengeJuryAwards)
     .innerJoin(challengeSubmissions, eq(challengeSubmissions.id, challengeJuryAwards.submissionId))
+    .innerJoin(artworks, eq(artworks.id, challengeSubmissions.artworkId))
     .leftJoin(profiles, eq(profiles.id, challengeSubmissions.profileId))
-    .leftJoin(
-      challengeSubmissionVersions,
-      eq(challengeSubmissionVersions.id, challengeSubmissions.currentVersionId)
-    )
-    .leftJoin(artworkVersions, eq(artworkVersions.id, challengeSubmissionVersions.artworkVersionId))
+    .leftJoin(artworkVersions, eq(artworkVersions.id, challengeSubmissions.artworkVersionId))
     .where(eq(challengeJuryAwards.challengeId, challengeId))
     .orderBy(asc(challengeJuryAwards.createdAt));
 

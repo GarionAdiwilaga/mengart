@@ -85,6 +85,13 @@
       "when": 1788100000000,
       "tag": "0011_gate_d_auth_roles_membership",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1788150000000,
+      "tag": "0012_gate_e_submission_portfolio_spoiler",
+      "breakpoints": true
     }
   ]
 }

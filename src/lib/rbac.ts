@@ -77,6 +77,41 @@ export async function requireActiveMember() {
 }
 
 /**
+ * In-transaction assertion for active membership status.
+ */
+export async function assertActiveMember(tx: any, userId: string) {
+  const [dbUser] = await tx
+    .select({
+      id: users.id,
+      email: users.email,
+      role: users.role,
+      membershipStatus: users.membershipStatus,
+      deletedAt: users.deletedAt,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  if (!dbUser) {
+    throw new Error("Pengguna tidak ditemukan.");
+  }
+  if (dbUser.deletedAt || dbUser.membershipStatus === "deleted") {
+    throw new Error("Akun telah dihapus.");
+  }
+  if (dbUser.membershipStatus === null) {
+    throw new Error("Akun belum menukarkan undangan resmi. Silakan selesaikan onboarding.");
+  }
+  if (dbUser.membershipStatus === "suspended") {
+    throw new Error("Akun Anda sedang ditangguhkan. Hubungi moderator komunitas.");
+  }
+  if (dbUser.membershipStatus !== "active") {
+    throw new Error("Status keanggotaan tidak aktif.");
+  }
+
+  return dbUser;
+}
+
+/**
  * Require at least Moderator or Admin role with active membership
  */
 export async function requireModerator(redirectTo: string = "/dashboard") {

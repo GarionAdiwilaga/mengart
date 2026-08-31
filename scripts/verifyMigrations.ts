@@ -16,6 +16,29 @@ const BASE_DB_URL = process.env.DATABASE_URL || "postgres://mengart:mengart_dev_
 const urlObj = new URL(BASE_DB_URL);
 const adminDbUrl = `${urlObj.protocol}//${urlObj.username}:${urlObj.password}@${urlObj.host}/postgres`;
 
+async function createMigrationSubsetDir(targetDir: string, maxIdx: number) {
+  await fs.rm(targetDir, { recursive: true, force: true });
+  await fs.mkdir(targetDir, { recursive: true });
+  await fs.mkdir(path.join(targetDir, "meta"), { recursive: true });
+
+  const journalRaw = await fs.readFile("./drizzle/meta/_journal.json", "utf-8");
+  const journalObj = JSON.parse(journalRaw);
+  const filteredEntries = journalObj.entries.filter((e: any) => e.idx <= maxIdx);
+  const filteredJournal = {
+    ...journalObj,
+    entries: filteredEntries,
+  };
+  await fs.writeFile(
+    path.join(targetDir, "meta", "_journal.json"),
+    JSON.stringify(filteredJournal, null, 2)
+  );
+
+  for (const entry of filteredEntries) {
+    const filename = `${entry.tag}.sql`;
+    await fs.copyFile(path.join("./drizzle", filename), path.join(targetDir, filename));
+  }
+}
+
 async function runMigrationVerification() {
   console.log("=================================================================");
   console.log("🛠️ STARTING COMPREHENSIVE PRODUCTION MIGRATION VERIFICATION SUITE");
@@ -28,18 +51,30 @@ async function runMigrationVerification() {
   const upgradeDbName0008 = `mengart_test_upgrade_0008_${Date.now()}`;
   const upgradeDbName0009 = `mengart_test_upgrade_0009_${Date.now()}`;
   const upgradeDbName0010 = `mengart_test_upgrade_0010_${Date.now()}`;
+  const upgradeDbName0011 = `mengart_test_upgrade_0011_${Date.now()}`;
+  const failDbName0012Dirty = `mengart_test_fail_0012_dirty_${Date.now()}`;
   const failDbNameEmailCollision = `mengart_test_fail_email_${Date.now()}`;
   const failDbName1 = `mengart_test_fail1_${Date.now()}`;
   const failDbName2 = `mengart_test_fail2_${Date.now()}`;
   const failDbName3 = `mengart_test_fail3_${Date.now()}`;
   const temp0006Dir = path.resolve("./.tmp_drizzle_0006");
+  const temp0007Dir = path.resolve("./.tmp_drizzle_0007");
   const temp0008Dir = path.resolve("./.tmp_drizzle_0008");
   const temp0009Dir = path.resolve("./.tmp_drizzle_0009");
   const temp0010Dir = path.resolve("./.tmp_drizzle_0010");
+  const temp0011Dir = path.resolve("./.tmp_drizzle_0011");
+
+  // Pre-generate historical migration subsets
+  await createMigrationSubsetDir(temp0006Dir, 6);
+  await createMigrationSubsetDir(temp0007Dir, 7);
+  await createMigrationSubsetDir(temp0008Dir, 8);
+  await createMigrationSubsetDir(temp0009Dir, 9);
+  await createMigrationSubsetDir(temp0010Dir, 10);
+  await createMigrationSubsetDir(temp0011Dir, 11);
 
   try {
     // --------------------------------------------------------------------------
-    // SCENARIO 1: FRESH EMPTY DATABASE -> ALL COMMITTED MIGRATIONS (0000 -> 0010)
+    // SCENARIO 1: FRESH EMPTY DATABASE -> ALL COMMITTED MIGRATIONS (0000 -> 0012)
     // --------------------------------------------------------------------------
     console.log(`[Scenario 1] Creating fresh empty database: ${freshDbName}...`);
     await adminClient.unsafe(`CREATE DATABASE "${freshDbName}";`);
@@ -48,9 +83,9 @@ async function runMigrationVerification() {
     const freshClient = postgres(freshDbUrl, { max: 1 });
     const freshDrizzle = drizzle(freshClient, { schema });
 
-    console.log("-> Running all committed migrations (0000 -> 0010) on fresh database via Drizzle migrator...");
+    console.log("-> Running all committed migrations (0000 -> 0012) on fresh database via Drizzle migrator...");
     await migrate(freshDrizzle, { migrationsFolder: "./drizzle" });
-    console.log("✓ Migration 0000 -> 0010 succeeded on fresh empty database!");
+    console.log("✓ Migration 0000 -> 0012 succeeded on fresh empty database!");
 
     // Verify critical tables exist in fresh database
     const freshTables = await freshClient`
@@ -73,6 +108,17 @@ async function runMigrationVerification() {
     }
     console.log("✓ All 7 core challenge tables verified in fresh database schema.");
 
+    // Verify challenge_submission_versions was dropped cleanly
+    const droppedTable = await freshClient`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public' AND table_name = 'challenge_submission_versions';
+    `;
+    if (droppedTable.length > 0) {
+      throw new Error("challenge_submission_versions table still exists on fresh database!");
+    }
+    console.log("✓ Verified challenge_submission_versions table does not exist in fresh schema.");
+
     // Verify unique indexes and new columns exist
     const freshIndexes = await freshClient`
       SELECT indexname FROM pg_indexes 
@@ -84,13 +130,14 @@ async function runMigrationVerification() {
           'uniq_challenge_tiebreak_round', 
           'uniq_challenge_open_round',
           'uniq_challenge_jury_recorder',
-          'uniq_challenge_result_jury_award'
+          'uniq_challenge_result_jury_award',
+          'uniq_challenge_submission_user'
         );
     `;
-    if (freshIndexes.length !== 7) {
-      throw new Error(`Expected 7 unique partial indexes in fresh database, found ${freshIndexes.length}`);
+    if (freshIndexes.length !== 8) {
+      throw new Error(`Expected 8 unique partial indexes in fresh database, found ${freshIndexes.length}`);
     }
-    console.log("✓ All 7 partial unique indexes verified in fresh database schema.");
+    console.log("✓ All 8 partial unique indexes verified in fresh database schema.");
 
     await freshClient.end();
     console.log("🎉 SCENARIO 1 (FRESH DATABASE) PASSED!\n");
@@ -104,32 +151,6 @@ async function runMigrationVerification() {
     const upgradeDbUrl = `${urlObj.protocol}//${urlObj.username}:${urlObj.password}@${urlObj.host}/${upgradeDbName}`;
     const upgradeClient = postgres(upgradeDbUrl, { max: 1 });
     const upgradeDrizzle = drizzle(upgradeClient, { schema });
-
-    // Build temporary 0006-only migration directory
-    await fs.mkdir(temp0006Dir, { recursive: true });
-    await fs.mkdir(path.join(temp0006Dir, "meta"), { recursive: true });
-
-    // Copy migrations 0000 to 0006
-    for (let i = 0; i <= 6; i++) {
-      const prefix = String(i).padStart(4, "0");
-      const files = await fs.readdir("./drizzle");
-      const sqlFile = files.find((f) => f.startsWith(prefix) && f.endsWith(".sql"));
-      if (sqlFile) {
-        await fs.copyFile(path.join("./drizzle", sqlFile), path.join(temp0006Dir, sqlFile));
-      }
-    }
-
-    // Read full journal and filter to entries up to idx 6
-    const journalRaw = await fs.readFile("./drizzle/meta/_journal.json", "utf-8");
-    const journalObj = JSON.parse(journalRaw);
-    const filteredJournal = {
-      ...journalObj,
-      entries: journalObj.entries.filter((e: any) => e.idx <= 6),
-    };
-    await fs.writeFile(
-      path.join(temp0006Dir, "meta", "_journal.json"),
-      JSON.stringify(filteredJournal, null, 2)
-    );
 
     console.log("-> Applying initial legacy migrations (0000 -> 0006) to represent pre-remediation database...");
     await migrate(upgradeDrizzle, { migrationsFolder: temp0006Dir });
@@ -384,7 +405,7 @@ async function runMigrationVerification() {
 
     // Now execute real Drizzle migration 0006 -> 0008 upgrade!
     console.log("-> Applying real Drizzle upgrade migration (0006 -> 0008) with automatic SQL backfill...");
-    await migrate(upgradeDrizzle, { migrationsFolder: "./drizzle" });
+    await migrate(upgradeDrizzle, { migrationsFolder: temp0008Dir });
     console.log("✓ Production Drizzle migrator successfully applied migrations 0007 & 0008!");
 
     // --------------------------------------------------------------------------
@@ -623,7 +644,7 @@ async function runMigrationVerification() {
 
     let f1FailedProperly = false;
     try {
-      await migrate(failDrizzle1, { migrationsFolder: "./drizzle" });
+      await migrate(failDrizzle1, { migrationsFolder: temp0008Dir });
     } catch (err: any) {
       if (err.message && err.message.includes("Legacy tiebreak reconciliation required")) {
         f1FailedProperly = true;
@@ -665,7 +686,7 @@ async function runMigrationVerification() {
 
     let f2FailedProperly = false;
     try {
-      await migrate(failDrizzle2, { migrationsFolder: "./drizzle" });
+      await migrate(failDrizzle2, { migrationsFolder: temp0008Dir });
     } catch (err: any) {
       if (err.message && err.message.includes("Legacy tiebreak reconciliation required")) {
         f2FailedProperly = true;
@@ -689,7 +710,7 @@ async function runMigrationVerification() {
     const failDrizzle3 = drizzle(failClient3, { schema });
 
     // Migrate up to 0007 first
-    await migrate(failDrizzle3, { migrationsFolder: "./drizzle" });
+    await migrate(failDrizzle3, { migrationsFolder: temp0007Dir });
 
     // Insert an unlinked ballot with NULL voting_round_id on a new challenge that has no voting round
     const [f3User] = await failClient3`INSERT INTO users (email, role) VALUES ('f3@mengart.local', 'admin') RETURNING id;`;
@@ -729,25 +750,6 @@ async function runMigrationVerification() {
     await adminClient.unsafe(`CREATE DATABASE "${upgradeDbName0008}";`);
     const upgradeClient0008 = postgres(`${urlObj.protocol}//${urlObj.username}:${urlObj.password}@${urlObj.host}/${upgradeDbName0008}`, { max: 1 });
     const upgradeDrizzle0008 = drizzle(upgradeClient0008, { schema });
-
-    // Build temporary 0008-only migration directory (migrations 0000 -> 0008)
-    await fs.mkdir(temp0008Dir, { recursive: true });
-    await fs.mkdir(path.join(temp0008Dir, "meta"), { recursive: true });
-
-    for (let i = 0; i <= 8; i++) {
-      const migFiles = await fs.readdir("./drizzle");
-      const targetFile = migFiles.find((f) => f.startsWith(`000${i}_`));
-      if (targetFile) {
-        await fs.copyFile(path.join("./drizzle", targetFile), path.join(temp0008Dir, targetFile));
-      }
-    }
-
-    const journalContent0008 = {
-      version: "7",
-      dialect: "postgresql",
-      entries: (await fs.readFile("./drizzle/meta/_journal.json", "utf-8").then(JSON.parse)).entries.slice(0, 9),
-    };
-    await fs.writeFile(path.join(temp0008Dir, "meta", "_journal.json"), JSON.stringify(journalContent0008, null, 2));
 
     // 1. Migrate database up to 0008
     console.log("-> Migrating test database up to original 0008...");
@@ -791,7 +793,7 @@ async function runMigrationVerification() {
 
     // 4. Apply forward migration 0009
     console.log("-> Applying forward migration 0009 via Drizzle migrator...");
-    await migrate(upgradeDrizzle0008, { migrationsFolder: "./drizzle" });
+    await migrate(upgradeDrizzle0008, { migrationsFolder: temp0009Dir });
     console.log("✓ Migration 0009 applied cleanly.");
 
     // 5. Verify post-0009 column defaults are 1
@@ -850,27 +852,6 @@ async function runMigrationVerification() {
     const upgradeClient0009 = postgres(upgradeDbUrl0009, { max: 1 });
     const upgradeDrizzle0009 = drizzle(upgradeClient0009, { schema });
 
-    // 1. Create temporary migration folder containing ONLY migrations 0000 through 0009
-    await fs.mkdir(temp0009Dir, { recursive: true });
-    await fs.mkdir(path.join(temp0009Dir, "meta"), { recursive: true });
-
-    const journalContent = await fs.readFile("./drizzle/meta/_journal.json", "utf-8");
-    const fullJournal = JSON.parse(journalContent);
-    const subsetJournal0009 = {
-      ...fullJournal,
-      entries: fullJournal.entries.filter((e: any) => e.idx <= 9),
-    };
-    await fs.writeFile(
-      path.join(temp0009Dir, "meta/_journal.json"),
-      JSON.stringify(subsetJournal0009, null, 2)
-    );
-
-    for (let i = 0; i <= 9; i++) {
-      const entry = subsetJournal0009.entries[i];
-      const filename = `${entry.tag}.sql`;
-      await fs.copyFile(path.join("./drizzle", filename), path.join(temp0009Dir, filename));
-    }
-
     console.log("-> Running migrations 0000 -> 0009 on pre-0010 database...");
     await migrate(upgradeDrizzle0009, { migrationsFolder: temp0009Dir });
     console.log("✓ Pre-0010 baseline (0000 -> 0009) applied cleanly.");
@@ -927,7 +908,7 @@ async function runMigrationVerification() {
 
     // 4. Apply forward migration 0010
     console.log("-> Applying forward migration 0010 via Drizzle migrator...");
-    await migrate(upgradeDrizzle0009, { migrationsFolder: "./drizzle" });
+    await migrate(upgradeDrizzle0009, { migrationsFolder: temp0010Dir });
     console.log("✓ Migration 0010 applied cleanly.");
 
     // 5. Verify post-0010 column defaults and backfill
@@ -1093,7 +1074,7 @@ async function runMigrationVerification() {
     let collisionFailedClosed = false;
     try {
       console.log("-> Attempting migration 0011 on collision database (expected to fail closed)...");
-      await migrate(failDrizzleEmail, { migrationsFolder: "./drizzle" });
+      await migrate(failDrizzleEmail, { migrationsFolder: temp0011Dir });
     } catch (err: any) {
       if (err?.message?.includes("Legacy email reconciliation failed") || err?.message?.includes("duplicate case-insensitive") || err?.message?.includes("EXCEPTION")) {
         collisionFailedClosed = true;
@@ -1178,7 +1159,7 @@ async function runMigrationVerification() {
 
     // Apply forward migration 0011
     console.log("-> Applying forward migration 0011 via Drizzle migrator...");
-    await migrate(upgradeDrizzle0010, { migrationsFolder: "./drizzle" });
+    await migrate(upgradeDrizzle0010, { migrationsFolder: temp0011Dir });
     console.log("✓ Migration 0011 applied cleanly.");
 
     // Assert 1: membership_status enum values are strictly active, suspended, deleted (no revoked)
@@ -1378,17 +1359,140 @@ async function runMigrationVerification() {
     await upgradeClient0010.end();
     console.log("🎉 SCENARIO 8B (0010 -> 0011 UPGRADE & GATE D SCHEMA VERIFICATION) PASSED!\n");
 
+    // --------------------------------------------------------------------------
+    // SCENARIO 9A: MIGRATION 0012 FAIL-CLOSED CHECK ON NON-EMPTY CHALLENGE_SUBMISSIONS
+    // --------------------------------------------------------------------------
+    console.log(`[Scenario 9A] Creating fail-closed database for 0012 dirty test: ${failDbName0012Dirty}...`);
+    await adminClient.unsafe(`CREATE DATABASE "${failDbName0012Dirty}";`);
+
+    const failDbUrl0012 = `${urlObj.protocol}//${urlObj.username}:${urlObj.password}@${urlObj.host}/${failDbName0012Dirty}`;
+    const failClient0012 = postgres(failDbUrl0012, { max: 1 });
+    const failDrizzle0012 = drizzle(failClient0012, { schema });
+
+    console.log("-> Running migrations 0000 -> 0011 on pre-0012 fail database...");
+    await migrate(failDrizzle0012, { migrationsFolder: temp0011Dir });
+    console.log("✓ Pre-0012 baseline (0000 -> 0011) applied cleanly.");
+
+    // Seed dirty challenge_submission row
+    const [dirtyUser] = await failClient0012`INSERT INTO users (email, role) VALUES ('dirty_user@mengart.local', 'member') RETURNING id;`;
+    const [dirtyProfile] = await failClient0012`INSERT INTO profiles (user_id, display_name, slug) VALUES (${dirtyUser.id}, 'Dirty User', 'dirty-user') RETURNING id;`;
+    const [dirtyChallenge] = await failClient0012`INSERT INTO challenges (title, slug, theme, description, prompt_rules, status) VALUES ('Dirty Challenge', 'dirty-challenge', 'Theme', 'Desc', 'Rules', 'submission_open') RETURNING id;`;
+    await failClient0012`INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, submission_status) VALUES (${dirtyChallenge.id}, ${dirtyUser.id}, ${dirtyProfile.id}, 'submitted');`;
+
+    console.log("-> Attempting migration 0012 on dirty database (must FAIL CLOSED)...");
+    let migration0012FailedAsExpected = false;
+    try {
+      await migrate(failDrizzle0012, { migrationsFolder: "./drizzle" });
+    } catch (err: any) {
+      if (err.message?.includes("Migration 0012 Fail-Closed") || err.message?.includes("legacy challenge_submissions rows")) {
+        migration0012FailedAsExpected = true;
+        console.log(`✓ Migration 0012 correctly failed closed with message: "${err.message}"`);
+      } else {
+        throw err;
+      }
+    }
+
+    if (!migration0012FailedAsExpected) {
+      throw new Error("Migration 0012 DID NOT fail closed when legacy dirty challenge_submissions rows existed!");
+    }
+
+    await failClient0012.end();
+    console.log("🎉 SCENARIO 9A (MIGRATION 0012 FAIL-CLOSED DIRTY ROWS DEFENSE) PASSED!\n");
+
+    // --------------------------------------------------------------------------
+    // SCENARIO 9B: FORWARD MIGRATION 0011 -> 0012 CLEAN UPGRADE PATH & SCHEMA VERIFICATION
+    // --------------------------------------------------------------------------
+    console.log(`[Scenario 9B] Creating upgrade database for 0011 -> 0012: ${upgradeDbName0011}...`);
+    await adminClient.unsafe(`CREATE DATABASE "${upgradeDbName0011}";`);
+
+    const upgradeDbUrl0011 = `${urlObj.protocol}//${urlObj.username}:${urlObj.password}@${urlObj.host}/${upgradeDbName0011}`;
+    const upgradeClient0011 = postgres(upgradeDbUrl0011, { max: 1 });
+    const upgradeDrizzle0011 = drizzle(upgradeClient0011, { schema });
+
+    console.log("-> Running migrations 0000 -> 0011 on clean upgrade database...");
+    await migrate(upgradeDrizzle0011, { migrationsFolder: temp0011Dir });
+    console.log("✓ Pre-0012 baseline (0000 -> 0011) applied cleanly.");
+
+    // Verify pre-0012 schema has challenge_submission_versions table
+    const [tablePre0012] = await upgradeClient0011`
+      SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'challenge_submission_versions';
+    `;
+    if (!tablePre0012) {
+      throw new Error("Expected challenge_submission_versions to exist prior to 0012.");
+    }
+    console.log("✓ Verified pre-0012 schema contains challenge_submission_versions table.");
+
+    console.log("-> Running forward migration 0011 -> 0012 via Drizzle migrator...");
+    await migrate(upgradeDrizzle0011, { migrationsFolder: "./drizzle" });
+    console.log("✓ Migration 0011 -> 0012 succeeded cleanly!");
+
+    // Verify challenge_submission_versions dropped
+    const [tablePost0012] = await upgradeClient0011`
+      SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'challenge_submission_versions';
+    `;
+    if (tablePost0012) {
+      throw new Error("challenge_submission_versions table still exists after migration 0012!");
+    }
+    console.log("✓ Verified challenge_submission_versions table was dropped cleanly.");
+
+    // Verify artworks.is_spoiler
+    const [isSpoilerCol] = await upgradeClient0011`
+      SELECT column_name, data_type, column_default 
+      FROM information_schema.columns 
+      WHERE table_name = 'artworks' AND column_name = 'is_spoiler';
+    `;
+    if (!isSpoilerCol || isSpoilerCol.data_type !== "boolean") {
+      throw new Error("Expected artworks.is_spoiler boolean column to exist after migration 0012.");
+    }
+    console.log("✓ Verified artworks.is_spoiler column added with default false.");
+
+    // Verify portfolio_entries.system_caption
+    const [sysCaptionCol] = await upgradeClient0011`
+      SELECT column_name, data_type 
+      FROM information_schema.columns 
+      WHERE table_name = 'portfolio_entries' AND column_name = 'system_caption';
+    `;
+    if (!sysCaptionCol) {
+      throw new Error("Expected portfolio_entries.system_caption column to exist after migration 0012.");
+    }
+    console.log("✓ Verified portfolio_entries.system_caption column added.");
+
+    // Verify challenge_submissions canonical columns
+    const subCols = await upgradeClient0011`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'challenge_submissions' AND column_name IN ('artwork_id', 'artwork_version_id', 'title', 'description', 'software_used');
+    `;
+    if (subCols.length !== 5) {
+      throw new Error(`Expected 5 canonical columns on challenge_submissions, found ${subCols.length}`);
+    }
+    console.log("✓ Verified all 5 canonical columns present on challenge_submissions.");
+
+    // Verify uniq_challenge_submission_user index
+    const [uniqSubUserIdx] = await upgradeClient0011`
+      SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'uniq_challenge_submission_user';
+    `;
+    if (!uniqSubUserIdx) {
+      throw new Error("Expected uniq_challenge_submission_user index to exist after migration 0012.");
+    }
+    console.log("✓ Verified uniq_challenge_submission_user unique index created.");
+
+    await upgradeClient0011.end();
+    console.log("🎉 SCENARIO 9B (0011 -> 0012 UPGRADE & GATE E SCHEMA VERIFICATION) PASSED!\n");
+
     console.log("=================================================================");
-    console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A, B, C, D)");
+    console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A, B, C, D, E)");
     console.log("=================================================================\n");
     process.exit(0);
   } finally {
     // Clean up temporary files and databases
     try {
       await fs.rm(temp0006Dir, { recursive: true, force: true });
+      await fs.rm(temp0007Dir, { recursive: true, force: true });
       await fs.rm(temp0008Dir, { recursive: true, force: true });
       await fs.rm(temp0009Dir, { recursive: true, force: true });
       await fs.rm(temp0010Dir, { recursive: true, force: true });
+      await fs.rm(temp0011Dir, { recursive: true, force: true });
     } catch (_e) {
       // Ignored cleanup error
     }
@@ -1399,6 +1503,8 @@ async function runMigrationVerification() {
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0008}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0009}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0010}";`);
+      await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0011}";`);
+      await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName0012Dirty}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbNameEmailCollision}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName1}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName2}";`);

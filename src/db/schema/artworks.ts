@@ -46,6 +46,7 @@ export const artworks = pgTable(
     critiqueMode: critiqueModeEnum("critique_mode").default("showcase_only").notNull(),
     audience: audienceEnum("audience").default("public").notNull(),
     publicationStatus: publicationStatusEnum("publication_status").default("draft").notNull(),
+    isSpoiler: boolean("is_spoiler").default(false).notNull(),
     currentVersionId: uuid("current_version_id"),
     
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -113,6 +114,7 @@ export const portfolioEntries = pgTable(
       .references(() => artworks.id, { onDelete: "cascade" }),
     displayOrder: integer("display_order").default(0).notNull(),
     isPinned: boolean("is_pinned").default(false).notNull(),
+    systemCaption: text("system_caption"),
     customCaption: text("custom_caption"),
     isVisible: boolean("is_visible").default(true).notNull(),
     

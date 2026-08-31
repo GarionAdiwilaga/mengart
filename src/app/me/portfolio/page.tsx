@@ -1,11 +1,12 @@
 import { requireAuth } from "@/lib/rbac";
 import { db } from "@/db";
-import { artworks, artworkVersions, profiles } from "@/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { artworks, artworkVersions, profiles, portfolioEntries } from "@/db/schema";
+import { eq, desc, and } from "drizzle-orm";
 import Link from "next/link";
-import { ArrowLeft, Image as ImageIcon, Eye, Sparkles, Film, Clock, ExternalLink } from "lucide-react";
+import { ArrowLeft, Image as ImageIcon, Sparkles, Film, Clock, ExternalLink } from "lucide-react";
 import { UploadArtworkModal } from "@/components/portfolio/UploadArtworkModal";
 import { DeleteArtworkButton } from "@/components/portfolio/DeleteArtworkButton";
+import { PortfolioItemActions } from "@/components/portfolio/PortfolioItemActions";
 
 export default async function PortfolioManagerPage() {
   const user = await requireAuth("/login");
@@ -31,6 +32,7 @@ export default async function PortfolioManagerPage() {
       slug: artworks.slug,
       audience: artworks.audience,
       critiqueMode: artworks.critiqueMode,
+      isSpoiler: artworks.isSpoiler,
       publicationStatus: artworks.publicationStatus,
       createdAt: artworks.createdAt,
       mediaType: artworks.mediaType,
@@ -40,8 +42,18 @@ export default async function PortfolioManagerPage() {
       width: artworkVersions.width,
       height: artworkVersions.height,
       processingStatus: artworkVersions.processingStatus,
+      isVisible: portfolioEntries.isVisible,
+      systemCaption: portfolioEntries.systemCaption,
+      customCaption: portfolioEntries.customCaption,
     })
     .from(artworks)
+    .leftJoin(
+      portfolioEntries,
+      and(
+        eq(portfolioEntries.artworkId, artworks.id),
+        eq(portfolioEntries.profileId, profile.id)
+      )
+    )
     .leftJoin(artworkVersions, eq(artworkVersions.id, artworks.currentVersionId))
     .where(eq(artworks.userId, user.id))
     .orderBy(desc(artworks.createdAt));
@@ -97,6 +109,8 @@ export default async function PortfolioManagerPage() {
               ? `/api/media/public/${art.thumbnailStorageKey}`
               : null;
 
+            const effectiveCaption = art.customCaption || art.systemCaption;
+
             return (
               <div
                 key={art.id}
@@ -148,18 +162,30 @@ export default async function PortfolioManagerPage() {
                     <span className="text-[11px] font-mono text-zinc-400 truncate block uppercase">
                       {art.mediaType} • {art.critiqueMode}
                     </span>
+                    {effectiveCaption && (
+                      <span className="text-[11px] font-sans text-amber-400/90 truncate block mt-1">
+                        {effectiveCaption}
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex items-center justify-between pt-2 border-t border-white/5">
-                    <Link
-                      href={`/artworks/${art.slug}`}
-                      className="text-xs font-mono text-amber-400 hover:text-amber-300 transition-colors inline-flex items-center gap-1"
-                    >
-                      <span>Buka Viewer</span>
-                      <ExternalLink className="h-3 w-3" />
-                    </Link>
+                    <PortfolioItemActions
+                      artworkId={art.id}
+                      initialIsVisible={art.isVisible ?? true}
+                      isSpoiler={art.isSpoiler}
+                    />
 
-                    <DeleteArtworkButton artworkId={art.id} title={art.title} />
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/artworks/${art.slug}`}
+                        className="text-xs font-mono text-amber-400 hover:text-amber-300 transition-colors inline-flex items-center gap-1"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                      </Link>
+
+                      <DeleteArtworkButton artworkId={art.id} title={art.title} />
+                    </div>
                   </div>
                 </div>
               </div>
