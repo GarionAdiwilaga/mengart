@@ -13,12 +13,6 @@ import {
   FileCode,
 } from "lucide-react";
 
-interface PortfolioArtworkOption {
-  versionId: string;
-  title: string;
-  thumbnailUrl: string | null;
-}
-
 interface ChallengeSubmissionModalProps {
   challengeId: string;
   challengeTitle: string;
@@ -26,7 +20,6 @@ interface ChallengeSubmissionModalProps {
   initialTitle?: string;
   initialDescription?: string;
   initialSoftware?: string;
-  portfolioArtworks?: PortfolioArtworkOption[];
 }
 
 export function ChallengeSubmissionModal({
@@ -36,11 +29,8 @@ export function ChallengeSubmissionModal({
   initialTitle = "",
   initialDescription = "",
   initialSoftware = "",
-  portfolioArtworks = [],
 }: ChallengeSubmissionModalProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [sourceType, setSourceType] = useState<"upload" | "portfolio">("upload");
-  const [selectedVersionId, setSelectedVersionId] = useState<string>("");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
@@ -66,12 +56,8 @@ export function ChallengeSubmissionModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (sourceType === "upload" && !file && !isRevision) {
+    if (!file && !isRevision) {
       setError("Silakan pilih file karya untuk diunggah.");
-      return;
-    }
-    if (sourceType === "portfolio" && !selectedVersionId) {
-      setError("Silakan pilih salah satu karya dari portofolio Anda.");
       return;
     }
 
@@ -85,10 +71,8 @@ export function ChallengeSubmissionModal({
     if (description) formData.append("description", description.trim());
     if (softwareUsed) formData.append("softwareUsed", softwareUsed.trim());
 
-    if (sourceType === "upload" && file) {
+    if (file) {
       formData.append("file", file);
-    } else if (sourceType === "portfolio" && selectedVersionId) {
-      formData.append("existingArtworkVersionId", selectedVersionId);
     }
 
     try {
@@ -158,117 +142,41 @@ export function ChallengeSubmissionModal({
                   </div>
                 ) : null}
 
-                {/* Source Mode Toggle */}
-                <div className="grid grid-cols-2 p-1 rounded-xl bg-white/5 border border-white/10 text-xs font-mono">
-                  <button
-                    type="button"
-                    onClick={() => setSourceType("upload")}
-                    className={`py-2 rounded-lg font-semibold transition-all cursor-pointer ${
-                      sourceType === "upload"
-                        ? "bg-amber-500 text-black shadow-md"
-                        : "text-zinc-400 hover:text-white"
-                    }`}
-                  >
-                    Unggah File Baru
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSourceType("portfolio")}
-                    className={`py-2 rounded-lg font-semibold transition-all cursor-pointer ${
-                      sourceType === "portfolio"
-                        ? "bg-amber-500 text-black shadow-md"
-                        : "text-zinc-400 hover:text-white"
-                    }`}
-                  >
-                    Pilih dari Vault
-                  </button>
-                </div>
-
-                {/* Mode A: File Upload */}
-                {sourceType === "upload" ? (
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs font-mono text-zinc-300">FILE KARYA</label>
-                    <label className="border-2 border-dashed border-white/15 hover:border-amber-500/50 rounded-2xl p-6 flex flex-col items-center justify-center gap-3 cursor-pointer bg-white/[0.02] transition-colors relative overflow-hidden">
-                      <input
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm"
-                        onChange={handleFileChange}
-                        className="hidden"
-                      />
-                      {previewUrl ? (
-                        <div className="relative w-full max-h-48 flex items-center justify-center overflow-hidden rounded-xl">
-                          <img
-                            src={previewUrl}
-                            alt="Preview"
-                            className="max-h-48 object-contain rounded-lg shadow-lg"
-                          />
-                        </div>
-                      ) : (
-                        <>
-                          <div className="h-10 w-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400">
-                            <Upload className="h-5 w-5" />
-                          </div>
-                          <div className="text-center">
-                            <span className="text-xs font-semibold text-zinc-200 block">
-                              Pilih file atau seret & lepas di sini
-                            </span>
-                            <span className="text-[11px] text-zinc-500 font-mono mt-0.5 block">
-                              PNG, JPG, WebP, GIF, MP4 (Maks. 25MB - 50MB)
-                            </span>
-                          </div>
-                        </>
-                      )}
-                    </label>
-                  </div>
-                ) : (
-                  /* Mode B: Pick from Portfolio */
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs font-mono text-zinc-300">
-                      PILIH KARYA DARI PORTOFOLIO
-                    </label>
-                    {portfolioArtworks.length === 0 ? (
-                      <div className="p-4 rounded-xl bg-white/[0.02] border border-white/10 text-xs text-zinc-500 text-center font-mono">
-                        Belum ada karya di portofolio Anda. Silakan gunakan opsi Unggah File Baru.
+                {/* Direct Canonical File Upload */}
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-mono text-zinc-300">FILE KARYA</label>
+                  <label className="border-2 border-dashed border-white/15 hover:border-amber-500/50 rounded-2xl p-6 flex flex-col items-center justify-center gap-3 cursor-pointer bg-white/[0.02] transition-colors relative overflow-hidden">
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm"
+                      onChange={handleFileChange}
+                      className="hidden"
+                    />
+                    {previewUrl ? (
+                      <div className="relative w-full max-h-48 flex items-center justify-center overflow-hidden rounded-xl">
+                        <img
+                          src={previewUrl}
+                          alt="Preview"
+                          className="max-h-48 object-contain rounded-lg shadow-lg"
+                        />
                       </div>
                     ) : (
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-48 overflow-y-auto p-1">
-                        {portfolioArtworks.map((item) => {
-                          const isSelected = selectedVersionId === item.versionId;
-                          return (
-                            <button
-                              type="button"
-                              key={item.versionId}
-                              onClick={() => {
-                                setSelectedVersionId(item.versionId);
-                                if (!title) setTitle(item.title);
-                              }}
-                              className={`p-2 rounded-xl border text-left flex flex-col gap-2 transition-all cursor-pointer ${
-                                isSelected
-                                  ? "border-amber-500 bg-amber-500/10"
-                                  : "border-white/10 bg-white/5 hover:border-white/20"
-                              }`}
-                            >
-                              <div className="aspect-video bg-black/40 rounded-lg overflow-hidden flex items-center justify-center">
-                                {item.thumbnailUrl ? (
-                                  <img
-                                    src={item.thumbnailUrl}
-                                    alt={item.title}
-                                    className="w-full h-full object-cover"
-                                  />
-                                ) : (
-                                  <ImageIcon className="h-4 w-4 text-zinc-600" />
-                                )}
-                              </div>
-                              <span className="text-xs font-semibold text-[#f6f2e9] truncate block">
-                                {item.title}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
+                      <>
+                        <div className="h-10 w-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400">
+                          <Upload className="h-5 w-5" />
+                        </div>
+                        <div className="text-center">
+                          <span className="text-xs font-semibold text-zinc-200 block">
+                            Pilih file atau seret & lepas di sini
+                          </span>
+                          <span className="text-[11px] text-zinc-500 font-mono mt-0.5 block">
+                            PNG, JPG, WebP, GIF, MP4 (Maks. 25MB - 50MB)
+                          </span>
+                        </div>
+                      </>
                     )}
-                  </div>
-                )}
+                  </label>
+                </div>
 
                 {/* Submisi Details Form */}
                 <div className="flex flex-col gap-1.5">

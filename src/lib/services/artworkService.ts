@@ -152,10 +152,8 @@ export async function updateArtworkService(
     throw new Error("Karya tidak ditemukan.");
   }
 
-  // 3. Ownership verification
-  const isOwner = artwork.userId === actor.id;
-  const isAdmin = actor.role === "admin";
-  if (!isOwner && !isAdmin) {
+  // 3. Strict owner verification (no admin bypass for artist presentation mutations)
+  if (artwork.userId !== actor.id) {
     throw new Error("Anda bukan pemilik karya ini.");
   }
 
@@ -214,9 +212,7 @@ export async function toggleArtworkSpoilerService(
     throw new Error("Karya tidak ditemukan.");
   }
 
-  const isOwner = artwork.userId === actor.id;
-  const isAdmin = actor.role === "admin";
-  if (!isOwner && !isAdmin) {
+  if (artwork.userId !== actor.id) {
     throw new Error("Anda bukan pemilik karya ini.");
   }
 

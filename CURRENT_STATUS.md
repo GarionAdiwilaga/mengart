@@ -147,16 +147,16 @@
     - Pre-deadline replacement preserves the existing artwork slug and records an audit log.
   - Additive Artwork Spoiler Presentation:
     - Added `artworks.is_spoiler` boolean (`NOT NULL DEFAULT false`) serialized across all 8 surfaces with zero impact on ACL, voting, or Stars.
-  - Focused QA Corrections (Gate E Hardening):
-    - Live in-transaction ACTIVE ownership assertions and row-level locking on all ordinary artwork mutations (`createArtworkUploadService`, `updateArtworkService`, `toggleArtworkSpoilerService`, `deleteArtworkService`).
-    - Separation of portfolio discovery state (`is_visible`) from direct detail authorization (`canViewArtwork` / Gate A/D audience policy).
-    - Non-portfolio challenge backing artworks strictly restricted to owner or active staff (suspended staff denied bypass).
-    - Hardened media processing pipeline with safe image decode limits, EXIF/ICC metadata stripping, ffmpeg/ffprobe video transcode/thumbnailing, usable non-empty derivative guarantees (`stat.size > 0`), and internal partial-file cleanup on processing error.
-    - Post-commit cache/path revalidations isolated outside the media cleanup try/catch block.
-    - Functional custom-caption authoring modal and inputs wired in `PortfolioItemActions.tsx` and `/me/portfolio` to `updatePortfolioCustomCaptionAction`.
+  - Final Closure QA Corrections (Gate E Media Security & Invariant Hardening):
+    - P0 Elimination of FFmpeg/FFprobe shell-command injection: Replaced shell string execution with `execFile` (`shell: false`) and argument arrays. Decoupled disk storage extensions completely from untrusted client filenames, deriving strictly from validated internal magic bytes/media types.
+    - Elimination of 60-second video duration cap: Fully aligned with Blueprint 2.2.2 ($\le 50$MB, no duration limit).
+    - Superseded media & version row cleanup: On replacement commit, old version rows are deleted in-tx and old media files are unlinked post-commit. On rollback, old media remains authoritative and newly staged media is cleaned.
+    - Exhaustive partial-file cleanup: Tracked all attempt paths (`masterPath`, `publicPath`, `thumbPath`, `posterTempPath`) and unlinked all attempted files upon processing errors (verified 0 orphan files remain on disk).
+    - Strict owner-only presentation mutations: `updateArtworkService` and `toggleArtworkSpoilerService` strictly require `artwork.userId === actor.id` (Active Admin bypass blocked).
+    - Elimination of Vault Selection & Obsolete Controls: Removed "Pilih dari Vault" modal and `existingArtworkVersionId` plumbing; removed obsolete `allowRevisions` checkbox from challenge admin form.
   - Verification Matrix:
     - `scripts/verifyMigrations.ts`: 9/9 migration scenarios passed (including Scenario 9A dirty fail-closed and Scenario 9B clean 0011 -> 0012 upgrade).
-    - `src/lib/__tests__/testGateESubmissionAndPortfolio.ts`: 56/56 scenarios passed.
+    - `src/lib/__tests__/testGateESubmissionAndPortfolio.ts`: 60/60 scenarios passed.
     - `npm run test:all`: 15/15 test suites passed cleanly.
     - `npm run lint`: 0 errors.
     - `npm run build`: Next.js production build and worker bundle compiled cleanly.
@@ -164,7 +164,7 @@
 - **Phase 7: Release Gate G (Community UX, Story Cards, A11y & Playwright E2E):** PENDING REVIEW
 - **Phase 8: Release Gate H (Disaster Recovery & Runtime Concurrency):** PENDING REVIEW
 
-## Addressed QA IDs in Phase 1, Phase 2, Phase 3, Phase 4 & Phase 5 (Gate A, B, C, D Closed; Gate E PENDING QA)
+## Addressed QA IDs in Phase 1, Phase 2, Phase 3, Phase 4 & Phase 5 (Gate A, B, C, D Closed; Gate E Final Closure Ready for QA)
 - **QA-P0-001** (Database migration reproducibility & authoritative production backfill): RESOLVED & VERIFIED
 - **QA-P0-002** (Per-round ballot uniqueness & multi-round tiebreak support): RESOLVED & VERIFIED
 - **QA-P0-003** (Google-only authentication, invitation-gated onboarding & PENDING_INVITE separation): RESOLVED & VERIFIED
@@ -178,17 +178,19 @@
 - **QA-P0-011** (Persist only actual winners/awards; zero empty slots): RESOLVED & VERIFIED
 - **QA-P0-012** (No synthetic jury ranks / #null; single Community Winner highlight): RESOLVED & VERIFIED
 - **QA-P0-013** (Direct canonical submission schema, portfolio auto-add, safe slug collision retry, in-tx ACTIVE ownership & usable media invariants): RESOLVED & VERIFIED
+- **QA-P0-014** (P0 FFmpeg/FFprobe shell injection elimination, video duration cap removal, superseded media cleanup, exhaustive partial file cleanup, strict owner-only mutations): RESOLVED & VERIFIED
 - **QA-P1-007** (Pause/resume deadline validation with round deadlines): RESOLVED & VERIFIED
 - **QA-P1-008** (RESULTS_REVOKED status, notice banner, snapshot audit & flow): RESOLVED & VERIFIED
 
 ## Current Branch
-`main` (Gate D Baseline: `46ccdca661de9240ff364ee63d9f5ccb5ca242bc`)
+`main` (Base Candidate SHA: `7ecde8896173db4de4f7c2a75069023bd7da911d`)
 
 ## Current Focus
-- Gate E implementation and focused QA corrections complete and 100% verified across all 56 test scenarios, migration verification suite, linter, and production build. Ready for independent QA review.
+- Gate E final closure corrections complete and 100% verified across all 60 test scenarios, full test suite matrix, linter, and production build. Ready for independent QA review.
 
 ## Overall Status
-- **NO-GO** (Until Gates E–H pass independent QA. Stop after Gate E).
+- **NO-GO** (Until Gates E–H pass independent QA. Hard stop after Gate E; do NOT start Gate F or Gate G).
+
 
 
 

@@ -63,7 +63,7 @@ import {
 } from "@/lib/services/challengeService";
 import { canViewArtwork, canAccessMasterMedia } from "@/lib/policy";
 import { handleGetArtworks } from "@/app/api/artworks/route";
-import { resolveStoragePath, ensureStorageDirectories } from "@/lib/storage";
+import { resolveStoragePath, ensureStorageDirectories, STORAGE_PATHS } from "@/lib/storage";
 
 async function runGateETestSuite() {
   console.log("\n=================================================================");
@@ -844,7 +844,24 @@ async function runGateETestSuite() {
   if (!nonOwnerUpdateBlocked) {
     throw new Error("Scenario 41 Failed: Non-owner member was allowed to update another member's artwork!");
   }
-  console.log("✓ Scenario 41 Passed: updateArtworkService enforces active ownership strictly.");
+
+  // Active Admin should ALSO be rejected from artist presentation mutations
+  let adminUpdateBlocked = false;
+  try {
+    await db.transaction(async (tx) => {
+      return await updateArtworkService(tx, {
+        actorUserId: adminUser.id,
+        artworkId: ordinaryArtwork.id,
+        title: "Admin Hacked Title",
+      });
+    });
+  } catch (err: any) {
+    adminUpdateBlocked = true;
+  }
+  if (!adminUpdateBlocked) {
+    throw new Error("Scenario 41 Failed: Active Admin was allowed to update another member's artwork metadata!");
+  }
+  console.log("✓ Scenario 41 Passed: updateArtworkService enforces strict active ownership (Admin non-owner blocked).");
 
   // Scenario 42: updateArtworkService by SUSPENDED user rejected
   console.log("-> [Scenario 42] updateArtworkService by SUSPENDED user rejected...");
@@ -894,6 +911,22 @@ async function runGateETestSuite() {
   }
   if (!nonOwnerSpoilerBlocked) {
     throw new Error("Scenario 43 Failed: Non-owner was allowed to toggle artwork spoiler!");
+  }
+
+  let adminSpoilerBlocked = false;
+  try {
+    await db.transaction(async (tx) => {
+      return await toggleArtworkSpoilerService(tx, {
+        actorUserId: adminUser.id,
+        artworkId: ordinaryArtwork.id,
+        isSpoiler: false,
+      });
+    });
+  } catch {
+    adminSpoilerBlocked = true;
+  }
+  if (!adminSpoilerBlocked) {
+    throw new Error("Scenario 43 Failed: Active Admin was allowed to toggle spoiler on non-owned artwork!");
   }
 
   let suspendedSpoilerBlocked = false;
@@ -1243,8 +1276,233 @@ async function runGateETestSuite() {
   }
   console.log("✓ Scenario 56 Passed: Committed media remains intact after post-commit error.");
 
+  // Scenario 57: P0 FFmpeg/FFprobe shell-command injection prevention with hazardous filenames
+  console.log("-> [Scenario 57] P0: Testing hazardous filenames with shell metacharacters...");
+  const pwnFlagPath = "/tmp/mengart_test_pwned_shell_flag";
+  await fs.unlink(pwnFlagPath).catch(() => {});
+
+  const hazardousFilenames = [
+    `$(touch ${pwnFlagPath}).png`,
+    `test\`touch ${pwnFlagPath}\`.png`,
+    `test"quote';touch ${pwnFlagPath}.png`,
+    `foo; touch ${pwnFlagPath}.mp4`,
+    `spaces & | > < shell metachars.mp4`,
+  ];
+
+  for (const hName of hazardousFilenames) {
+    const isVid = hName.endsWith(".mp4");
+    const testBuf = isVid ? sampleVideoBuf : dummyCommitBuf;
+    const testMime = isVid ? "video/mp4" : "image/png";
+
+    const stagedHazard = await stageAndPromoteMedia({
+      buffer: testBuf,
+      name: hName,
+      type: testMime,
+      size: testBuf.length,
+    });
+
+    // 1. Verify no shell flag file was created
+    let pwnFlagExists = false;
+    try {
+      await fs.access(pwnFlagPath);
+      pwnFlagExists = true;
+    } catch (_err) {
+      // Flag should not exist
+      pwnFlagExists = false;
+    }
+
+    if (pwnFlagExists) {
+      throw new Error(`Scenario 57 Failed: Shell injection occurred with filename '${hName}'!`);
+    }
+
+    // 2. Verify storage keys use internal deterministic extensions and have no shell metacharacters
+    if (stagedHazard.masterStorageKey.includes(";") || stagedHazard.masterStorageKey.includes("$") || stagedHazard.masterStorageKey.includes("`") || stagedHazard.masterStorageKey.includes(" ")) {
+      throw new Error(`Scenario 57 Failed: Stored storage key contains unescaped client metacharacters: ${stagedHazard.masterStorageKey}`);
+    }
+
+    const expectedExt = isVid ? ".mp4" : ".png";
+    if (!stagedHazard.masterStorageKey.endsWith(expectedExt)) {
+      throw new Error(`Scenario 57 Failed: Expected extension ${expectedExt}, got key ${stagedHazard.masterStorageKey}`);
+    }
+
+    await cleanupPromotedMedia(stagedHazard);
+  }
+  console.log("✓ Scenario 57 Passed: Zero shell interpretation occurred across hazardous filenames.");
+
+  // Scenario 58: Video duration >60 seconds allowed (no duration cap per Blueprint 2.2.2)
+  console.log("-> [Scenario 58] Video duration >60 seconds permitted (no duration limit)...");
+  const longVideoTemp = resolveStoragePath("temp", `long_video_test_${suffix}.mp4`);
+  await execAsync(`ffmpeg -y -f lavfi -i testsrc=duration=75:size=160x120:rate=10 -pix_fmt yuv420p "${longVideoTemp}"`);
+  const longVideoBuf = await fs.readFile(longVideoTemp);
+  await fs.unlink(longVideoTemp).catch(() => {});
+
+  const longVideoStaged = await stageAndPromoteMedia({
+    buffer: longVideoBuf,
+    name: "long_75s_animation.mp4",
+    type: "video/mp4",
+    size: longVideoBuf.length,
+  });
+
+  const lvMasterPath = resolveStoragePath("master", longVideoStaged.masterStorageKey);
+  const lvStat = await fs.stat(lvMasterPath);
+  if (lvStat.size === 0) {
+    throw new Error("Scenario 58 Failed: >60s video was not staged properly.");
+  }
+  await cleanupPromotedMedia(longVideoStaged);
+  console.log("✓ Scenario 58 Passed: >60s video accepted and processed cleanly.");
+
+  // Scenario 59: Clean superseded media after successful replacement
+  console.log("-> [Scenario 59] Clean superseded media and obsolete version rows after successful replacement...");
+  const [chScenario59] = await db
+    .insert(challenges)
+    .values({
+      title: "Replacement Test Challenge",
+      slug: `ch-repl-test-${suffix}`,
+      theme: "Replacement Theme",
+      description: "Replacement Desc",
+      promptRules: "Replacement Prompt Rules",
+      status: "submission_open",
+      submissionDeadline: new Date(Date.now() + 86400000),
+      votingDeadline: new Date(Date.now() + 172800000),
+      awardMode: "vote_only",
+      starsPerMember: 1,
+    })
+    .returning();
+
+  // 1. Initial Challenge Submission (v1)
+  const subV1Buf = await createDummyImageBuffer("submission_v1");
+  const subV1 = await createChallengeSubmissionService({
+    actorUserId: artist1.id,
+    challengeId: chScenario59.id,
+    title: "Version 1 Submission",
+    description: "Initial submission",
+    file: {
+      buffer: subV1Buf,
+      name: "sub_v1.png",
+      type: "image/png",
+      size: subV1Buf.length,
+    },
+  });
+
+  const v1Master = resolveStoragePath("master", subV1.version.masterStorageKey);
+  const v1Public = resolveStoragePath("public", subV1.version.publicStorageKey!);
+  const v1Thumb = resolveStoragePath("public", subV1.version.thumbnailStorageKey!);
+
+  // Assert v1 files exist
+  await Promise.all([fs.stat(v1Master), fs.stat(v1Public), fs.stat(v1Thumb)]);
+
+  // 2. Perform Replacement (v2)
+  const subV2Buf = await createDummyImageBuffer("submission_v2");
+  const subV2 = await replaceChallengeSubmissionMediaService({
+    actorUserId: artist1.id,
+    submissionId: subV1.submission.id,
+    title: "Version 2 Replaced Submission",
+    file: {
+      buffer: subV2Buf,
+      name: "sub_v2.png",
+      type: "image/png",
+      size: subV2Buf.length,
+    },
+  });
+
+  const [v2Ver] = await db
+    .select()
+    .from(artworkVersions)
+    .where(eq(artworkVersions.id, subV2.artworkVersionId));
+
+  const v2Master = resolveStoragePath("master", v2Ver.masterStorageKey);
+  const v2Public = resolveStoragePath("public", v2Ver.publicStorageKey!);
+  const v2Thumb = resolveStoragePath("public", v2Ver.thumbnailStorageKey!);
+
+  // Assert v2 files exist
+  await Promise.all([fs.stat(v2Master), fs.stat(v2Public), fs.stat(v2Thumb)]);
+
+  // Assert v1 files are deleted from disk
+  let v1MasterExists = true;
+  try {
+    await fs.access(v1Master);
+  } catch {
+    v1MasterExists = false;
+  }
+  if (v1MasterExists) {
+    throw new Error("Scenario 59 Failed: Superseded v1 master media file was not cleaned from disk!");
+  }
+
+  // Assert DB contains only 1 artwork version row for this backing artwork
+  const allArtworkVersions = await db
+    .select()
+    .from(artworkVersions)
+    .where(eq(artworkVersions.artworkId, subV1.artwork.id));
+
+  if (allArtworkVersions.length !== 1 || allArtworkVersions[0].id !== v2Ver.id) {
+    throw new Error(`Scenario 59 Failed: Expected exactly 1 active version row in DB, found ${allArtworkVersions.length}`);
+  }
+
+  // 3. Rollback Replacement Test: Failed replacement keeps v2 intact and cleans v3 staged media
+  const subV3Buf = await createDummyImageBuffer("submission_v3_fail");
+  let rollbackReplacementBlocked = false;
+  try {
+    // Attempt replacement by non-owner to force in-tx abort
+    await replaceChallengeSubmissionMediaService({
+      actorUserId: artist2.id, // non-owner
+      submissionId: subV1.submission.id,
+      title: "Hacked Replacement",
+      file: {
+        buffer: subV3Buf,
+        name: "sub_v3_fail.png",
+        type: "image/png",
+        size: subV3Buf.length,
+      },
+    });
+  } catch (err: any) {
+    rollbackReplacementBlocked = true;
+  }
+
+  if (!rollbackReplacementBlocked) {
+    throw new Error("Scenario 59 Failed: Unauthorized replacement should have aborted!");
+  }
+
+  // Verify v2 remains authoritative and intact on disk and DB
+  const v2StatAfterRollback = await fs.stat(v2Master);
+  if (v2StatAfterRollback.size === 0) {
+    throw new Error("Scenario 59 Failed: v2 media was damaged after aborted replacement!");
+  }
+
+  console.log("✓ Scenario 59 Passed: Superseded media cleaned on commit; authoritative media preserved on rollback.");
+
+  // Scenario 60: Forced processing failure exhaustive partial-file cleanup
+  console.log("-> [Scenario 60] Exhaustive partial file cleanup verification...");
+  const masterFilesBefore = await fs.readdir(STORAGE_PATHS.master);
+  const publicFilesBefore = await fs.readdir(STORAGE_PATHS.public);
+  const tempFilesBefore = await fs.readdir(STORAGE_PATHS.temp);
+
+  let corruptHeaderFailed = false;
+  try {
+    await stageAndPromoteMedia({
+      buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x01]),
+      name: "truncated.png",
+      type: "image/png",
+      size: 12,
+    });
+  } catch {
+    corruptHeaderFailed = true;
+  }
+
+  if (!corruptHeaderFailed) {
+    throw new Error("Scenario 60 Failed: Truncated PNG was expected to fail.");
+  }
+
+  const masterFilesAfter = await fs.readdir(STORAGE_PATHS.master);
+  const publicFilesAfter = await fs.readdir(STORAGE_PATHS.public);
+  const tempFilesAfter = await fs.readdir(STORAGE_PATHS.temp);
+
+  if (masterFilesAfter.length !== masterFilesBefore.length || publicFilesAfter.length !== publicFilesBefore.length || tempFilesAfter.length !== tempFilesBefore.length) {
+    throw new Error(`Scenario 60 Failed: Storage directory file count grew after processing failure! Master: ${masterFilesBefore.length}->${masterFilesAfter.length}, Public: ${publicFilesBefore.length}->${publicFilesAfter.length}, Temp: ${tempFilesBefore.length}->${tempFilesAfter.length}`);
+  }
+  console.log("✓ Scenario 60 Passed: Zero partial/orphan files remained after forced processing failure.");
+
   console.log("\n=================================================================");
-  console.log("🎉 ALL PRODUCTION SCENARIOS IN GATE E TEST SUITE PASSED!");
+  console.log("🎉 ALL 60 PRODUCTION SCENARIOS IN GATE E TEST SUITE PASSED!");
   console.log("=================================================================\n");
   process.exit(0);
 }

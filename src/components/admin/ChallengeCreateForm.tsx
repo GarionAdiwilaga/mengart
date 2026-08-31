@@ -162,18 +162,6 @@ export function ChallengeCreateForm() {
               className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-xs font-mono"
             />
           </div>
-
-          <div className="flex flex-col gap-1.5 justify-end">
-            <label className="flex items-center gap-2 p-2.5 rounded-xl bg-white/5 border border-white/10 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={allowRevisions}
-                onChange={(e) => setAllowRevisions(e.target.checked)}
-                className="h-4 w-4 rounded border-white/20 bg-black/50 text-amber-500 focus:ring-amber-500"
-              />
-              <span className="text-xs font-medium text-zinc-200">Izinkan Revisi Submisi</span>
-            </label>
-          </div>
         </div>
       </section>
 

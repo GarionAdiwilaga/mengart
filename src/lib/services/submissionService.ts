@@ -2,7 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import crypto from "crypto";
 import sharp from "sharp";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { db } from "@/db";
 import {
@@ -23,7 +23,7 @@ import {
   ensureStorageDirectories,
 } from "@/lib/storage";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 /**
  * Validate buffer magic bytes against expected media format
@@ -95,7 +95,7 @@ export interface StagedMediaResult {
 
 /**
  * Validates, processes derivatives, and promotes media files to durable unreferenced storage keys.
- * Implements safe decode limits, metadata stripping, usable non-empty derivatives, and internal partial-file cleanup.
+ * Implements safe decode limits, metadata stripping, usable non-empty derivatives, and exhaustive partial-file cleanup.
  */
 export async function stageAndPromoteMedia(file: {
   buffer: Buffer;
@@ -105,7 +105,6 @@ export async function stageAndPromoteMedia(file: {
 }): Promise<StagedMediaResult> {
   await ensureStorageDirectories();
 
-  const ext = path.extname(file.name).toLowerCase() || ".png";
   let mediaType: "image" | "gif" | "video" = "image";
   if (file.type.startsWith("video/")) {
     mediaType = "video";
@@ -125,16 +124,40 @@ export async function stageAndPromoteMedia(file: {
   }
 
   const checksumSha256 = crypto.createHash("sha256").update(file.buffer).digest("hex");
-  const masterStorageKey = generateStorageKey("master", ext.replace(".", "") || (mediaType === "video" ? "mp4" : "png"));
-  const publicExt = mediaType === "video" ? "mp4" : ext === ".gif" ? "gif" : "webp";
+
+  // Derive storage extensions strictly from validated internal media type & magic bytes (NEVER from raw file.name)
+  let masterExt = "png";
+  let publicExt = "webp";
+  if (mediaType === "video") {
+    masterExt = "mp4";
+    publicExt = "mp4";
+  } else if (mediaType === "gif") {
+    masterExt = "gif";
+    publicExt = "gif";
+  } else if (mediaType === "image") {
+    const hex = file.buffer.subarray(0, 4).toString("hex").toLowerCase();
+    if (hex.startsWith("ffd8")) {
+      masterExt = "jpg";
+    } else if (hex.startsWith("8950")) {
+      masterExt = "png";
+    } else if (hex.startsWith("5249")) {
+      masterExt = "webp";
+    } else {
+      masterExt = "png";
+    }
+    publicExt = "webp";
+  }
+
+  const masterStorageKey = generateStorageKey("master", masterExt);
   const publicStorageKey = generateStorageKey("public", publicExt);
   const thumbnailStorageKey = generateStorageKey("thumb", "webp");
 
   const masterPath = resolveStoragePath("master", masterStorageKey);
   const publicPath = resolveStoragePath("public", publicStorageKey);
   const thumbPath = resolveStoragePath("public", thumbnailStorageKey);
+  const posterTempPath = resolveStoragePath("temp", `poster_${Date.now()}_${crypto.randomBytes(4).toString("hex")}.png`);
 
-  const writtenFiles: string[] = [];
+  const attemptPaths = [masterPath, publicPath, thumbPath, posterTempPath];
 
   try {
     let width: number | null = null;
@@ -150,7 +173,6 @@ export async function stageAndPromoteMedia(file: {
 
       // 1. Write Clean Master (Metadata stripped)
       await sharp(file.buffer, { limitInputPixels: 50000000 }).toFile(masterPath);
-      writtenFiles.push(masterPath);
 
       // 2. Generate Watermarked Public Derivative (.webp)
       if (width && height) {
@@ -168,14 +190,12 @@ export async function stageAndPromoteMedia(file: {
           .webp({ quality: 82 })
           .toFile(publicPath);
       }
-      writtenFiles.push(publicPath);
 
       // 3. Generate Thumbnail (.webp)
       await sharp(file.buffer, { limitInputPixels: 50000000 })
         .resize(400, 400, { fit: "cover", position: "center" })
         .webp({ quality: 80 })
         .toFile(thumbPath);
-      writtenFiles.push(thumbPath);
     } else if (mediaType === "gif") {
       const gif = sharp(file.buffer, { animated: true, limitInputPixels: 50000000 });
       const meta = await gif.metadata();
@@ -183,25 +203,30 @@ export async function stageAndPromoteMedia(file: {
       height = meta.height || null;
 
       await sharp(file.buffer, { animated: true }).toFile(masterPath);
-      writtenFiles.push(masterPath);
-
       await sharp(file.buffer, { animated: true }).toFile(publicPath);
-      writtenFiles.push(publicPath);
 
       await sharp(file.buffer, { page: 0 })
         .resize(400, 400, { fit: "cover", position: "center" })
         .webp({ quality: 80 })
         .toFile(thumbPath);
-      writtenFiles.push(thumbPath);
     } else if (mediaType === "video") {
       // 1. Write Master Video
       await fs.writeFile(masterPath, file.buffer);
-      writtenFiles.push(masterPath);
 
-      // 2. ffprobe duration & dimensions
+      // 2. ffprobe duration & dimensions via execFile (NO SHELL INTERPRETATION)
       try {
-        const { stdout: probeOut } = await execAsync(
-          `ffprobe -v error -show_entries format=duration:stream=width,height -of default=noprint_wrappers=1:nokey=1 "${masterPath}"`
+        const { stdout: probeOut } = await execFileAsync(
+          "ffprobe",
+          [
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration:stream=width,height",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            masterPath,
+          ],
+          { shell: false }
         );
         const lines = probeOut.trim().split("\n");
         if (lines.length >= 2) {
@@ -209,34 +234,56 @@ export async function stageAndPromoteMedia(file: {
           height = parseInt(lines[1], 10) || null;
           durationSeconds = parseFloat(lines[lines.length - 1]) || null;
         }
-
-        if (durationSeconds && durationSeconds > 60) {
-          throw new Error(`Durasi video (${Math.round(durationSeconds)}s) melebihi batas maksimal 60 detik.`);
-        }
       } catch (probeErr: any) {
-        if (probeErr?.message?.includes("melebihi batas")) {
-          throw probeErr;
-        }
         console.warn("ffprobe inspection note:", probeErr?.message);
       }
 
-      // 3. Transcode public video derivative via ffmpeg
-      await execAsync(
-        `ffmpeg -y -i "${masterPath}" -c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p -movflags +faststart -map_metadata -1 "${publicPath}"`
+      // 3. Transcode public video derivative via ffmpeg (NO SHELL INTERPRETATION)
+      await execFileAsync(
+        "ffmpeg",
+        [
+          "-y",
+          "-i",
+          masterPath,
+          "-c:v",
+          "libx264",
+          "-preset",
+          "medium",
+          "-crf",
+          "23",
+          "-pix_fmt",
+          "yuv420p",
+          "-movflags",
+          "+faststart",
+          "-map_metadata",
+          "-1",
+          publicPath,
+        ],
+        { shell: false }
       );
-      writtenFiles.push(publicPath);
 
-      // 4. Extract video poster at 0s & generate thumbnail
-      const posterTempPath = resolveStoragePath("temp", `poster_${Date.now()}_${crypto.randomBytes(4).toString("hex")}.png`);
+      // 4. Extract video poster at 0s & generate thumbnail (NO SHELL INTERPRETATION)
       try {
-        await execAsync(
-          `ffmpeg -y -ss 00:00:00 -i "${masterPath}" -vframes 1 -q:v 2 "${posterTempPath}"`
+        await execFileAsync(
+          "ffmpeg",
+          [
+            "-y",
+            "-ss",
+            "00:00:00",
+            "-i",
+            masterPath,
+            "-vframes",
+            "1",
+            "-q:v",
+            "2",
+            posterTempPath,
+          ],
+          { shell: false }
         );
         await sharp(posterTempPath)
           .resize(400, 400, { fit: "cover", position: "center" })
           .webp({ quality: 80 })
           .toFile(thumbPath);
-        writtenFiles.push(thumbPath);
       } finally {
         await fs.unlink(posterTempPath).catch(() => {});
       }
@@ -258,17 +305,25 @@ export async function stageAndPromoteMedia(file: {
       thumbnailStorageKey,
       checksumSha256,
       mimeType: file.type || "application/octet-stream",
-      fileSizeBytes: file.size || file.buffer.length,
+      fileSizeBytes: file.size,
       width,
       height,
       mediaType,
     };
   } catch (err) {
-    // Internal Partial Processing Failure Cleanup: Unlink all files written during this attempt
-    for (const filePath of writtenFiles) {
-      await fs.unlink(filePath).catch(() => {});
-    }
+    // Exhaustive cleanup: unlink all attempt paths
+    await Promise.allSettled(
+      attemptPaths.map(async (filePath) => {
+        try {
+          await fs.unlink(filePath);
+        } catch (_e) {
+          // Ignore missing file during exhaustive cleanup
+        }
+      })
+    );
     throw err;
+  } finally {
+    await fs.unlink(posterTempPath).catch(() => {});
   }
 }
 
@@ -522,8 +577,14 @@ export async function replaceChallengeSubmissionMediaService(params: {
     staged = await stageAndPromoteMedia(params.file);
   }
 
+  let oldMediaToClean: {
+    masterStorageKey?: string | null;
+    publicStorageKey?: string | null;
+    thumbnailStorageKey?: string | null;
+  } | null = null;
+
   try {
-    return await db.transaction(async (tx) => {
+    const updatedSub = await db.transaction(async (tx) => {
       const actor = await assertActiveMember(tx, params.actorUserId);
 
       // Lock submission FOR UPDATE
@@ -564,6 +625,21 @@ export async function replaceChallengeSubmissionMediaService(params: {
       let newArtworkVersionId = submission.artworkVersionId;
 
       if (staged) {
+        // 1. Capture old version and storage keys before swapping
+        const [oldVersion] = await tx
+          .select()
+          .from(artworkVersions)
+          .where(eq(artworkVersions.id, submission.artworkVersionId))
+          .for("update");
+
+        if (oldVersion) {
+          oldMediaToClean = {
+            masterStorageKey: oldVersion.masterStorageKey,
+            publicStorageKey: oldVersion.publicStorageKey,
+            thumbnailStorageKey: oldVersion.thumbnailStorageKey,
+          };
+        }
+
         // Fetch current max version for this backing artwork
         const [maxVer] = await tx
           .select({ versionNumber: artworkVersions.versionNumber })
@@ -594,6 +670,7 @@ export async function replaceChallengeSubmissionMediaService(params: {
 
         newArtworkVersionId = newVersion.id;
 
+        // Update artwork currentVersionId
         await tx
           .update(artworks)
           .set({
@@ -601,14 +678,29 @@ export async function replaceChallengeSubmissionMediaService(params: {
             updatedAt: new Date(),
           })
           .where(eq(artworks.id, submission.artworkId));
+
+        // Update challenge_submissions to point to newVersion.id
+        await tx
+          .update(challengeSubmissions)
+          .set({
+            artworkVersionId: newArtworkVersionId,
+          })
+          .where(eq(challengeSubmissions.id, submission.id));
+
+        // Delete obsolete old version row from DB
+        if (oldVersion) {
+          await tx
+            .delete(artworkVersions)
+            .where(eq(artworkVersions.id, oldVersion.id));
+        }
       }
 
       const newTitle = params.title !== undefined ? params.title.trim() : submission.title;
       const newDescription = params.description !== undefined ? (params.description?.trim() || null) : submission.description;
       const newSoftware = params.softwareUsed !== undefined ? (params.softwareUsed?.trim() || null) : submission.softwareUsed;
 
-      // Update challenge_submissions
-      const [updatedSub] = await tx
+      // Update challenge_submissions metadata
+      const [finalSub] = await tx
         .update(challengeSubmissions)
         .set({
           artworkVersionId: newArtworkVersionId,
@@ -644,8 +736,15 @@ export async function replaceChallengeSubmissionMediaService(params: {
         reason: `Penggantian media / metadata submisi challenge '${challenge.title}'.`,
       });
 
-      return updatedSub;
+      return finalSub;
     });
+
+    // POST-COMMIT: Clean up obsolete previous media files from disk
+    if (oldMediaToClean) {
+      await cleanupPromotedMedia(oldMediaToClean);
+    }
+
+    return updatedSub;
   } catch (err) {
     if (staged) {
       await cleanupPromotedMedia(staged);

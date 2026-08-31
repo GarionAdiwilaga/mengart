@@ -44,26 +44,6 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
     ? await getUserChallengeSubmission(challenge.id, userId)
     : null;
 
-  // Fetch member's portfolio artworks for picking from vault
-  const memberArtworks = userId
-    ? await db
-        .select({
-          versionId: artworkVersions.id,
-          title: artworks.title,
-          thumbnailStorageKey: artworkVersions.thumbnailStorageKey,
-        })
-        .from(artworks)
-        .innerJoin(artworkVersions, eq(artworkVersions.id, artworks.currentVersionId))
-        .where(eq(artworks.userId, userId))
-        .orderBy(desc(artworks.createdAt))
-    : [];
-
-  const portfolioOptions = memberArtworks.map((a) => ({
-    versionId: a.versionId,
-    title: a.title,
-    thumbnailUrl: a.thumbnailStorageKey ? `/api/media/public/${a.thumbnailStorageKey}` : null,
-  }));
-
   // Fetch all candidate submissions
   const candidates = await getChallengeCandidates(challenge.id);
 
@@ -307,7 +287,6 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
                       initialTitle={userSubmission.currentVersion.title}
                       initialDescription={userSubmission.currentVersion.description || ""}
                       initialSoftware={userSubmission.currentVersion.softwareUsed || ""}
-                      portfolioArtworks={portfolioOptions}
                     />
                   ) : null}
                 </div>
@@ -323,7 +302,6 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
                     <ChallengeSubmissionModal
                       challengeId={challenge.id}
                       challengeTitle={challenge.title}
-                      portfolioArtworks={portfolioOptions}
                     />
                   ) : null}
                 </div>
