@@ -367,4 +367,15 @@
 **Business Rule:** Deleting an artwork cannot delete a challenge submission (`ON DELETE RESTRICT`). Challenge submissions are hidden from portfolios until finish, then auto-added. Artists can toggle visibility and customize captions. Artwork slugs are immutable upon version replacement.
 **Reason:** Fulfills authoritative Blueprint 2.2.2 requirements and QA directives for Gate E.
 
+### Gate E: Focused QA Corrections & Implementation Authorization Hardening
+**Decision:** Applied 5 focused QA corrections to Gate E:
+1. **In-Transaction Active Ownership on Ordinary Artwork Mutations:** `createArtworkUploadService`, `updateArtworkService`, `toggleArtworkSpoilerService`, and `deleteArtworkService` execute inside transactions, assert active membership (`assertActiveMember(tx, actorUserId)`), lock targets FOR UPDATE, and verify ownership against live DB state.
+2. **Separation of Portfolio Discovery State from Direct Detail Authorization:** `portfolio_entries.isVisible` strictly controls discovery (gallery, profile, sitemap). Direct slug access (`/artworks/[slug]`) enforces Gate A/D audience policy (`canViewArtwork`). Artworks with no portfolio entry (in-progress challenge submissions) are denied to ordinary third parties and restricted to the owner or live ACTIVE staff (suspended staff denied bypass).
+3. **Hardened Media Processing & Usable Derivative Invariants:** `stageAndPromoteMedia` enforces safe decode limits (`limitInputPixels: 50000000`), EXIF/ICC metadata stripping, and ffmpeg/ffprobe video processing with public mp4 transcode and poster extraction. Guarantees all derivatives are usable and non-empty (`stat.size > 0`), and unlinks all partial files on processing errors.
+4. **Post-Commit Cleanup Boundary:** In all upload and submission actions, post-commit cache/path revalidations execute outside the media cleanup try/catch block, ensuring that committed DB-referenced media is never deleted if a revalidation warning occurs.
+5. **Custom-Caption Artist UI:** Wired functional custom-caption authoring modal and inputs in `PortfolioItemActions.tsx` and `/me/portfolio` to `updatePortfolioCustomCaptionAction`, allowing artists to author or reset overrides while preserving `custom_caption ?? system_caption ?? null`.
+**Business Rule:** Ordinary artwork mutations must assert active membership and acquire row locks in transaction. Portfolio visibility does not restrict direct slug access for published artworks. Non-portfolio challenge artworks are restricted to owner or active staff. Committed media cannot be deleted by downstream revalidation failures.
+**Reason:** Fulfills independent QA directives to ensure robust multi-tenant authorization, file integrity, and UI completion for Gate E.
+
+
 

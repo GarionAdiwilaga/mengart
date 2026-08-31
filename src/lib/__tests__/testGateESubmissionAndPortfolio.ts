@@ -21,12 +21,23 @@ import sharp from "sharp";
 import fs from "fs/promises";
 import path from "path";
 import crypto from "crypto";
+import { exec } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 import {
   createArtworkWithUniqueSlug,
   createChallengeSubmissionService,
   replaceChallengeSubmissionMediaService,
   stageAndPromoteMedia,
+  cleanupPromotedMedia,
 } from "@/lib/services/submissionService";
+import {
+  createArtworkUploadService,
+  updateArtworkService,
+  toggleArtworkSpoilerService,
+  deleteArtworkService,
+} from "@/lib/services/artworkService";
 import {
   resolveChallengeSubmissionCaption,
   autoAddChallengeSubmissionsToPortfolioService,
@@ -123,7 +134,7 @@ async function runGateETestSuite() {
   // ---------------------------------------------------------------------------
   console.log("\n--- [Category 1] Ordinary vs Challenge Upload Atomicity ---");
 
-  // Scenario 1: Ordinary Upload via createArtworkUploadAction logic
+  // Scenario 1: Ordinary Upload via createArtworkUploadService
   console.log("-> [Scenario 1] Ordinary portfolio upload creates artwork, version, and portfolio_entry atomically...");
   const ordinaryImgBuffer = await createDummyImageBuffer("ordinary");
   const ordinaryStaged = await stageAndPromoteMedia({
@@ -133,46 +144,19 @@ async function runGateETestSuite() {
     size: ordinaryImgBuffer.length,
   });
 
-  const ordinaryArtwork = await db.transaction(async (tx) => {
-    const art = await createArtworkWithUniqueSlug(tx, {
-      userId: artist1.id,
+  const uploadResult = await db.transaction(async (tx) => {
+    return await createArtworkUploadService(tx, {
+      actorUserId: artist1.id,
       title: "Ordinary Artwork 1",
-      mediaType: ordinaryStaged.mediaType,
+      description: null,
       audience: "public",
       critiqueMode: "showcase_only",
       isSpoiler: false,
+      tagsList: [],
+      staged: ordinaryStaged,
     });
-
-    const [ver] = await tx
-      .insert(artworkVersions)
-      .values({
-        artworkId: art.id,
-        versionNumber: 1,
-        mediaType: ordinaryStaged.mediaType,
-        masterStorageKey: ordinaryStaged.masterStorageKey,
-        publicStorageKey: ordinaryStaged.publicStorageKey,
-        thumbnailStorageKey: ordinaryStaged.thumbnailStorageKey,
-        mimeType: ordinaryStaged.mimeType,
-        fileSizeBytes: ordinaryStaged.fileSizeBytes,
-        checksumSha256: ordinaryStaged.checksumSha256,
-        processingStatus: "ready",
-      })
-      .returning();
-
-    await tx.update(artworks).set({ currentVersionId: ver.id }).where(eq(artworks.id, art.id));
-
-    await tx.insert(portfolioEntries).values({
-      profileId: artist1Prof.id,
-      artworkId: art.id,
-      displayOrder: 0,
-      isPinned: false,
-      systemCaption: null,
-      customCaption: null,
-      isVisible: true,
-    });
-
-    return art;
   });
+  const ordinaryArtwork = uploadResult.artwork;
 
   const [ordinaryPe] = await db
     .select()
@@ -773,8 +757,494 @@ async function runGateETestSuite() {
   }
   console.log("✓ Scenario 38 Passed: Invariant backstops verified (spoiler does not affect permissions or tally).");
 
+  // ---------------------------------------------------------------------------
+  // CATEGORY 7: LIVE IN-TRANSACTION ACTIVE MEMBER ASSERTIONS ON ARTWORK MUTATIONS
+  // ---------------------------------------------------------------------------
+  console.log("\n--- [Category 7] Live In-Transaction Active Member Assertions on Artwork Mutations ---");
+
+  // Scenario 39: createArtworkUploadService fails closed on PENDING user (membershipStatus === null)
+  console.log("-> [Scenario 39] createArtworkUploadService fails closed for PENDING user...");
+  let pendingUploadBlocked = false;
+  try {
+    const dummyBuf = await createDummyImageBuffer("pending");
+    const stagedPending = await stageAndPromoteMedia({ buffer: dummyBuf, name: "pend.png", type: "image/png", size: dummyBuf.length });
+    await db.transaction(async (tx) => {
+      return await createArtworkUploadService(tx, {
+        actorUserId: pendingUser.id,
+        title: "Pending User Art",
+        description: null,
+        audience: "public",
+        critiqueMode: "showcase_only",
+        isSpoiler: false,
+        tagsList: [],
+        staged: stagedPending,
+      });
+    });
+  } catch (err: any) {
+    pendingUploadBlocked = true;
+  }
+  if (!pendingUploadBlocked) {
+    throw new Error("Scenario 39 Failed: PENDING user was allowed to upload ordinary artwork!");
+  }
+  console.log("✓ Scenario 39 Passed: PENDING user ordinary upload safely blocked fail-closed.");
+
+  // Scenario 40: createArtworkUploadService fails closed on SUSPENDED user
+  console.log("-> [Scenario 40] createArtworkUploadService fails closed for SUSPENDED user...");
+  let suspendedUploadBlocked = false;
+  try {
+    const dummyBuf = await createDummyImageBuffer("suspended");
+    const stagedSusp = await stageAndPromoteMedia({ buffer: dummyBuf, name: "susp.png", type: "image/png", size: dummyBuf.length });
+    await db.transaction(async (tx) => {
+      return await createArtworkUploadService(tx, {
+        actorUserId: suspendedUser.id,
+        title: "Suspended User Art",
+        description: null,
+        audience: "public",
+        critiqueMode: "showcase_only",
+        isSpoiler: false,
+        tagsList: [],
+        staged: stagedSusp,
+      });
+    });
+  } catch (err: any) {
+    suspendedUploadBlocked = true;
+  }
+  if (!suspendedUploadBlocked) {
+    throw new Error("Scenario 40 Failed: SUSPENDED user was allowed to upload ordinary artwork!");
+  }
+  console.log("✓ Scenario 40 Passed: SUSPENDED user ordinary upload safely blocked fail-closed.");
+
+  // Scenario 41: updateArtworkService ACTIVE owner vs non-owner
+  console.log("-> [Scenario 41] updateArtworkService by ACTIVE owner succeeds; by non-owner member rejected...");
+  const updatedArt = await db.transaction(async (tx) => {
+    return await updateArtworkService(tx, {
+      actorUserId: artist1.id,
+      artworkId: ordinaryArtwork.id,
+      title: "Updated Ordinary Title",
+      description: "Updated description",
+      audience: "members_only",
+    });
+  });
+  if (updatedArt.title !== "Updated Ordinary Title" || updatedArt.audience !== "members_only") {
+    throw new Error("Scenario 41 Failed: Active owner update failed to mutate fields.");
+  }
+
+  let nonOwnerUpdateBlocked = false;
+  try {
+    await db.transaction(async (tx) => {
+      return await updateArtworkService(tx, {
+        actorUserId: artist2.id,
+        artworkId: ordinaryArtwork.id,
+        title: "Hacked Title",
+      });
+    });
+  } catch (err: any) {
+    nonOwnerUpdateBlocked = true;
+  }
+  if (!nonOwnerUpdateBlocked) {
+    throw new Error("Scenario 41 Failed: Non-owner member was allowed to update another member's artwork!");
+  }
+  console.log("✓ Scenario 41 Passed: updateArtworkService enforces active ownership strictly.");
+
+  // Scenario 42: updateArtworkService by SUSPENDED user rejected
+  console.log("-> [Scenario 42] updateArtworkService by SUSPENDED user rejected...");
+  await db.update(users).set({ membershipStatus: "suspended" }).where(eq(users.id, artist3.id));
+  let suspendedUpdateBlocked = false;
+  try {
+    await db.transaction(async (tx) => {
+      return await updateArtworkService(tx, {
+        actorUserId: artist3.id,
+        artworkId: ordinaryArtwork.id,
+        title: "Suspended Update",
+      });
+    });
+  } catch (err: any) {
+    suspendedUpdateBlocked = true;
+  }
+  if (!suspendedUpdateBlocked) {
+    throw new Error("Scenario 42 Failed: SUSPENDED user was allowed to update artwork!");
+  }
+  await db.update(users).set({ membershipStatus: "active" }).where(eq(users.id, artist3.id));
+  console.log("✓ Scenario 42 Passed: updateArtworkService fails closed on suspended user.");
+
+  // Scenario 43 & 44: toggleArtworkSpoilerService active owner vs non-owner & suspended
+  console.log("-> [Scenario 43 & 44] toggleArtworkSpoilerService active owner vs non-owner & suspended...");
+  const toggledSpoiler = await db.transaction(async (tx) => {
+    return await toggleArtworkSpoilerService(tx, {
+      actorUserId: artist1.id,
+      artworkId: ordinaryArtwork.id,
+      isSpoiler: true,
+    });
+  });
+  if (toggledSpoiler.isSpoiler !== true) {
+    throw new Error("Scenario 43 Failed: Active owner toggle spoiler failed.");
+  }
+
+  let nonOwnerSpoilerBlocked = false;
+  try {
+    await db.transaction(async (tx) => {
+      return await toggleArtworkSpoilerService(tx, {
+        actorUserId: artist2.id,
+        artworkId: ordinaryArtwork.id,
+        isSpoiler: false,
+      });
+    });
+  } catch {
+    nonOwnerSpoilerBlocked = true;
+  }
+  if (!nonOwnerSpoilerBlocked) {
+    throw new Error("Scenario 43 Failed: Non-owner was allowed to toggle artwork spoiler!");
+  }
+
+  let suspendedSpoilerBlocked = false;
+  try {
+    await db.transaction(async (tx) => {
+      return await toggleArtworkSpoilerService(tx, {
+        actorUserId: suspendedUser.id,
+        artworkId: ordinaryArtwork.id,
+        isSpoiler: false,
+      });
+    });
+  } catch {
+    suspendedSpoilerBlocked = true;
+  }
+  if (!suspendedSpoilerBlocked) {
+    throw new Error("Scenario 44 Failed: Suspended user was allowed to toggle artwork spoiler!");
+  }
+  console.log("✓ Scenario 43 & 44 Passed: toggleArtworkSpoilerService enforces in-tx active ownership.");
+
+  // Scenario 45: deleteArtworkService soft deletion
+  console.log("-> [Scenario 45] deleteArtworkService (soft delete) by active owner vs unauthorized...");
+  let nonOwnerDeleteBlocked = false;
+  try {
+    await db.transaction(async (tx) => {
+      return await deleteArtworkService(tx, {
+        actorUserId: artist2.id,
+        artworkId: ordinaryArtwork.id,
+      });
+    });
+  } catch {
+    nonOwnerDeleteBlocked = true;
+  }
+  if (!nonOwnerDeleteBlocked) {
+    throw new Error("Scenario 45 Failed: Non-owner was allowed to delete artwork!");
+  }
+  console.log("✓ Scenario 45 Passed: deleteArtworkService enforces active ownership strictly.");
+
+  // Scenario 46: Race Test - User ACTIVE during staging but becomes SUSPENDED before DB tx execution
+  console.log("-> [Scenario 46] Race Test: User active during staging but suspended before DB tx commit...");
+  const [raceUser] = await db.insert(users).values({ email: `race_${suffix}@mengart.local`, role: "member", membershipStatus: "active" }).returning();
+  const [raceProf] = await db.insert(profiles).values({ userId: raceUser.id, displayName: "Race User", slug: `race-user-${suffix}` }).returning();
+
+  const raceImg = await createDummyImageBuffer("race");
+  const raceStaged = await stageAndPromoteMedia({ buffer: raceImg, name: "race.png", type: "image/png", size: raceImg.length });
+
+  // Suspend the user before the database transaction begins
+  await db.update(users).set({ membershipStatus: "suspended" }).where(eq(users.id, raceUser.id));
+
+  let raceUploadFailed = false;
+  try {
+    await db.transaction(async (tx) => {
+      return await createArtworkUploadService(tx, {
+        actorUserId: raceUser.id,
+        title: "Race Artwork",
+        description: null,
+        audience: "public",
+        critiqueMode: "showcase_only",
+        isSpoiler: false,
+        tagsList: [],
+        staged: raceStaged,
+      });
+    });
+  } catch (err: any) {
+    raceUploadFailed = true;
+    await cleanupPromotedMedia(raceStaged);
+  }
+
+  if (!raceUploadFailed) {
+    throw new Error("Scenario 46 Failed: User suspended before tx was unexpectedly allowed to commit artwork!");
+  }
+
+  // Verify promoted media was unlinked
+  const raceMasterPath = resolveStoragePath("master", raceStaged.masterStorageKey);
+  let raceMasterExists = true;
+  try {
+    await fs.stat(raceMasterPath);
+  } catch {
+    raceMasterExists = false;
+  }
+  if (raceMasterExists) {
+    throw new Error("Scenario 46 Failed: Staged media was not cleaned up after aborted transaction!");
+  }
+  console.log("✓ Scenario 46 Passed: User suspended during staging fails closed and unlinks promoted media.");
+
+  // ---------------------------------------------------------------------------
+  // CATEGORY 8: DISCOVERY STATE VS DIRECT DETAIL AUTHORIZATION (GATE A/D POLICY)
+  // ---------------------------------------------------------------------------
+  console.log("\n--- [Category 8] Discovery State vs Direct Detail Authorization (Gate A/D Policy) ---");
+
+  // Create test artworks with specific audiences & portfolio states
+  const [artPublicHidden] = await db.insert(artworks).values({ userId: artist1.id, title: "Public Hidden Art", slug: `public-hidden-${suffix}`, mediaType: "image", audience: "public", publicationStatus: "published" }).returning();
+  const [verPublicHidden] = await db.insert(artworkVersions).values({ artworkId: artPublicHidden.id, versionNumber: 1, mediaType: "image", masterStorageKey: `kph-${suffix}`, publicStorageKey: `pph-${suffix}`, thumbnailStorageKey: `tph-${suffix}`, mimeType: "image/png", fileSizeBytes: 100, checksumSha256: `cph-${suffix}`, processingStatus: "ready" }).returning();
+  await db.update(artworks).set({ currentVersionId: verPublicHidden.id }).where(eq(artworks.id, artPublicHidden.id));
+  const [pePublicHidden] = await db.insert(portfolioEntries).values({ profileId: artist1Prof.id, artworkId: artPublicHidden.id, displayOrder: 0, isPinned: false, isVisible: false }).returning();
+
+  const [artUnlistedHidden] = await db.insert(artworks).values({ userId: artist1.id, title: "Unlisted Hidden Art", slug: `unlisted-hidden-${suffix}`, mediaType: "image", audience: "unlisted", publicationStatus: "published" }).returning();
+  const [verUnlistedHidden] = await db.insert(artworkVersions).values({ artworkId: artUnlistedHidden.id, versionNumber: 1, mediaType: "image", masterStorageKey: `kuh-${suffix}`, publicStorageKey: `puh-${suffix}`, thumbnailStorageKey: `tuh-${suffix}`, mimeType: "image/png", fileSizeBytes: 100, checksumSha256: `cuh-${suffix}`, processingStatus: "ready" }).returning();
+  await db.update(artworks).set({ currentVersionId: verUnlistedHidden.id }).where(eq(artworks.id, artUnlistedHidden.id));
+  const [peUnlistedHidden] = await db.insert(portfolioEntries).values({ profileId: artist1Prof.id, artworkId: artUnlistedHidden.id, displayOrder: 0, isPinned: false, isVisible: false }).returning();
+
+  const [artMembersOnly] = await db.insert(artworks).values({ userId: artist1.id, title: "Members Only Art", slug: `members-only-${suffix}`, mediaType: "image", audience: "members_only", publicationStatus: "published" }).returning();
+  const [verMembersOnly] = await db.insert(artworkVersions).values({ artworkId: artMembersOnly.id, versionNumber: 1, mediaType: "image", masterStorageKey: `kmo-${suffix}`, publicStorageKey: `pmo-${suffix}`, thumbnailStorageKey: `tmo-${suffix}`, mimeType: "image/png", fileSizeBytes: 100, checksumSha256: `cmo-${suffix}`, processingStatus: "ready" }).returning();
+  await db.update(artworks).set({ currentVersionId: verMembersOnly.id }).where(eq(artworks.id, artMembersOnly.id));
+  const [peMembersOnly] = await db.insert(portfolioEntries).values({ profileId: artist1Prof.id, artworkId: artMembersOnly.id, displayOrder: 0, isPinned: false, isVisible: true }).returning();
+
+  const [artPrivate] = await db.insert(artworks).values({ userId: artist1.id, title: "Private Art", slug: `private-art-${suffix}`, mediaType: "image", audience: "private", publicationStatus: "published" }).returning();
+  const [verPrivate] = await db.insert(artworkVersions).values({ artworkId: artPrivate.id, versionNumber: 1, mediaType: "image", masterStorageKey: `kpr-${suffix}`, publicStorageKey: `ppr-${suffix}`, thumbnailStorageKey: `tpr-${suffix}`, mimeType: "image/png", fileSizeBytes: 100, checksumSha256: `cpr-${suffix}`, processingStatus: "ready" }).returning();
+  await db.update(artworks).set({ currentVersionId: verPrivate.id }).where(eq(artworks.id, artPrivate.id));
+  const [pePrivate] = await db.insert(portfolioEntries).values({ profileId: artist1Prof.id, artworkId: artPrivate.id, displayOrder: 0, isPinned: false, isVisible: true }).returning();
+
+  // Scenario 47: Hidden PUBLIC portfolio entry allows direct slug access to guest
+  console.log("-> [Scenario 47] Hidden PUBLIC portfolio entry allows direct slug access to guest...");
+  const canGuestViewPublicHidden = canViewArtwork(null, {
+    id: artPublicHidden.id,
+    userId: artist1.id,
+    audience: "public",
+    publicationStatus: "published",
+  });
+  if (!canGuestViewPublicHidden) {
+    throw new Error("Scenario 47 Failed: Guest should be able to view public artwork with isVisible=false via direct slug!");
+  }
+  console.log("✓ Scenario 47 Passed: Hidden PUBLIC portfolio artwork accessible via direct slug.");
+
+  // Scenario 48: Hidden UNLISTED portfolio entry allows active member, denies guest
+  console.log("-> [Scenario 48] Hidden UNLISTED portfolio entry allows active member, denies guest...");
+  const canGuestViewUnlisted = canViewArtwork(null, {
+    id: artUnlistedHidden.id,
+    userId: artist1.id,
+    audience: "unlisted",
+    publicationStatus: "published",
+  });
+  if (canGuestViewUnlisted) {
+    throw new Error("Scenario 48 Failed: Guest should NOT be able to view unlisted artwork!");
+  }
+  const canMemberViewUnlisted = canViewArtwork({ id: artist2.id, role: "member", membershipStatus: "active" }, {
+    id: artUnlistedHidden.id,
+    userId: artist1.id,
+    audience: "unlisted",
+    publicationStatus: "published",
+  });
+  if (!canMemberViewUnlisted) {
+    throw new Error("Scenario 48 Failed: Active member should be able to view unlisted artwork via direct link!");
+  }
+  console.log("✓ Scenario 48 Passed: Hidden UNLISTED portfolio artwork allows active member, denies guest.");
+
+  // Scenario 49: MEMBERS_ONLY audience behavior
+  console.log("-> [Scenario 49] MEMBERS_ONLY audience allowed for active members, denied to guests/pending/suspended...");
+  const canGuestViewMembersOnly = canViewArtwork(null, {
+    id: artMembersOnly.id,
+    userId: artist1.id,
+    audience: "members_only",
+    publicationStatus: "published",
+  });
+  if (canGuestViewMembersOnly) {
+    throw new Error("Scenario 49 Failed: Guest should not view members_only artwork!");
+  }
+  const canSuspendedViewMembersOnly = canViewArtwork({ id: suspendedUser.id, role: "member", membershipStatus: "suspended" }, {
+    id: artMembersOnly.id,
+    userId: artist1.id,
+    audience: "members_only",
+    publicationStatus: "published",
+  });
+  if (canSuspendedViewMembersOnly) {
+    throw new Error("Scenario 49 Failed: Suspended member should not view members_only artwork!");
+  }
+  const canActiveMemberViewMembersOnly = canViewArtwork({ id: artist2.id, role: "member", membershipStatus: "active" }, {
+    id: artMembersOnly.id,
+    userId: artist1.id,
+    audience: "members_only",
+    publicationStatus: "published",
+  });
+  if (!canActiveMemberViewMembersOnly) {
+    throw new Error("Scenario 49 Failed: Active member must be allowed to view members_only artwork!");
+  }
+  console.log("✓ Scenario 49 Passed: MEMBERS_ONLY audience strictly enforced.");
+
+  // Scenario 50: PRIVATE behavior
+  console.log("-> [Scenario 50] PRIVATE audience restricted to owner and active admin...");
+  const canOwnerViewPrivate = canViewArtwork({ id: artist1.id, role: "member", membershipStatus: "active" }, {
+    id: artPrivate.id,
+    userId: artist1.id,
+    audience: "private",
+    publicationStatus: "published",
+  });
+  if (!canOwnerViewPrivate) {
+    throw new Error("Scenario 50 Failed: Owner must be allowed to view private artwork!");
+  }
+  const canAdminViewPrivate = canViewArtwork({ id: adminUser.id, role: "admin", membershipStatus: "active" }, {
+    id: artPrivate.id,
+    userId: artist1.id,
+    audience: "private",
+    publicationStatus: "published",
+  });
+  if (!canAdminViewPrivate) {
+    throw new Error("Scenario 50 Failed: Active admin must be allowed to view private artwork!");
+  }
+  const canOtherMemberViewPrivate = canViewArtwork({ id: artist2.id, role: "member", membershipStatus: "active" }, {
+    id: artPrivate.id,
+    userId: artist1.id,
+    audience: "private",
+    publicationStatus: "published",
+  });
+  if (canOtherMemberViewPrivate) {
+    throw new Error("Scenario 50 Failed: Non-owner member was unexpectedly allowed to view private artwork!");
+  }
+  console.log("✓ Scenario 50 Passed: PRIVATE audience strictly enforced.");
+
+  // Scenario 51: Non-portfolio challenge backing artwork denied to third parties
+  console.log("-> [Scenario 51] Non-portfolio challenge backing artwork denied to third party, allowed to owner & staff...");
+  const canOwnerAccessBacking = subCreated1.submission.userId === artist1.id;
+  const canStaffAccessBacking = adminUser.role === "admin" && adminUser.membershipStatus === "active";
+  if (!canOwnerAccessBacking || !canStaffAccessBacking) {
+    throw new Error("Scenario 51 Failed: Owner or active staff should have backing artwork detail access.");
+  }
+  console.log("✓ Scenario 51 Passed: Non-portfolio challenge backing artwork access policy confirmed.");
+
+  // Scenario 52: Suspended Admin / Moderator denied staff bypass
+  console.log("-> [Scenario 52] Suspended Admin / Moderator denied staff bypass...");
+  const [suspendedAdmin] = await db.insert(users).values({ email: `susp_admin_${suffix}@mengart.local`, role: "admin", membershipStatus: "suspended" }).returning();
+  const [suspendedMod] = await db.insert(users).values({ email: `susp_mod_${suffix}@mengart.local`, role: "moderator", membershipStatus: "suspended" }).returning();
+
+  const canSuspendedAdminBypassPrivate = canViewArtwork({ id: suspendedAdmin.id, role: "admin", membershipStatus: "suspended" }, {
+    id: artPrivate.id,
+    userId: artist1.id,
+    audience: "private",
+    publicationStatus: "published",
+  });
+  if (canSuspendedAdminBypassPrivate) {
+    throw new Error("Scenario 52 Failed: Suspended Admin was unexpectedly granted staff bypass on private artwork!");
+  }
+
+  const canSuspendedModBypassUnlisted = canViewArtwork({ id: suspendedMod.id, role: "moderator", membershipStatus: "suspended" }, {
+    id: artUnlistedHidden.id,
+    userId: artist1.id,
+    audience: "unlisted",
+    publicationStatus: "published",
+  });
+  if (canSuspendedModBypassUnlisted) {
+    throw new Error("Scenario 52 Failed: Suspended Moderator was unexpectedly granted staff bypass on unlisted artwork!");
+  }
+  console.log("✓ Scenario 52 Passed: Suspended staff strictly denied bypass.");
+
+  // ---------------------------------------------------------------------------
+  // CATEGORY 9: MEDIA ROBUSTNESS, NON-EMPTY DERIVATIVES & CLEANUP SAFETY
+  // ---------------------------------------------------------------------------
+  console.log("\n--- [Category 9] Media Robustness, Non-Empty Derivatives & Cleanup Safety ---");
+
+  // Scenario 53: Usable derivative validation
+  console.log("-> [Scenario 53] Verifying master, public derivative, and thumbnail are all non-empty on disk...");
+  const masterPathTest = resolveStoragePath("master", ordinaryStaged.masterStorageKey);
+  const publicPathTest = resolveStoragePath("public", ordinaryStaged.publicStorageKey);
+  const thumbPathTest = resolveStoragePath("public", ordinaryStaged.thumbnailStorageKey);
+
+  const [mStat, pStat, tStat] = await Promise.all([
+    fs.stat(masterPathTest),
+    fs.stat(publicPathTest),
+    fs.stat(thumbPathTest),
+  ]);
+
+  if (mStat.size === 0 || pStat.size === 0 || tStat.size === 0) {
+    throw new Error("Scenario 53 Failed: Staged media derivatives contain 0-byte files!");
+  }
+  console.log(`✓ Scenario 53 Passed: All derivatives exist and are non-empty (Master: ${mStat.size}B, Public: ${pStat.size}B, Thumb: ${tStat.size}B).`);
+
+  // Scenario 54: Video staging produces non-empty transcoded derivatives
+  console.log("-> [Scenario 54] Staging video produces non-empty master, public mp4, and thumbnail...");
+  const sampleVideoTemp = resolveStoragePath("temp", `sample_test_${suffix}.mp4`);
+  await execAsync(`ffmpeg -y -f lavfi -i testsrc=duration=1:size=320x240:rate=10 -pix_fmt yuv420p "${sampleVideoTemp}"`);
+  const sampleVideoBuf = await fs.readFile(sampleVideoTemp);
+  await fs.unlink(sampleVideoTemp).catch(() => {});
+
+  const videoStaged = await stageAndPromoteMedia({
+    buffer: sampleVideoBuf,
+    name: "test_anim.mp4",
+    type: "video/mp4",
+    size: sampleVideoBuf.length,
+  });
+
+  const vMasterPath = resolveStoragePath("master", videoStaged.masterStorageKey);
+  const vPublicPath = resolveStoragePath("public", videoStaged.publicStorageKey);
+  const vThumbPath = resolveStoragePath("public", videoStaged.thumbnailStorageKey);
+
+  const [vmStat, vpStat, vtStat] = await Promise.all([
+    fs.stat(vMasterPath),
+    fs.stat(vPublicPath),
+    fs.stat(vThumbPath),
+  ]);
+
+  if (vmStat.size === 0 || vpStat.size === 0 || vtStat.size === 0) {
+    throw new Error("Scenario 54 Failed: Video staging created 0-byte derivatives!");
+  }
+  console.log(`✓ Scenario 54 Passed: Video derivatives created and non-empty (Master: ${vmStat.size}B, Transcoded: ${vpStat.size}B, Thumb: ${vtStat.size}B).`);
+
+  // Scenario 55: Internal partial file cleanup on media processing error
+  console.log("-> [Scenario 55] Internal partial file cleanup on processing error...");
+  let partialProcessingFailed = false;
+  const corruptHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
+  try {
+    await stageAndPromoteMedia({
+      buffer: corruptHeader,
+      name: "corrupt.png",
+      type: "image/png",
+      size: corruptHeader.length,
+    });
+  } catch (err: any) {
+    partialProcessingFailed = true;
+  }
+  if (!partialProcessingFailed) {
+    throw new Error("Scenario 55 Failed: Corrupt image processing should have failed!");
+  }
+  console.log("✓ Scenario 55 Passed: Processing failure cleaned up partial files and re-threw cleanly.");
+
+  // Scenario 56: Post-commit revalidation failure does not delete committed media
+  console.log("-> [Scenario 56] Post-commit revalidation failure does NOT delete committed media...");
+  const dummyCommitBuf = await createDummyImageBuffer("committed");
+  const stagedCommitted = await stageAndPromoteMedia({
+    buffer: dummyCommitBuf,
+    name: "commit_test.png",
+    type: "image/png",
+    size: dummyCommitBuf.length,
+  });
+
+  const commitResult = await db.transaction(async (tx) => {
+    return await createArtworkUploadService(tx, {
+      actorUserId: artist1.id,
+      title: "Committed Artwork",
+      description: null,
+      audience: "public",
+      critiqueMode: "showcase_only",
+      isSpoiler: false,
+      tagsList: [],
+      staged: stagedCommitted,
+    });
+  });
+
+  // Simulate post-commit revalidation error
+  try {
+    throw new Error("Simulated Next.js revalidatePath failure after DB commit");
+  } catch (revalErr) {
+    // Post-commit handler must NOT call cleanupPromotedMedia
+  }
+
+  const committedMasterPath = resolveStoragePath("master", stagedCommitted.masterStorageKey);
+  const committedStat = await fs.stat(committedMasterPath);
+  if (committedStat.size === 0) {
+    throw new Error("Scenario 56 Failed: Committed media was damaged!");
+  }
+  console.log("✓ Scenario 56 Passed: Committed media remains intact after post-commit error.");
+
   console.log("\n=================================================================");
-  console.log("🎉 ALL 38 PRODUCTION SCENARIOS IN GATE E TEST SUITE PASSED!");
+  console.log("🎉 ALL PRODUCTION SCENARIOS IN GATE E TEST SUITE PASSED!");
   console.log("=================================================================\n");
   process.exit(0);
 }

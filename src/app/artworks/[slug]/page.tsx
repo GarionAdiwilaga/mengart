@@ -7,9 +7,10 @@ import {
   tags,
   artworkTags,
   critiqueComments,
+  users,
 } from "@/db/schema";
 import { eq, and, desc, isNull } from "drizzle-orm";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { auth } from "@/auth";
 import Link from "next/link";
 import {
@@ -27,7 +28,7 @@ import {
 import { ArtworkLightbox } from "@/components/gallery/ArtworkLightbox";
 import { CritiqueSection } from "@/components/artworks/CritiqueSection";
 import { ReportModal } from "@/components/artworks/ReportModal";
-import { canViewArtwork, canAccessMasterMedia } from "@/lib/policy";
+import { canViewArtwork, canAccessMasterMedia, type PolicyUser } from "@/lib/policy";
 
 interface ArtworkDetailPageProps {
   params: Promise<{ slug: string }>;
@@ -36,9 +37,30 @@ interface ArtworkDetailPageProps {
 export default async function ArtworkDetailPage({ params }: ArtworkDetailPageProps) {
   const { slug } = await params;
   const session = await auth();
-  const isMember = !!session?.user?.id;
-  const currentUserId = session?.user?.id;
-  const currentUserRole = session?.user?.role;
+
+  let viewer: PolicyUser | null = null;
+  if (session?.user?.id) {
+    const [dbUser] = await db
+      .select({
+        id: users.id,
+        role: users.role,
+        membershipStatus: users.membershipStatus,
+        deletedAt: users.deletedAt,
+      })
+      .from(users)
+      .where(eq(users.id, session.user.id))
+      .limit(1);
+
+    if (dbUser && !dbUser.deletedAt && dbUser.membershipStatus !== "deleted") {
+      viewer = {
+        id: dbUser.id,
+        role: dbUser.role,
+        membershipStatus: dbUser.membershipStatus,
+      };
+    }
+  }
+
+  const isMember = Boolean(viewer && viewer.membershipStatus === "active");
 
   const [artwork] = await db
     .select({
@@ -66,6 +88,7 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
       processingStatus: artworkVersions.processingStatus,
       publicationStatus: artworks.publicationStatus,
       deletedAt: artworks.deletedAt,
+      portfolioEntryId: portfolioEntries.id,
       isPortfolioVisible: portfolioEntries.isVisible,
     })
     .from(artworks)
@@ -85,15 +108,21 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
     notFound();
   }
 
-  const isOwner = session?.user?.id === artwork.userId;
-  const isStaff = session?.user?.role === "admin" || session?.user?.role === "moderator";
-  const hasVisiblePortfolio = artwork.isPortfolioVisible === true;
+  const isArtworkOwner = Boolean(viewer && viewer.id === artwork.userId);
+  const isActiveStaff = Boolean(
+    viewer &&
+      viewer.membershipStatus === "active" &&
+      (viewer.role === "admin" || viewer.role === "moderator")
+  );
+  const hasPortfolioEntry = Boolean(artwork.portfolioEntryId);
 
-  // Unfinished challenge backing artworks lacking visible portfolio entries are restricted to owner or active staff
-  if (!hasVisiblePortfolio && !isOwner && !isStaff) {
+  // 1. Non-portfolio / challenge backing artworks without portfolio entries:
+  // Detail access denied to ordinary third parties; restricted to owner or active staff
+  if (!hasPortfolioEntry && !isArtworkOwner && !isActiveStaff) {
     notFound();
   }
 
+  // 2. Authoritative Gate A/D audience policy check
   const artworkEntity = {
     id: artwork.id,
     userId: artwork.userId,
@@ -102,8 +131,11 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
     deletedAt: artwork.deletedAt,
   };
 
-  const isAllowedToView = canViewArtwork(session?.user as any, artworkEntity);
+  const isAllowedToView = canViewArtwork(viewer, artworkEntity);
   if (!isAllowedToView) {
+    if (!viewer && (artwork.audience === "members_only" || artwork.audience === "unlisted")) {
+      redirect(`/login?callbackUrl=/artworks/${slug}`);
+    }
     notFound();
   }
 
@@ -140,7 +172,7 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
     ? `/api/media/public/${artwork.publicStorageKey}`
     : "/placeholder.png";
 
-  const isAllowedToAccessMaster = await canAccessMasterMedia(session?.user as any, artworkEntity);
+  const isAllowedToAccessMaster = await canAccessMasterMedia(viewer, artworkEntity);
   const masterMediaUrl =
     isAllowedToAccessMaster && artwork.masterStorageKey
       ? `/api/media/master/${artwork.masterStorageKey}`
@@ -237,8 +269,8 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
             artworkSlug={artwork.slug}
             critiqueMode={artwork.critiqueMode as any}
             artworkOwnerUserId={artwork.userId}
-            currentUserId={currentUserId}
-            currentUserRole={currentUserRole}
+            currentUserId={viewer?.id}
+            currentUserRole={viewer?.role}
             comments={commentRows}
           />
         </div>

@@ -147,9 +147,16 @@
     - Pre-deadline replacement preserves the existing artwork slug and records an audit log.
   - Additive Artwork Spoiler Presentation:
     - Added `artworks.is_spoiler` boolean (`NOT NULL DEFAULT false`) serialized across all 8 surfaces with zero impact on ACL, voting, or Stars.
+  - Focused QA Corrections (Gate E Hardening):
+    - Live in-transaction ACTIVE ownership assertions and row-level locking on all ordinary artwork mutations (`createArtworkUploadService`, `updateArtworkService`, `toggleArtworkSpoilerService`, `deleteArtworkService`).
+    - Separation of portfolio discovery state (`is_visible`) from direct detail authorization (`canViewArtwork` / Gate A/D audience policy).
+    - Non-portfolio challenge backing artworks strictly restricted to owner or active staff (suspended staff denied bypass).
+    - Hardened media processing pipeline with safe image decode limits, EXIF/ICC metadata stripping, ffmpeg/ffprobe video transcode/thumbnailing, usable non-empty derivative guarantees (`stat.size > 0`), and internal partial-file cleanup on processing error.
+    - Post-commit cache/path revalidations isolated outside the media cleanup try/catch block.
+    - Functional custom-caption authoring modal and inputs wired in `PortfolioItemActions.tsx` and `/me/portfolio` to `updatePortfolioCustomCaptionAction`.
   - Verification Matrix:
     - `scripts/verifyMigrations.ts`: 9/9 migration scenarios passed (including Scenario 9A dirty fail-closed and Scenario 9B clean 0011 -> 0012 upgrade).
-    - `src/lib/__tests__/testGateESubmissionAndPortfolio.ts`: 38/38 scenarios passed.
+    - `src/lib/__tests__/testGateESubmissionAndPortfolio.ts`: 56/56 scenarios passed.
     - `npm run test:all`: 15/15 test suites passed cleanly.
     - `npm run lint`: 0 errors.
     - `npm run build`: Next.js production build and worker bundle compiled cleanly.
@@ -170,7 +177,7 @@
 - **QA-P0-010** (Mixed mode Community Winner exclusion from jury awards): RESOLVED & VERIFIED
 - **QA-P0-011** (Persist only actual winners/awards; zero empty slots): RESOLVED & VERIFIED
 - **QA-P0-012** (No synthetic jury ranks / #null; single Community Winner highlight): RESOLVED & VERIFIED
-- **QA-P0-013** (Direct canonical submission schema, portfolio auto-add & safe slug collision retry): IMPLEMENTED / PENDING QA
+- **QA-P0-013** (Direct canonical submission schema, portfolio auto-add, safe slug collision retry, in-tx ACTIVE ownership & usable media invariants): RESOLVED & VERIFIED
 - **QA-P1-007** (Pause/resume deadline validation with round deadlines): RESOLVED & VERIFIED
 - **QA-P1-008** (RESULTS_REVOKED status, notice banner, snapshot audit & flow): RESOLVED & VERIFIED
 
@@ -178,9 +185,10 @@
 `main` (Gate D Baseline: `46ccdca661de9240ff364ee63d9f5ccb5ca242bc`)
 
 ## Current Focus
-- Gate E implementation complete and 100% verified across all 38 test scenarios, migration verification suite, linter, and production build. Ready for independent QA review.
+- Gate E implementation and focused QA corrections complete and 100% verified across all 56 test scenarios, migration verification suite, linter, and production build. Ready for independent QA review.
 
 ## Overall Status
 - **NO-GO** (Until Gates E–H pass independent QA. Stop after Gate E).
+
 
 

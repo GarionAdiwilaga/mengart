@@ -44,35 +44,37 @@ export function canViewArtwork(
   artwork: ArtworkEntity,
   owner?: { id: string }
 ): boolean {
-  const isOwner = viewer && viewer.id === (owner?.id || artwork.userId);
-  const isAdmin = viewer && viewer.role === "admin";
-  const isModerator = viewer && viewer.role === "moderator";
+  const isOwner = Boolean(viewer && viewer.id === (owner?.id || artwork.userId));
+  const isActive = viewer?.membershipStatus === "active";
+  const isActiveAdmin = Boolean(viewer && viewer.role === "admin" && isActive);
+  const isActiveModerator = Boolean(viewer && viewer.role === "moderator" && isActive);
+  const isActiveStaff = isActiveAdmin || isActiveModerator;
 
-  // If artwork is soft-deleted, only owner and admin can view it
+  // If artwork is soft-deleted, only owner and active admin can view it
   if (artwork.deletedAt) {
-    return Boolean(isOwner || isAdmin);
+    return Boolean(isOwner || isActiveAdmin);
   }
 
-  // If unpublished/draft/hidden/archived, only owner, admin, or moderator can view it
+  // If unpublished/draft/hidden/archived, only owner or active staff can view it
   if (artwork.publicationStatus !== "published") {
-    return Boolean(isOwner || isAdmin || isModerator);
+    return Boolean(isOwner || isActiveStaff);
   }
 
-  // Private audience: strictly owner and admin only
+  // Private audience: strictly owner and active admin only
   if (artwork.audience === "private") {
-    return Boolean(isOwner || isAdmin);
+    return Boolean(isOwner || isActiveAdmin);
   }
 
-  // Unlisted audience: direct link access for authenticated active members or owner
+  // Unlisted audience: direct link access for authenticated active members, owner, or active staff
   if (artwork.audience === "unlisted") {
     if (!viewer) return false;
-    return Boolean(viewer.membershipStatus === "active" || isOwner || isAdmin || isModerator);
+    return Boolean(isActive || isOwner || isActiveStaff);
   }
 
-  // Members only: viewer must be authenticated active member
+  // Members only: viewer must be authenticated active member, owner, or active staff
   if (artwork.audience === "members_only") {
     if (!viewer) return false;
-    return Boolean(viewer.membershipStatus === "active" || isOwner || isAdmin || isModerator);
+    return Boolean(isActive || isOwner || isActiveStaff);
   }
 
   // Public audience: allowed for everyone

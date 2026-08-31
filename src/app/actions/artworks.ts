@@ -2,24 +2,17 @@
 
 import { requireAuth } from "@/lib/rbac";
 import { db } from "@/db";
-import {
-  artworks,
-  artworkVersions,
-  portfolioEntries,
-  profiles,
-  tags,
-  artworkTags,
-  auditLogs,
-} from "@/db/schema";
-import { eq, and, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import path from "path";
-import crypto from "crypto";
 import {
   stageAndPromoteMedia,
   cleanupPromotedMedia,
-  createArtworkWithUniqueSlug,
 } from "@/lib/services/submissionService";
+import {
+  createArtworkUploadService,
+  updateArtworkService,
+  toggleArtworkSpoilerService,
+  deleteArtworkService,
+} from "@/lib/services/artworkService";
 import {
   togglePortfolioEntryVisibilityService,
   updatePortfolioEntryCustomCaptionService,
@@ -28,19 +21,16 @@ import {
 export async function createArtworkUploadAction(formData: FormData) {
   const user = await requireAuth("/login");
 
-  const [profile] = await db
-    .select()
-    .from(profiles)
-    .where(eq(profiles.userId, user.id))
-    .limit(1);
-
-  if (!profile) {
-    throw new Error("Profil artist tidak ditemukan.");
-  }
-
   const file = formData.get("file") as File | null;
   if (!file || file.size === 0) {
     throw new Error("Silakan pilih file karya untuk diunggah.");
+  }
+
+  // Pre-allocation file size check
+  const isVideo = file.type.startsWith("video/");
+  const maxBytes = isVideo ? 50 * 1024 * 1024 : 25 * 1024 * 1024;
+  if (file.size > maxBytes) {
+    throw new Error(`Ukuran berkas melebihi batas maksimum (${isVideo ? "50MB" : "25MB"}).`);
   }
 
   const title = (formData.get("title") as string)?.trim() || "Untitled Artwork";
@@ -56,7 +46,7 @@ export async function createArtworkUploadAction(formData: FormData) {
   const isSpoiler = formData.get("isSpoiler") === "true" || formData.get("isSpoiler") === "1" || formData.get("isSpoiler") === "on";
   const tagsRaw = (formData.get("tags") as string) || "";
 
-  const rawTagsList = tagsRaw
+  const tagsList = tagsRaw
     ? tagsRaw
         .split(",")
         .map((t) => t.trim().toLowerCase())
@@ -65,7 +55,7 @@ export async function createArtworkUploadAction(formData: FormData) {
 
   const buffer = Buffer.from(await file.arrayBuffer());
 
-  // Two-Phase: Pre-tx validation, derivative processing & promotion to durable unreferenced storage keys
+  // 1. Stage and process media before DB transaction
   const staged = await stageAndPromoteMedia({
     buffer,
     name: file.name,
@@ -73,90 +63,36 @@ export async function createArtworkUploadAction(formData: FormData) {
     size: file.size,
   });
 
+  let result: any;
   try {
-    const result = await db.transaction(async (tx) => {
-      // 1. Create Artwork with PostgreSQL-safe slug retry loop
-      const artwork = await createArtworkWithUniqueSlug(tx, {
-        userId: user.id,
+    result = await db.transaction(async (tx) => {
+      return await createArtworkUploadService(tx, {
+        actorUserId: user.id,
         title,
         description,
-        mediaType: staged.mediaType,
         audience,
-        critiqueMode: critiqueMode as any,
+        critiqueMode,
         isSpoiler,
+        tagsList,
+        staged,
       });
-
-      // 2. Create Artwork Version 1 referencing durable storage keys
-      const [version] = await tx
-        .insert(artworkVersions)
-        .values({
-          artworkId: artwork.id,
-          versionNumber: 1,
-          mediaType: staged.mediaType,
-          masterStorageKey: staged.masterStorageKey,
-          publicStorageKey: staged.publicStorageKey,
-          thumbnailStorageKey: staged.thumbnailStorageKey,
-          mimeType: staged.mimeType,
-          fileSizeBytes: staged.fileSizeBytes,
-          width: staged.width,
-          height: staged.height,
-          checksumSha256: staged.checksumSha256,
-          processingStatus: "ready",
-        })
-        .returning();
-
-      await tx
-        .update(artworks)
-        .set({ currentVersionId: version.id })
-        .where(eq(artworks.id, artwork.id));
-
-      // 3. Atomically Create Portfolio Entry (is_visible = true, captions = null)
-      await tx.insert(portfolioEntries).values({
-        profileId: profile.id,
-        artworkId: artwork.id,
-        displayOrder: 0,
-        isPinned: false,
-        systemCaption: null,
-        customCaption: null,
-        isVisible: true,
-      });
-
-      // 4. Attach Tags
-      for (const tagName of rawTagsList) {
-        let [existingTag] = await tx.select().from(tags).where(eq(tags.slug, tagName)).limit(1);
-        if (!existingTag) {
-          [existingTag] = await tx
-            .insert(tags)
-            .values({ name: tagName, slug: tagName })
-            .returning();
-        }
-        await tx.insert(artworkTags).values({
-          artworkId: artwork.id,
-          tagId: existingTag.id,
-        });
-      }
-
-      // 5. Audit log
-      await tx.insert(auditLogs).values({
-        actorId: user.id,
-        action: "artwork.uploaded",
-        targetType: "artwork",
-        targetId: artwork.id,
-        reason: `Unggah karya baru '${title}'.`,
-      });
-
-      return { artwork, version };
     });
-
-    revalidatePath("/me/portfolio");
-    revalidatePath("/gallery");
-    revalidatePath(`/artists/${profile.slug}`);
-
-    return { success: true, artworkId: result.artwork.id, slug: result.artwork.slug };
   } catch (err) {
+    // If DB transaction fails before commit, clean up unreferenced staged media
     await cleanupPromotedMedia(staged);
     throw err;
   }
+
+  // 2. Post-commit cache revalidation (failures here MUST NOT delete committed media)
+  try {
+    revalidatePath("/me/portfolio");
+    revalidatePath("/gallery");
+    revalidatePath(`/artists/${result.profile.slug}`);
+  } catch (revalidateErr) {
+    console.warn("revalidatePath warning:", revalidateErr);
+  }
+
+  return { success: true, artworkId: result.artwork.id, slug: result.artwork.slug };
 }
 
 export async function updateArtworkAction(formData: FormData) {
@@ -174,35 +110,47 @@ export async function updateArtworkAction(formData: FormData) {
     throw new Error("Data karya tidak lengkap.");
   }
 
-  const [artwork] = await db
-    .select()
-    .from(artworks)
-    .where(eq(artworks.id, artworkId))
-    .limit(1);
+  const updated = await db.transaction(async (tx) => {
+    return await updateArtworkService(tx, {
+      actorUserId: user.id,
+      artworkId,
+      title,
+      description,
+      audience,
+      critiqueMode: critiqueMode as any,
+      isSpoiler,
+    });
+  });
 
-  if (!artwork || artwork.userId !== user.id) {
-    throw new Error("Karya tidak ditemukan atau Anda tidak memiliki izin.");
+  try {
+    revalidatePath("/me/portfolio");
+    revalidatePath("/gallery");
+    revalidatePath(`/artworks/${updated.slug}`);
+  } catch (revalidateErr) {
+    console.warn("revalidatePath warning:", revalidateErr);
   }
 
-  const updateFields: Record<string, any> = {
-    title,
-    description,
-    updatedAt: new Date(),
-  };
+  return { success: true, artwork: updated };
+}
 
-  if (audience) updateFields.audience = audience;
-  if (critiqueMode) updateFields.critiqueMode = critiqueMode;
-  if (isSpoiler !== undefined) updateFields.isSpoiler = isSpoiler;
+export async function toggleArtworkSpoilerAction(artworkId: string, isSpoiler: boolean) {
+  const user = await requireAuth("/login");
 
-  const [updated] = await db
-    .update(artworks)
-    .set(updateFields)
-    .where(eq(artworks.id, artworkId))
-    .returning();
+  const updated = await db.transaction(async (tx) => {
+    return await toggleArtworkSpoilerService(tx, {
+      actorUserId: user.id,
+      artworkId,
+      isSpoiler,
+    });
+  });
 
-  revalidatePath("/me/portfolio");
-  revalidatePath("/gallery");
-  revalidatePath(`/artworks/${artwork.slug}`);
+  try {
+    revalidatePath("/me/portfolio");
+    revalidatePath("/gallery");
+    revalidatePath(`/artworks/${updated.slug}`);
+  } catch (revalidateErr) {
+    console.warn("revalidatePath warning:", revalidateErr);
+  }
 
   return { success: true, artwork: updated };
 }
@@ -218,8 +166,12 @@ export async function toggleArtworkPortfolioVisibilityAction(artworkId: string, 
     });
   });
 
-  revalidatePath("/me/portfolio");
-  revalidatePath("/gallery");
+  try {
+    revalidatePath("/me/portfolio");
+    revalidatePath("/gallery");
+  } catch (revalidateErr) {
+    console.warn("revalidatePath warning:", revalidateErr);
+  }
 
   return { success: true, result };
 }
@@ -235,7 +187,11 @@ export async function updatePortfolioCustomCaptionAction(artworkId: string, cust
     });
   });
 
-  revalidatePath("/me/portfolio");
+  try {
+    revalidatePath("/me/portfolio");
+  } catch (revalidateErr) {
+    console.warn("revalidatePath warning:", revalidateErr);
+  }
 
   return { success: true, result };
 }
@@ -243,37 +199,20 @@ export async function updatePortfolioCustomCaptionAction(artworkId: string, cust
 export async function deleteArtworkAction(artworkId: string) {
   const user = await requireAuth("/login");
 
-  const [artwork] = await db
-    .select()
-    .from(artworks)
-    .where(eq(artworks.id, artworkId))
-    .limit(1);
-
-  if (!artwork || (artwork.userId !== user.id && user.role !== "admin")) {
-    throw new Error("Anda tidak memiliki izin untuk menghapus karya ini.");
-  }
-
-  // Soft delete to protect historical challenge submissions & results integrity
-  await db
-    .update(artworks)
-    .set({
-      deletedAt: new Date(),
-      publicationStatus: "hidden",
-      updatedAt: new Date(),
-    })
-    .where(eq(artworks.id, artworkId));
-
-  await db.insert(auditLogs).values({
-    actorId: user.id,
-    action: "artwork.soft_deleted",
-    targetType: "artwork",
-    targetId: artworkId,
-    reason: "Karya dihapus oleh pemilik atau administrator.",
+  const deleted = await db.transaction(async (tx) => {
+    return await deleteArtworkService(tx, {
+      actorUserId: user.id,
+      artworkId,
+    });
   });
 
-  revalidatePath("/me/portfolio");
-  revalidatePath("/gallery");
-  revalidatePath(`/artworks/${artwork.slug}`);
+  try {
+    revalidatePath("/me/portfolio");
+    revalidatePath("/gallery");
+    revalidatePath(`/artworks/${deleted.slug}`);
+  } catch (revalidateErr) {
+    console.warn("revalidatePath warning:", revalidateErr);
+  }
 
   return { success: true };
 }

@@ -55,6 +55,12 @@ export async function submitArtworkToChallengeAction(formData: FormData) {
 
   let filePayload: { buffer: Buffer; name: string; type: string; size: number } | null = null;
   if (file && file.size > 0) {
+    const isVideo = file.type.startsWith("video/");
+    const maxBytes = isVideo ? 50 * 1024 * 1024 : 25 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      throw new Error(`Ukuran berkas melebihi batas maksimum (${isVideo ? "50MB" : "25MB"}).`);
+    }
+
     filePayload = {
       buffer: Buffer.from(await file.arrayBuffer()),
       name: file.name,

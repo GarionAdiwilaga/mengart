@@ -2,6 +2,8 @@ import fs from "fs/promises";
 import path from "path";
 import crypto from "crypto";
 import sharp from "sharp";
+import { exec } from "child_process";
+import { promisify } from "util";
 import { db } from "@/db";
 import {
   challenges,
@@ -20,6 +22,8 @@ import {
   generateStorageKey,
   ensureStorageDirectories,
 } from "@/lib/storage";
+
+const execAsync = promisify(exec);
 
 /**
  * Validate buffer magic bytes against expected media format
@@ -91,6 +95,7 @@ export interface StagedMediaResult {
 
 /**
  * Validates, processes derivatives, and promotes media files to durable unreferenced storage keys.
+ * Implements safe decode limits, metadata stripping, usable non-empty derivatives, and internal partial-file cleanup.
  */
 export async function stageAndPromoteMedia(file: {
   buffer: Buffer;
@@ -120,60 +125,151 @@ export async function stageAndPromoteMedia(file: {
   }
 
   const checksumSha256 = crypto.createHash("sha256").update(file.buffer).digest("hex");
-  const masterStorageKey = generateStorageKey("master", ext);
-  const publicStorageKey = generateStorageKey("public", "webp");
+  const masterStorageKey = generateStorageKey("master", ext.replace(".", "") || (mediaType === "video" ? "mp4" : "png"));
+  const publicExt = mediaType === "video" ? "mp4" : ext === ".gif" ? "gif" : "webp";
+  const publicStorageKey = generateStorageKey("public", publicExt);
   const thumbnailStorageKey = generateStorageKey("thumb", "webp");
 
   const masterPath = resolveStoragePath("master", masterStorageKey);
   const publicPath = resolveStoragePath("public", publicStorageKey);
   const thumbPath = resolveStoragePath("public", thumbnailStorageKey);
 
-  let width: number | null = null;
-  let height: number | null = null;
+  const writtenFiles: string[] = [];
 
-  if (mediaType === "image" || mediaType === "gif") {
-    const meta = await sharp(file.buffer).metadata();
-    width = meta.width || null;
-    height = meta.height || null;
+  try {
+    let width: number | null = null;
+    let height: number | null = null;
+    let durationSeconds: number | null = null;
 
-    // 1. Write Clean Master (Private)
-    await fs.writeFile(masterPath, file.buffer);
+    if (mediaType === "image") {
+      // Safe image decode limits (50 million pixels max) & EXIF/ICC metadata stripping
+      const image = sharp(file.buffer, { limitInputPixels: 50000000 });
+      const meta = await image.metadata();
+      width = meta.width || null;
+      height = meta.height || null;
 
-    // 2. Generate Watermarked Public Derivative (.webp)
-    if (width && height) {
-      const watermarkSvg = createWatermarkSvg(width, height);
-      await sharp(file.buffer)
-        .composite([{ input: watermarkSvg, top: 0, left: 0 }])
-        .webp({ quality: 85 })
-        .toFile(publicPath);
-    } else {
-      await sharp(file.buffer).webp({ quality: 85 }).toFile(publicPath);
+      // 1. Write Clean Master (Metadata stripped)
+      await sharp(file.buffer, { limitInputPixels: 50000000 }).toFile(masterPath);
+      writtenFiles.push(masterPath);
+
+      // 2. Generate Watermarked Public Derivative (.webp)
+      if (width && height) {
+        const targetWidth = Math.min(width, 1920);
+        const targetHeight = Math.round((height / width) * targetWidth);
+        const watermarkSvg = createWatermarkSvg(targetWidth, targetHeight);
+
+        await sharp(file.buffer, { limitInputPixels: 50000000 })
+          .resize(targetWidth, targetHeight, { fit: "inside" })
+          .composite([{ input: watermarkSvg, top: 0, left: 0 }])
+          .webp({ quality: 82 })
+          .toFile(publicPath);
+      } else {
+        await sharp(file.buffer, { limitInputPixels: 50000000 })
+          .webp({ quality: 82 })
+          .toFile(publicPath);
+      }
+      writtenFiles.push(publicPath);
+
+      // 3. Generate Thumbnail (.webp)
+      await sharp(file.buffer, { limitInputPixels: 50000000 })
+        .resize(400, 400, { fit: "cover", position: "center" })
+        .webp({ quality: 80 })
+        .toFile(thumbPath);
+      writtenFiles.push(thumbPath);
+    } else if (mediaType === "gif") {
+      const gif = sharp(file.buffer, { animated: true, limitInputPixels: 50000000 });
+      const meta = await gif.metadata();
+      width = meta.width || null;
+      height = meta.height || null;
+
+      await sharp(file.buffer, { animated: true }).toFile(masterPath);
+      writtenFiles.push(masterPath);
+
+      await sharp(file.buffer, { animated: true }).toFile(publicPath);
+      writtenFiles.push(publicPath);
+
+      await sharp(file.buffer, { page: 0 })
+        .resize(400, 400, { fit: "cover", position: "center" })
+        .webp({ quality: 80 })
+        .toFile(thumbPath);
+      writtenFiles.push(thumbPath);
+    } else if (mediaType === "video") {
+      // 1. Write Master Video
+      await fs.writeFile(masterPath, file.buffer);
+      writtenFiles.push(masterPath);
+
+      // 2. ffprobe duration & dimensions
+      try {
+        const { stdout: probeOut } = await execAsync(
+          `ffprobe -v error -show_entries format=duration:stream=width,height -of default=noprint_wrappers=1:nokey=1 "${masterPath}"`
+        );
+        const lines = probeOut.trim().split("\n");
+        if (lines.length >= 2) {
+          width = parseInt(lines[0], 10) || null;
+          height = parseInt(lines[1], 10) || null;
+          durationSeconds = parseFloat(lines[lines.length - 1]) || null;
+        }
+
+        if (durationSeconds && durationSeconds > 60) {
+          throw new Error(`Durasi video (${Math.round(durationSeconds)}s) melebihi batas maksimal 60 detik.`);
+        }
+      } catch (probeErr: any) {
+        if (probeErr?.message?.includes("melebihi batas")) {
+          throw probeErr;
+        }
+        console.warn("ffprobe inspection note:", probeErr?.message);
+      }
+
+      // 3. Transcode public video derivative via ffmpeg
+      await execAsync(
+        `ffmpeg -y -i "${masterPath}" -c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p -movflags +faststart -map_metadata -1 "${publicPath}"`
+      );
+      writtenFiles.push(publicPath);
+
+      // 4. Extract video poster at 0s & generate thumbnail
+      const posterTempPath = resolveStoragePath("temp", `poster_${Date.now()}_${crypto.randomBytes(4).toString("hex")}.png`);
+      try {
+        await execAsync(
+          `ffmpeg -y -ss 00:00:00 -i "${masterPath}" -vframes 1 -q:v 2 "${posterTempPath}"`
+        );
+        await sharp(posterTempPath)
+          .resize(400, 400, { fit: "cover", position: "center" })
+          .webp({ quality: 80 })
+          .toFile(thumbPath);
+        writtenFiles.push(thumbPath);
+      } finally {
+        await fs.unlink(posterTempPath).catch(() => {});
+      }
     }
 
-    // 3. Generate Thumbnail (.webp)
-    await sharp(file.buffer)
-      .resize(400, 400, { fit: "cover", position: "center" })
-      .webp({ quality: 80 })
-      .toFile(thumbPath);
-  } else {
-    // Video: Write master file
-    await fs.writeFile(masterPath, file.buffer);
-    // For video derivatives, write fallback/placeholder until worker transcode or set to master key
-    await fs.writeFile(publicPath, Buffer.from(""));
-    await fs.writeFile(thumbPath, Buffer.from(""));
-  }
+    // Derivative Usability & Non-Empty Validation
+    const [publicStat, thumbStat] = await Promise.all([
+      fs.stat(publicPath),
+      fs.stat(thumbPath),
+    ]);
 
-  return {
-    masterStorageKey,
-    publicStorageKey,
-    thumbnailStorageKey,
-    checksumSha256,
-    mimeType: file.type || "application/octet-stream",
-    fileSizeBytes: file.size || file.buffer.length,
-    width,
-    height,
-    mediaType,
-  };
+    if (publicStat.size === 0 || thumbStat.size === 0) {
+      throw new Error("Gagal memproses derivatif media: berkas derivatif atau thumbnail kosong.");
+    }
+
+    return {
+      masterStorageKey,
+      publicStorageKey,
+      thumbnailStorageKey,
+      checksumSha256,
+      mimeType: file.type || "application/octet-stream",
+      fileSizeBytes: file.size || file.buffer.length,
+      width,
+      height,
+      mediaType,
+    };
+  } catch (err) {
+    // Internal Partial Processing Failure Cleanup: Unlink all files written during this attempt
+    for (const filePath of writtenFiles) {
+      await fs.unlink(filePath).catch(() => {});
+    }
+    throw err;
+  }
 }
 
 /**
@@ -213,7 +309,7 @@ export async function createArtworkWithUniqueSlug(
     description?: string | null;
     mediaType: "image" | "gif" | "video";
     audience: "public" | "members_only" | "unlisted" | "private";
-    critiqueMode: "showcase_only" | "general" | "detailed";
+    critiqueMode?: "showcase_only" | "open_for_critique" | "general" | "detailed";
     isSpoiler: boolean;
     forceCollisionSlug?: string; // For testing collision retry
   }

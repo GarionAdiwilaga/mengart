@@ -169,12 +169,14 @@ export default async function PortfolioManagerPage() {
                     )}
                   </div>
 
-                  <div className="flex items-center justify-between pt-2 border-t border-white/5">
-                    <PortfolioItemActions
-                      artworkId={art.id}
-                      initialIsVisible={art.isVisible ?? true}
-                      isSpoiler={art.isSpoiler}
-                    />
+                    <div className="flex items-center justify-between pt-2 border-t border-white/5 w-full">
+                      <PortfolioItemActions
+                        artworkId={art.id}
+                        initialIsVisible={art.isVisible ?? true}
+                        isSpoiler={art.isSpoiler}
+                        systemCaption={art.systemCaption}
+                        initialCustomCaption={art.customCaption}
+                      />
 
                     <div className="flex items-center gap-2">
                       <Link
