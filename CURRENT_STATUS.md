@@ -154,9 +154,10 @@
     - Exhaustive partial-file cleanup: Tracked all attempt paths (`masterPath`, `publicPath`, `thumbPath`, `posterTempPath`) and unlinked all attempted files upon processing errors (verified 0 orphan files remain on disk).
     - Strict owner-only presentation mutations: `updateArtworkService` and `toggleArtworkSpoilerService` strictly require `artwork.userId === actor.id` (Active Admin bypass blocked).
     - Elimination of Vault Selection & Obsolete Controls: Removed "Pilih dari Vault" modal and `existingArtworkVersionId` plumbing; removed obsolete `allowRevisions` checkbox from challenge admin form.
+    - Challenge Revision Spoiler State Preservation: Initialized `isSpoiler` in `ChallengeSubmissionModal` from `initialSpoiler` (`userSubmission.isSpoiler`), parsed `isSpoiler` as optional in server action, and preserved existing spoiler state when unspecified on revisions.
   - Verification Matrix:
     - `scripts/verifyMigrations.ts`: 9/9 migration scenarios passed (including Scenario 9A dirty fail-closed and Scenario 9B clean 0011 -> 0012 upgrade).
-    - `src/lib/__tests__/testGateESubmissionAndPortfolio.ts`: 60/60 scenarios passed.
+    - `src/lib/__tests__/testGateESubmissionAndPortfolio.ts`: 62/62 scenarios passed.
     - `npm run test:all`: 15/15 test suites passed cleanly.
     - `npm run lint`: 0 errors.
     - `npm run build`: Next.js production build and worker bundle compiled cleanly.
@@ -178,15 +179,15 @@
 - **QA-P0-011** (Persist only actual winners/awards; zero empty slots): RESOLVED & VERIFIED
 - **QA-P0-012** (No synthetic jury ranks / #null; single Community Winner highlight): RESOLVED & VERIFIED
 - **QA-P0-013** (Direct canonical submission schema, portfolio auto-add, safe slug collision retry, in-tx ACTIVE ownership & usable media invariants): RESOLVED & VERIFIED
-- **QA-P0-014** (P0 FFmpeg/FFprobe shell injection elimination, video duration cap removal, superseded media cleanup, exhaustive partial file cleanup, strict owner-only mutations): RESOLVED & VERIFIED
+- **QA-P0-014** (P0 FFmpeg/FFprobe shell injection elimination, video duration cap removal, superseded media cleanup, exhaustive partial file cleanup, strict owner-only mutations, challenge revision spoiler preservation): RESOLVED & VERIFIED
 - **QA-P1-007** (Pause/resume deadline validation with round deadlines): RESOLVED & VERIFIED
 - **QA-P1-008** (RESULTS_REVOKED status, notice banner, snapshot audit & flow): RESOLVED & VERIFIED
 
 ## Current Branch
-`main` (Base Candidate SHA: `7ecde8896173db4de4f7c2a75069023bd7da911d`)
+`main` (Base Candidate SHA: `ed0e65f520c8f3ec78de4212bb4f8a2ef15940ec`)
 
 ## Current Focus
-- Gate E final closure corrections complete and 100% verified across all 60 test scenarios, full test suite matrix, linter, and production build. Ready for independent QA review.
+- Gate E cumulative closure corrections complete and 100% verified across all 62 test scenarios, full test suite matrix, linter, and production build. Ready for independent QA review.
 
 ## Overall Status
 - **NO-GO** (Until Gates E–H pass independent QA. Hard stop after Gate E; do NOT start Gate F or Gate G).

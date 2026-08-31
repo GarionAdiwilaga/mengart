@@ -20,6 +20,7 @@ interface ChallengeSubmissionModalProps {
   initialTitle?: string;
   initialDescription?: string;
   initialSoftware?: string;
+  initialSpoiler?: boolean;
 }
 
 export function ChallengeSubmissionModal({
@@ -29,6 +30,7 @@ export function ChallengeSubmissionModal({
   initialTitle = "",
   initialDescription = "",
   initialSoftware = "",
+  initialSpoiler = false,
 }: ChallengeSubmissionModalProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -38,7 +40,7 @@ export function ChallengeSubmissionModal({
   const [description, setDescription] = useState(initialDescription);
   const [softwareUsed, setSoftwareUsed] = useState(initialSoftware);
 
-  const [isSpoiler, setIsSpoiler] = useState(false);
+  const [isSpoiler, setIsSpoiler] = useState(initialSpoiler);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);

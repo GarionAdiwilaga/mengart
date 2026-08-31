@@ -287,6 +287,7 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
                       initialTitle={userSubmission.currentVersion.title}
                       initialDescription={userSubmission.currentVersion.description || ""}
                       initialSoftware={userSubmission.currentVersion.softwareUsed || ""}
+                      initialSpoiler={userSubmission.isSpoiler}
                     />
                   ) : null}
                 </div>

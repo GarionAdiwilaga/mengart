@@ -378,6 +378,14 @@
 **Business Rule:** Media tools must never execute via shell strings. Video limits are size-based ($\le 50$MB) with no duration cap. Superseded challenge media and DB versions are pruned on replacement. Artists strictly own artwork presentation metadata. Direct challenge upload is the sole canonical submission path.
 **Reason:** Fulfills all 6 final QA closure directives for Gate E.
 
+### Gate E: Challenge Revision Spoiler State Preservation
+**Decision:** Preserved challenge submission spoiler state across revision modals and server actions:
+1. **Modal Initial State:** Added `initialSpoiler?: boolean` to `ChallengeSubmissionModalProps` and initialized `isSpoiler` state with `initialSpoiler ?? false`. In `/challenges/[slug]/page.tsx`, passed `initialSpoiler={userSubmission.isSpoiler}` for revision modals.
+2. **Defensive Server-Side Parsing:** In `submitArtworkToChallengeAction`, parsed `isSpoiler` as optional (`formData.get("isSpoiler") === null ? undefined : ...`). When `undefined` is passed to `replaceChallengeSubmissionMediaService`, the existing backing artwork `is_spoiler` value is preserved. Explicit `true` or `false` updates the state accordingly.
+3. **Dead State Cleanup:** Removed unused internal `allowRevisions` state from `ChallengeCreateForm.tsx`.
+**Business Rule:** Revisions must not unintentionally clear existing artwork presentation flags (such as `is_spoiler`).
+**Reason:** Addressed final Gate E QA review finding for spoiler state preservation on revisions.
+
 
 
 

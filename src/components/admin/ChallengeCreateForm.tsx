@@ -16,7 +16,6 @@ export function ChallengeCreateForm() {
   );
   const [awardMode, setAwardMode] = useState<"vote_and_jury" | "vote_only" | "jury_only" | "showcase_only">("vote_and_jury");
   const [starsPerMember, setStarsPerMember] = useState(1);
-  const [allowRevisions, setAllowRevisions] = useState(true);
 
   // Default dates: start now, submission 7 days, voting 3 days
   const nowStr = new Date().toISOString().slice(0, 16);
@@ -44,7 +43,6 @@ export function ChallengeCreateForm() {
     formData.append("promptRules", promptRules.trim());
     formData.append("awardMode", awardMode);
     formData.append("starsPerMember", String(starsPerMember));
-    formData.append("allowRevisions", String(allowRevisions));
     formData.append("submissionStartsAt", new Date(submissionStartsAt).toISOString());
     formData.append("submissionDeadline", new Date(submissionDeadline).toISOString());
     formData.append("votingStartsAt", new Date(votingStartsAt).toISOString());

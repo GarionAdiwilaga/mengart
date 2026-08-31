@@ -25,7 +25,13 @@ export async function submitArtworkToChallengeAction(formData: FormData) {
   const title = (formData.get("title") as string)?.trim();
   const description = (formData.get("description") as string)?.trim() || null;
   const softwareUsed = (formData.get("softwareUsed") as string)?.trim() || null;
-  const isSpoiler = formData.get("isSpoiler") === "true" || formData.get("isSpoiler") === "1" || formData.get("isSpoiler") === "on";
+  const rawSpoiler = formData.get("isSpoiler");
+  const isSpoiler =
+    rawSpoiler === null
+      ? undefined
+      : rawSpoiler === "true" ||
+        rawSpoiler === "1" ||
+        rawSpoiler === "on";
   const file = formData.get("file") as File | null;
 
   if (!challengeId || !title) {

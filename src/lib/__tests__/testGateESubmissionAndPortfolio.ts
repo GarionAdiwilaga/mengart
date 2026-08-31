@@ -1501,8 +1501,119 @@ async function runGateETestSuite() {
   }
   console.log("✓ Scenario 60 Passed: Zero partial/orphan files remained after forced processing failure.");
 
+  // Scenario 61: Challenge revision preserves existing isSpoiler=true when unspecified/undefined
+  console.log("-> [Scenario 61] Challenge revision preserves existing isSpoiler=true when unspecified...");
+  const [chSpoilerTest] = await db
+    .insert(challenges)
+    .values({
+      title: "Spoiler Preservation Challenge",
+      slug: `ch-spoiler-pres-${suffix}`,
+      theme: "Spoiler Theme",
+      description: "Spoiler Desc",
+      promptRules: "Spoiler Rules",
+      status: "submission_open",
+      submissionDeadline: new Date(Date.now() + 86400000),
+      votingDeadline: new Date(Date.now() + 172800000),
+      awardMode: "vote_only",
+      starsPerMember: 1,
+    })
+    .returning();
+
+  const spoilerSubImg1 = await createDummyImageBuffer("spoiler_sub_1");
+  const subSpoilerInit = await createChallengeSubmissionService({
+    actorUserId: artist1.id,
+    challengeId: chSpoilerTest.id,
+    title: "Spoiler Artwork",
+    description: "Initial spoiler art",
+    isSpoiler: true,
+    file: {
+      buffer: spoilerSubImg1,
+      name: "spoiler_sub1.png",
+      type: "image/png",
+      size: spoilerSubImg1.length,
+    },
+  });
+
+  const [artSpoilerBefore] = await db
+    .select()
+    .from(artworks)
+    .where(eq(artworks.id, subSpoilerInit.artwork.id));
+
+  if (!artSpoilerBefore.isSpoiler) {
+    throw new Error("Scenario 61 Failed: Initial submission was not created with isSpoiler=true!");
+  }
+
+  // Perform revision with media/title changes but isSpoiler = undefined (simulating untouched checkbox)
+  const spoilerSubImg2 = await createDummyImageBuffer("spoiler_sub_2");
+  await replaceChallengeSubmissionMediaService({
+    actorUserId: artist1.id,
+    submissionId: subSpoilerInit.submission.id,
+    title: "Spoiler Artwork Revised",
+    description: "Revised description",
+    isSpoiler: undefined, // omitted / unchanged
+    file: {
+      buffer: spoilerSubImg2,
+      name: "spoiler_sub2.png",
+      type: "image/png",
+      size: spoilerSubImg2.length,
+    },
+  });
+
+  const [artSpoilerAfterUndefined] = await db
+    .select()
+    .from(artworks)
+    .where(eq(artworks.id, subSpoilerInit.artwork.id));
+
+  if (artSpoilerAfterUndefined.isSpoiler !== true) {
+    throw new Error("Scenario 61 Failed: Revision with undefined isSpoiler silently cleared isSpoiler=true!");
+  }
+  console.log("✓ Scenario 61 Passed: Revision with undefined isSpoiler strictly preserved isSpoiler=true.");
+
+  // Scenario 62: Challenge revision explicitly unchecking isSpoiler=false updates to false
+  console.log("-> [Scenario 62] Challenge revision explicitly setting isSpoiler=false updates spoiler state...");
+  const spoilerSubImg3 = await createDummyImageBuffer("spoiler_sub_3");
+  await replaceChallengeSubmissionMediaService({
+    actorUserId: artist1.id,
+    submissionId: subSpoilerInit.submission.id,
+    title: "Spoiler Artwork Unchecked",
+    isSpoiler: false, // explicitly unchecked by artist
+    file: {
+      buffer: spoilerSubImg3,
+      name: "spoiler_sub3.png",
+      type: "image/png",
+      size: spoilerSubImg3.length,
+    },
+  });
+
+  const [artSpoilerAfterFalse] = await db
+    .select()
+    .from(artworks)
+    .where(eq(artworks.id, subSpoilerInit.artwork.id));
+
+  if (artSpoilerAfterFalse.isSpoiler !== false) {
+    throw new Error("Scenario 62 Failed: Explicit isSpoiler=false did not update artwork isSpoiler state!");
+  }
+
+  // Re-enable spoiler explicitly
+  await replaceChallengeSubmissionMediaService({
+    actorUserId: artist1.id,
+    submissionId: subSpoilerInit.submission.id,
+    title: "Spoiler Artwork Re-checked",
+    isSpoiler: true,
+  });
+
+  const [artSpoilerAfterTrue] = await db
+    .select()
+    .from(artworks)
+    .where(eq(artworks.id, subSpoilerInit.artwork.id));
+
+  if (artSpoilerAfterTrue.isSpoiler !== true) {
+    throw new Error("Scenario 62 Failed: Explicit isSpoiler=true did not restore artwork isSpoiler state!");
+  }
+  console.log("✓ Scenario 62 Passed: Explicit isSpoiler changes (false <-> true) apply correctly on revision.");
+
   console.log("\n=================================================================");
-  console.log("🎉 ALL 60 PRODUCTION SCENARIOS IN GATE E TEST SUITE PASSED!");
+  console.log("🎉 ALL 62 PRODUCTION SCENARIOS IN GATE E TEST SUITE PASSED!");
   console.log("=================================================================\n");
   process.exit(0);
 }
