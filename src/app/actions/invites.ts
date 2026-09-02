@@ -10,6 +10,7 @@ import {
 import { db } from "@/db";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rateLimit";
 
 const createInviteSchema = z.object({
   label: z.string().max(100).optional(),
@@ -37,12 +38,20 @@ export async function createInviteAction(formData: {
   maxUses?: number | null;
 }) {
   const admin = await requireAdmin();
+
+  // Rate Limiting by Admin (Security-Critical, Fail-Closed)
+  const rl = await checkRateLimit(`invite_create:${admin.id}`, {
+    limit: 20,
+    windowSeconds: 60,
+    criticality: "fail_closed",
+  });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak permintaan pembuatan undangan. Harap tunggu beberapa saat.");
+  }
+
   const validated = createInviteSchema.parse(formData);
   const headerList = await headers();
-  const clientIp =
-    headerList.get("cf-connecting-ip") ||
-    headerList.get("x-forwarded-for")?.split(",")[0] ||
-    "127.0.0.1";
+  const clientIp = getClientIpFromHeaders(headerList);
 
   const result = await createMembershipInvite({
     label: validated.label,
@@ -68,12 +77,20 @@ export async function revokeInviteAction(data: {
   reason: string;
 }) {
   const admin = await requireAdmin();
+
+  // Rate Limiting by Admin (Security-Critical, Fail-Closed)
+  const rl = await checkRateLimit(`invite_create:${admin.id}`, {
+    limit: 20,
+    windowSeconds: 60,
+    criticality: "fail_closed",
+  });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak permintaan pencabutan undangan. Harap tunggu beberapa saat.");
+  }
+
   const validated = revokeInviteSchema.parse(data);
   const headerList = await headers();
-  const clientIp =
-    headerList.get("cf-connecting-ip") ||
-    headerList.get("x-forwarded-for")?.split(",")[0] ||
-    "127.0.0.1";
+  const clientIp = getClientIpFromHeaders(headerList);
 
   const result = await revokeInviteService(db, {
     inviteId: validated.inviteId,

@@ -6,6 +6,7 @@ import { profiles, users, auditLogs } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { checkRateLimit } from "@/lib/rateLimit";
 
 const updateProfileSchema = z.object({
   displayName: z.string().min(2).max(50),
@@ -25,6 +26,17 @@ export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 
 export async function updateProfileAction(input: UpdateProfileInput) {
   const user = await requireAuth("/login");
+
+  // Rate Limiting (Low-Risk / Operational, Fail-Open with logging)
+  const rl = await checkRateLimit(`profile_update:${user.id}`, {
+    limit: 10,
+    windowSeconds: 60,
+    criticality: "fail_open",
+  });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak pembaruan profil. Harap tunggu beberapa saat.");
+  }
+
   const parsed = updateProfileSchema.parse(input);
 
   const [existingProfile] = await db

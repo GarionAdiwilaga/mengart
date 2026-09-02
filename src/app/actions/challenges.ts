@@ -15,8 +15,12 @@ import {
 export async function submitArtworkToChallengeAction(formData: FormData) {
   const user = await requireAuth("/login");
 
-  // Rate Limiting per user
-  const rl = await checkRateLimit(`challenge_submit:${user.id}`, { limit: 10, windowSeconds: 60 });
+  // Rate Limiting per user (Security-Critical, Fail-Closed)
+  const rl = await checkRateLimit(`challenge_submit:${user.id}`, {
+    limit: 10,
+    windowSeconds: 60,
+    criticality: "fail_closed",
+  });
   if (!rl.success) {
     throw new Error("Terlalu banyak pengiriman submisi. Harap tunggu beberapa saat.");
   }

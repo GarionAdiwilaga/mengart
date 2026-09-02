@@ -12,9 +12,20 @@ import {
 import { eq, and } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { createNotification } from "@/lib/notifications";
+import { checkRateLimit } from "@/lib/rateLimit";
 
 export async function postCritiqueCommentAction(formData: FormData) {
   const user = await requireAuth("/login");
+
+  // Rate Limiting (Low-Risk / Operational, Fail-Open with logging)
+  const rl = await checkRateLimit(`critique_post:${user.id}`, {
+    limit: 15,
+    windowSeconds: 60,
+    criticality: "fail_open",
+  });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak komentar kritik dikirim. Harap tunggu beberapa saat.");
+  }
 
   const [profile] = await db
     .select()
@@ -90,6 +101,15 @@ export async function postCritiqueCommentAction(formData: FormData) {
 export async function deleteCritiqueCommentAction(commentId: string, artworkSlug: string) {
   const user = await requireAuth("/login");
 
+  const rl = await checkRateLimit(`critique_post:${user.id}`, {
+    limit: 15,
+    windowSeconds: 60,
+    criticality: "fail_open",
+  });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak permintaan. Harap tunggu beberapa saat.");
+  }
+
   const [comment] = await db
     .select()
     .from(critiqueComments)
@@ -116,6 +136,15 @@ export async function deleteCritiqueCommentAction(commentId: string, artworkSlug
 
 export async function togglePinCritiqueAction(commentId: string, artworkSlug: string) {
   const user = await requireAuth("/login");
+
+  const rl = await checkRateLimit(`critique_post:${user.id}`, {
+    limit: 15,
+    windowSeconds: 60,
+    criticality: "fail_open",
+  });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak permintaan. Harap tunggu beberapa saat.");
+  }
 
   const [comment] = await db
     .select()

@@ -161,11 +161,35 @@
     - `npm run test:all`: 15/15 test suites passed cleanly.
     - `npm run lint`: 0 errors.
     - `npm run build`: Next.js production build and worker bundle compiled cleanly.
-- **Phase 6: Release Gate F (Media Processing, Watermarking & Rate Limiting):** PENDING REVIEW
+- **Phase 6: Release Gate F (Media Pipeline & Comprehensive Rate Limiting — Blueprint 2.2.2):** **COMPLETED & 100% VERIFIED / READY FOR INDEPENDENT QA REVIEW**
+  - Single Authoritative Media Validation & Sniffing Engine (`src/lib/services/mediaValidation.ts`):
+    - Sniffs initial magic bytes to strictly identify JPEG (`ffd8ff`), PNG (`89504e470d0a1a0a`), WebP (`52494646...WEBP`), and MP4 (`ftyp` at bytes 4-8).
+    - Fail-closed explicit rejections: DOS/PE executables (`4d5a`), shell scripts (`#!/`), SVG/XML text (`<svg`, `<?xml`), GIF (`47494638`), and WebM/MKV (`1a45dfa3`).
+    - Enforces max upload limits: $\le 25$MB for images, $\le 50$MB for videos.
+    - Deep Sharp decode validation with decompression bomb protection (`limitInputPixels: 50,000,000`).
+    - Unified validation consumed identically by synchronous uploads (`submissionService.ts`), worker jobs (`mediaProcessor.ts`), and server actions.
+  - Strict MP4-Only Video Container & Codec Pipeline:
+    - Deep container and stream inspection via `ffprobe` (`execFile`, `shell: false`).
+    - Enforces MP4 container only (`isom`, `iso2`, `mp41`, `mp42`, `avc1`, `dash`, `m4v`), rejecting QuickTime `.mov` (`qt  ` brand), `.webm`, `.mkv`, and `.avi`.
+    - Enforces H.264 video codec (`h264`/`avc1`) and AAC audio codec (`aac`) or silent video (no audio stream).
+    - No video duration limit per Blueprint 2.2.2.
+    - Safe derivative generation: clean master, single web-optimized public video derivative (`libx264`, `crf 23`, `preset fast`, `pix_fmt yuv420p`, `+faststart`), and 400x400 WebP grid thumbnail. Asserts non-empty file sizes (`stat.size > 0`).
+  - Tiered Sliding-Window Rate Limiting (`src/lib/rateLimit.ts`):
+    - Rate limit enforcement across all 14 write action surfaces.
+    - Tiered degradation on Redis outage:
+      - Security-Critical (Fail-Closed): `invite_login:${clientIp}` (10/60s), `onboarding_redeem:${userId}` (5/60s), `invite_create:${adminId}` (20/60s), `artwork_upload:${userId}` (10/60s), `challenge_submit:${userId}` (10/60s), `vote:${userId}` (20/60s), `report_create:${userId}` (5/60s).
+      - Low-Risk / Operational (Fail-Open with Logging): `profile_update:${userId}` (10/60s), `commission_save:${userId}` (10/60s), `portfolio_mutate:${userId}` (20/60s), `artwork_mutate:${userId}` (20/60s), `critique_post:${userId}` (15/60s), `report_resolve:${staffId}` (30/60s), `jury_action:${staffId}` (30/60s).
+    - Trusted Proxy IP Extraction (`getClientIpFromHeaders`): forwarded headers (`CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP`) are strictly ignored unless `process.env.TRUSTED_PROXY === "true"`.
+  - Background Worker Idempotency & Parity Regression:
+    - Worker `processArtworkMediaJob` refactored to consume authoritative `mediaValidation.ts` engine.
+    - Verified duplicate delivery safety (zero duplicate files or DB corruption on duplicate BullMQ jobs).
+    - Parity regression verified: synchronous staging and asynchronous worker produce identical validation errors on invalid payloads.
+  - Dedicated Gate F Test Suite (`src/lib/__tests__/testGateFMediaAndRateLimiting.ts`):
+    - 28/28 scenarios passed (100% success).
 - **Phase 7: Release Gate G (Community UX, Story Cards, A11y & Playwright E2E):** PENDING REVIEW
 - **Phase 8: Release Gate H (Disaster Recovery & Runtime Concurrency):** PENDING REVIEW
 
-## Addressed QA IDs in Phase 1, Phase 2, Phase 3, Phase 4 & Phase 5 (Gate A, B, C, D Closed; Gate E Final Closure Ready for QA)
+## Addressed QA IDs in Phase 1, Phase 2, Phase 3, Phase 4, Phase 5 & Phase 6 (Gate A–E Closed; Gate F Implementation Ready for QA)
 - **QA-P0-001** (Database migration reproducibility & authoritative production backfill): RESOLVED & VERIFIED
 - **QA-P0-002** (Per-round ballot uniqueness & multi-round tiebreak support): RESOLVED & VERIFIED
 - **QA-P0-003** (Google-only authentication, invitation-gated onboarding & PENDING_INVITE separation): RESOLVED & VERIFIED
@@ -180,17 +204,18 @@
 - **QA-P0-012** (No synthetic jury ranks / #null; single Community Winner highlight): RESOLVED & VERIFIED
 - **QA-P0-013** (Direct canonical submission schema, portfolio auto-add, safe slug collision retry, in-tx ACTIVE ownership & usable media invariants): RESOLVED & VERIFIED
 - **QA-P0-014** (P0 FFmpeg/FFprobe shell injection elimination, video duration cap removal, superseded media cleanup, exhaustive partial file cleanup, strict owner-only mutations, challenge revision spoiler preservation): RESOLVED & VERIFIED
+- **QA-P0-015** (Single authoritative media validation engine, strict MP4-only video container, tiered rate limiting with fail-closed/fail-open degradation, trusted proxy IP protection, worker idempotency & validation parity): RESOLVED & VERIFIED
 - **QA-P1-007** (Pause/resume deadline validation with round deadlines): RESOLVED & VERIFIED
 - **QA-P1-008** (RESULTS_REVOKED status, notice banner, snapshot audit & flow): RESOLVED & VERIFIED
 
 ## Current Branch
-`main` (Base Candidate SHA: `ed0e65f520c8f3ec78de4212bb4f8a2ef15940ec`)
+`main` (Base Candidate SHA: `f6b4d547789478e51588e1150e0f9db38181c810`)
 
 ## Current Focus
-- Gate E cumulative closure corrections complete and 100% verified across all 62 test scenarios, full test suite matrix, linter, and production build. Ready for independent QA review.
+- Gate F media pipeline and rate limiting complete and 100% verified across 28 dedicated test scenarios, full repository test suite matrix (`npm run test:all`), linter (`npm run lint`), and production build (`npm run build`). Ready for independent QA review.
 
 ## Overall Status
-- **NO-GO** (Until Gates E–H pass independent QA. Hard stop after Gate E; do NOT start Gate F or Gate G).
+- **NO-GO** (Until Gates F–H pass independent QA. Hard stop after Gate F; do NOT start Gate G).
 
 
 

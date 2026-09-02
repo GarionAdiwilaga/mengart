@@ -386,6 +386,26 @@
 **Business Rule:** Revisions must not unintentionally clear existing artwork presentation flags (such as `is_spoiler`).
 **Reason:** Addressed final Gate E QA review finding for spoiler state preservation on revisions.
 
+## 2026-09-02
+
+### Gate F: Single Authoritative Media Validation & Processing Engine
+**Decision:** Established `src/lib/services/mediaValidation.ts` as the single authoritative media validation, content sniffing, and transformation engine for Mengart Atelier. All synchronous entry points (`stageAndPromoteMedia`, `createArtworkUploadAction`, `submitArtworkToChallengeAction`) and asynchronous worker pipelines (`processArtworkMediaJob`, `mediaWorker.ts`) strictly consume this unified engine. Eliminated all duplicate/divergent validation logic, worker-specific formats, and route-specific MIME rules.
+**Business Rule:** Accepted formats are strictly JPEG, PNG, WebP ($\le 25$MB) and MP4 H.264/AAC or silent ($\le 50$MB, no duration limit). All other formats (GIF, WebM, SVG, scripts, executables, audio-only) are rejected fail-closed regardless of extension or client MIME. Single public video derivative (`libx264`, `yuv420p`, `faststart`) and WebP thumbnail are generated non-empty.
+**Reason:** Prevents validation and security drift between synchronous upload processing and background worker queues under Blueprint 2.2.2.
+
+### Gate F: MP4-Only Video Container Policy
+**Decision:** Restricted video container input strictly to MP4 container formats (`isom`, `iso2`, `mp41`, `mp42`, `avc1`, `dash`, `m4v`). Deep inspection via `ffprobe` (`execFile`, `shell: false`) strictly validates container format, video codec (`h264`/`avc1`), and audio codec (`aac` or silent). Explicitly rejects `.mov` (QuickTime `qt  ` brand), `.webm`, `.mkv`, and `.avi` even if codecs are technically compatible.
+**Business Rule:** Video input is restricted to MP4 containers with H.264 video codec and AAC or no audio stream.
+**Reason:** Blueprint 2.2.2 container standardization and predictable web streaming playback.
+
+### Gate F: Tiered Rate Limiting & Trusted Proxy IP Extraction
+**Decision:** Implemented sliding-window rate limiting across all 14 public write mutation boundaries in Server Actions, with tiered degradation on Redis outages:
+1. **Security-Critical (Fail-Closed):** `invite_login:${ip}` (10/60s), `onboarding_redeem:${userId}` (5/60s), `invite_create:${adminId}` (20/60s), `artwork_upload:${userId}` (10/60s), `challenge_submit:${userId}` (10/60s), `vote:${userId}` (20/60s), and `report_create:${userId}` (5/60s). Fails closed safely if Redis is down in production.
+2. **Low-Risk / Operational (Fail-Open with Logging):** `profile_update:${userId}` (10/60s), `commission_save:${userId}` (10/60s), `portfolio_mutate:${userId}` (20/60s), `artwork_mutate:${userId}` (20/60s), `critique_post:${userId}` (15/60s), `report_resolve:${staffId}` (30/60s), and `jury_action:${staffId}` (30/60s). Allows requests with degraded logging if Redis is down in production to avoid full application outage.
+3. **Trusted Proxy IP Protection:** Client IP extraction (`getClientIpFromHeaders`) only trusts forwarded headers (`CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP`) when `TRUSTED_PROXY=true` in the environment. Otherwise defaults to direct socket IP (`127.0.0.1`), preventing spoofing attacks against IP rate limits.
+**Business Rule:** Public mutations enforce rate limits early at action/API boundary; domain services enforce transactional database locks and invariants. Redis outages must never become total application outages for low-risk user profile/commission edits.
+**Reason:** Authoritative rate limiting and denial-of-service protection under Blueprint 2.2.2.
+
 
 
 

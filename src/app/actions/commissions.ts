@@ -11,6 +11,7 @@ import {
 import { eq, and } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { checkRateLimit } from "@/lib/rateLimit";
 
 const commissionServiceSchema = z.object({
   id: z.string().uuid().optional(),
@@ -34,6 +35,17 @@ export type CommissionServiceInput = z.infer<typeof commissionServiceSchema>;
 
 export async function saveCommissionServiceAction(input: CommissionServiceInput) {
   const user = await requireAuth("/login");
+
+  // Rate Limiting (Low-Risk / Operational, Fail-Open with logging)
+  const rl = await checkRateLimit(`commission_save:${user.id}`, {
+    limit: 10,
+    windowSeconds: 60,
+    criticality: "fail_open",
+  });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak pembaruan layanan komisi. Harap tunggu beberapa saat.");
+  }
+
   const parsed = commissionServiceSchema.parse(input);
 
   const [profile] = await db
@@ -105,6 +117,15 @@ export async function saveCommissionServiceAction(input: CommissionServiceInput)
 export async function deleteCommissionServiceAction(serviceId: string) {
   const user = await requireAuth("/login");
 
+  const rl = await checkRateLimit(`commission_save:${user.id}`, {
+    limit: 10,
+    windowSeconds: 60,
+    criticality: "fail_open",
+  });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak permintaan penghapusan komisi. Harap tunggu beberapa saat.");
+  }
+
   const [profile] = await db
     .select()
     .from(profiles)
@@ -133,6 +154,15 @@ export async function saveCommissionScopeRulesAction(
   }>
 ) {
   const user = await requireAuth("/login");
+
+  const rl = await checkRateLimit(`commission_save:${user.id}`, {
+    limit: 10,
+    windowSeconds: 60,
+    criticality: "fail_open",
+  });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak pembaruan aturan komisi. Harap tunggu beberapa saat.");
+  }
 
   const [profile] = await db
     .select()

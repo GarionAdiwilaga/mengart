@@ -3,6 +3,7 @@
 import { requireAuth } from "@/lib/rbac";
 import { db } from "@/db";
 import { revalidatePath } from "next/cache";
+import { checkRateLimit } from "@/lib/rateLimit";
 import {
   stageAndPromoteMedia,
   cleanupPromotedMedia,
@@ -20,6 +21,16 @@ import {
 
 export async function createArtworkUploadAction(formData: FormData) {
   const user = await requireAuth("/login");
+
+  // 1. Rate Limit Enforcement (Security-Critical, Fail-Closed)
+  const rateLimit = await checkRateLimit(`artwork_upload:${user.id}`, {
+    limit: 10,
+    windowSeconds: 60,
+    criticality: "fail_closed",
+  });
+  if (!rateLimit.success) {
+    throw new Error("Batas pengunggahan tercapai. Silakan coba lagi dalam beberapa saat.");
+  }
 
   const file = formData.get("file") as File | null;
   if (!file || file.size === 0) {
@@ -55,7 +66,7 @@ export async function createArtworkUploadAction(formData: FormData) {
 
   const buffer = Buffer.from(await file.arrayBuffer());
 
-  // 1. Stage and process media before DB transaction
+  // 2. Stage and process media before DB transaction via single authoritative media engine
   const staged = await stageAndPromoteMedia({
     buffer,
     name: file.name,
@@ -83,7 +94,7 @@ export async function createArtworkUploadAction(formData: FormData) {
     throw err;
   }
 
-  // 2. Post-commit cache revalidation (failures here MUST NOT delete committed media)
+  // 3. Post-commit cache revalidation (failures here MUST NOT delete committed media)
   try {
     revalidatePath("/me/portfolio");
     revalidatePath("/gallery");
@@ -97,6 +108,16 @@ export async function createArtworkUploadAction(formData: FormData) {
 
 export async function updateArtworkAction(formData: FormData) {
   const user = await requireAuth("/login");
+
+  // Rate limit: Low-Risk / Operational, Fail-Open with logging
+  const rateLimit = await checkRateLimit(`artwork_mutate:${user.id}`, {
+    limit: 20,
+    windowSeconds: 60,
+    criticality: "fail_open",
+  });
+  if (!rateLimit.success) {
+    throw new Error("Terlalu banyak pembaruan karya. Silakan coba lagi sebentar.");
+  }
 
   const artworkId = formData.get("artworkId") as string;
   const title = (formData.get("title") as string)?.trim();
@@ -136,6 +157,15 @@ export async function updateArtworkAction(formData: FormData) {
 export async function toggleArtworkSpoilerAction(artworkId: string, isSpoiler: boolean) {
   const user = await requireAuth("/login");
 
+  const rateLimit = await checkRateLimit(`artwork_mutate:${user.id}`, {
+    limit: 20,
+    windowSeconds: 60,
+    criticality: "fail_open",
+  });
+  if (!rateLimit.success) {
+    throw new Error("Terlalu banyak permintaan spoiler. Silakan coba lagi nanti.");
+  }
+
   const updated = await db.transaction(async (tx) => {
     return await toggleArtworkSpoilerService(tx, {
       actorUserId: user.id,
@@ -158,6 +188,15 @@ export async function toggleArtworkSpoilerAction(artworkId: string, isSpoiler: b
 export async function toggleArtworkPortfolioVisibilityAction(artworkId: string, isVisible: boolean) {
   const user = await requireAuth("/login");
 
+  const rateLimit = await checkRateLimit(`portfolio_mutate:${user.id}`, {
+    limit: 20,
+    windowSeconds: 60,
+    criticality: "fail_open",
+  });
+  if (!rateLimit.success) {
+    throw new Error("Terlalu banyak permintaan portfolio. Silakan coba lagi nanti.");
+  }
+
   const result = await db.transaction(async (tx) => {
     return await togglePortfolioEntryVisibilityService(tx, {
       actorUserId: user.id,
@@ -179,6 +218,15 @@ export async function toggleArtworkPortfolioVisibilityAction(artworkId: string, 
 export async function updatePortfolioCustomCaptionAction(artworkId: string, customCaption: string | null) {
   const user = await requireAuth("/login");
 
+  const rateLimit = await checkRateLimit(`portfolio_mutate:${user.id}`, {
+    limit: 20,
+    windowSeconds: 60,
+    criticality: "fail_open",
+  });
+  if (!rateLimit.success) {
+    throw new Error("Terlalu banyak permintaan pembaruan keterangan. Silakan coba lagi nanti.");
+  }
+
   const result = await db.transaction(async (tx) => {
     return await updatePortfolioEntryCustomCaptionService(tx, {
       actorUserId: user.id,
@@ -198,6 +246,15 @@ export async function updatePortfolioCustomCaptionAction(artworkId: string, cust
 
 export async function deleteArtworkAction(artworkId: string) {
   const user = await requireAuth("/login");
+
+  const rateLimit = await checkRateLimit(`artwork_mutate:${user.id}`, {
+    limit: 20,
+    windowSeconds: 60,
+    criticality: "fail_open",
+  });
+  if (!rateLimit.success) {
+    throw new Error("Terlalu banyak permintaan penghapusan karya. Silakan coba lagi nanti.");
+  }
 
   const deleted = await db.transaction(async (tx) => {
     return await deleteArtworkService(tx, {

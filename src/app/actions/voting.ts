@@ -53,8 +53,12 @@ export async function castOrUpdateBallotAction(params: {
 }) {
   const user = await requireAuth("/login");
 
-  // Rate Limiting on voting actions
-  const rl = await checkRateLimit(`vote:${user.id}`, { limit: 20, windowSeconds: 60 });
+  // Rate Limiting on voting actions (Security-Critical, Fail-Closed)
+  const rl = await checkRateLimit(`vote:${user.id}`, {
+    limit: 20,
+    windowSeconds: 60,
+    criticality: "fail_closed",
+  });
   if (!rl.success) {
     throw new Error("Terlalu banyak permintaan pemungutan suara. Harap tunggu beberapa saat.");
   }
@@ -98,6 +102,16 @@ export async function castOrUpdateBallotAction(params: {
  */
 export async function resetBallotAction(params: { votingRoundId: string }) {
   const user = await requireAuth("/login");
+
+  // Rate Limiting on voting actions (Security-Critical, Fail-Closed)
+  const rl = await checkRateLimit(`vote:${user.id}`, {
+    limit: 20,
+    windowSeconds: 60,
+    criticality: "fail_closed",
+  });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak permintaan reset suara. Harap tunggu beberapa saat.");
+  }
 
   const { votingRoundId } = params;
 

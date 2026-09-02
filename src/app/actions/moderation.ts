@@ -13,9 +13,20 @@ import {
 import { eq, and } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { resolveReportService } from "@/lib/services/moderationService";
+import { checkRateLimit } from "@/lib/rateLimit";
 
 export async function createReportAction(formData: FormData) {
   const user = await requireAuth("/login");
+
+  // Rate Limiting (Security-Critical, Fail-Closed)
+  const rl = await checkRateLimit(`report_create:${user.id}`, {
+    limit: 5,
+    windowSeconds: 60,
+    criticality: "fail_closed",
+  });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak laporan dikirim. Harap tunggu beberapa saat.");
+  }
 
   const targetType = formData.get("targetType") as any;
   const targetId = formData.get("targetId") as string;
@@ -49,6 +60,16 @@ export async function resolveReportAction(
 ) {
   const user = await requireModerator("/dashboard");
 
+  // Rate Limiting (Low-Risk / Operational Staff Action, Fail-Open with logging)
+  const rl = await checkRateLimit(`report_resolve:${user.id}`, {
+    limit: 30,
+    windowSeconds: 60,
+    criticality: "fail_open",
+  });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak resolusi laporan dalam waktu singkat.");
+  }
+
   const result = await resolveReportService(db, {
     actorUserId: user.id,
     reportId,
@@ -69,6 +90,15 @@ export async function setMonthlySpotlightAction(
   month?: number
 ) {
   const user = await requireModerator("/dashboard");
+
+  const rl = await checkRateLimit(`report_resolve:${user.id}`, {
+    limit: 30,
+    windowSeconds: 60,
+    criticality: "fail_open",
+  });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak permintaan pembaruan spotlight.");
+  }
 
   const now = new Date();
   const targetYear = year || now.getFullYear();
@@ -106,13 +136,7 @@ export async function setMonthlySpotlightAction(
     });
   }
 
-  await db.insert(activityLogs).values({
-    eventType: "spotlight_published",
-    targetType: "artist_profile",
-    targetId: artistProfileId,
-    metadata: { userId: user.id, year: targetYear, month: targetMonth },
-  });
-
-  revalidatePath("/");
+  revalidatePath("/community");
+  revalidatePath("/admin/spotlight");
   return { success: true };
 }

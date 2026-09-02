@@ -5,6 +5,7 @@ import { challenges } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { requireAuth, requireModerator } from "@/lib/rbac";
+import { checkRateLimit } from "@/lib/rateLimit";
 import {
   addJuryAssignmentService,
   removeJuryAssignmentService,
@@ -37,11 +38,23 @@ async function revalidateChallengePaths(challengeId: string) {
   revalidatePath("/challenges");
 }
 
+async function checkJuryRateLimit(userId: string) {
+  const rl = await checkRateLimit(`jury_action:${userId}`, {
+    limit: 30,
+    windowSeconds: 60,
+    criticality: "fail_open",
+  });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak aksi juri dalam waktu singkat.");
+  }
+}
+
 export async function addJuryAssignmentAction(params: {
   challengeId: string;
   targetUserId: string;
 }) {
   const user = await requireModerator("/dashboard");
+  await checkJuryRateLimit(user.id);
 
   const result = await db.transaction(async (tx) => {
     return await addJuryAssignmentService(
@@ -60,6 +73,7 @@ export async function removeJuryAssignmentAction(params: {
   targetUserId: string;
 }) {
   const user = await requireModerator("/dashboard");
+  await checkJuryRateLimit(user.id);
 
   const result = await db.transaction(async (tx) => {
     return await removeJuryAssignmentService(
@@ -78,6 +92,7 @@ export async function assignJuryRecorderAction(params: {
   userId: string;
 }) {
   const user = await requireModerator("/dashboard");
+  await checkJuryRateLimit(user.id);
 
   const result = await db.transaction(async (tx) => {
     return await assignJuryRecorderService(
@@ -98,6 +113,7 @@ export async function createJuryAwardAction(params: {
   confirmDuplicateSubmission?: boolean;
 }) {
   const user = await requireAuth("/login");
+  await checkJuryRateLimit(user.id);
 
   const result = await db.transaction(async (tx) => {
     return await createJuryAwardService(
@@ -121,6 +137,7 @@ export async function updateJuryAwardAction(params: {
   confirmDuplicateSubmission?: boolean;
 }) {
   const user = await requireAuth("/login");
+  await checkJuryRateLimit(user.id);
 
   const result = await db.transaction(async (tx) => {
     return await updateJuryAwardService(
@@ -141,6 +158,7 @@ export async function deleteJuryAwardAction(params: {
   awardId: string;
 }) {
   const user = await requireAuth("/login");
+  await checkJuryRateLimit(user.id);
 
   const result = await db.transaction(async (tx) => {
     return await deleteJuryAwardService(
@@ -159,6 +177,7 @@ export async function publishJuryResultsAction(params: {
   publishCommunityOnly?: boolean;
 }) {
   const user = await requireAuth("/login");
+  await checkJuryRateLimit(user.id);
 
   const result = await db.transaction(async (tx) => {
     return await publishJuryChallengeResultsService(
@@ -177,6 +196,7 @@ export async function cancelJuryChallengeAction(params: {
   reason: string;
 }) {
   const user = await requireAuth("/login");
+  await checkJuryRateLimit(user.id);
 
   const result = await db.transaction(async (tx) => {
     return await cancelJuryChallengeService(
@@ -195,6 +215,7 @@ export async function revokeChallengeResultsAction(params: {
   reason: string;
 }) {
   const user = await requireModerator("/dashboard");
+  await checkJuryRateLimit(user.id);
 
   const result = await db.transaction(async (tx) => {
     return await revokeChallengeResultsService(
@@ -216,6 +237,7 @@ export async function correctCommunityWinnerAction(params: {
   reason: string;
 }) {
   const user = await requireModerator("/dashboard");
+  await checkJuryRateLimit(user.id);
 
   const result = await db.transaction(async (tx) => {
     return await correctCommunityWinnerService(
@@ -234,6 +256,7 @@ export async function republishChallengeResultsAction(params: {
   reason: string;
 }) {
   const user = await requireModerator("/dashboard");
+  await checkJuryRateLimit(user.id);
 
   const result = await db.transaction(async (tx) => {
     return await republishChallengeResultsService(
@@ -253,6 +276,7 @@ export async function cancelRevokedChallengeAction(params: {
   reason: string;
 }) {
   const user = await requireModerator("/dashboard");
+  await checkJuryRateLimit(user.id);
 
   const result = await db.transaction(async (tx) => {
     return await cancelRevokedChallengeService(

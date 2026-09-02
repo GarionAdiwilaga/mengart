@@ -1,15 +1,29 @@
 "use server";
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { db } from "@/db";
 import { getCurrentUser } from "@/lib/rbac";
 import { extractInviteCode, validateInviteCode, redeemInviteService } from "@/lib/invites";
 import { signOut } from "@/auth";
+import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rateLimit";
 
 /**
  * Server Action called before Google OAuth redirect to set the HttpOnly pending invite cookie
  */
 export async function initiateInviteGoogleLoginAction(rawInput: string) {
+  const headerList = await headers();
+  const clientIp = getClientIpFromHeaders(headerList);
+
+  // Rate Limiting by IP (Security-Critical, Fail-Closed)
+  const rl = await checkRateLimit(`invite_login:${clientIp}`, {
+    limit: 10,
+    windowSeconds: 60,
+    criticality: "fail_closed",
+  });
+  if (!rl.success) {
+    return { success: false, error: "Terlalu banyak percobaan masuk undangan. Harap tunggu beberapa saat." };
+  }
+
   const cleanCode = extractInviteCode(rawInput);
   if (!cleanCode) {
     return { success: false, error: "Kode undangan wajib diisi." };
@@ -48,6 +62,16 @@ export async function redeemOnboardingInviteAction(formData: FormData) {
   const sessionUser = await getCurrentUser();
   if (!sessionUser || !sessionUser.id) {
     return { success: false, error: "Sesi login tidak ditemukan. Silakan masuk dengan Google terlebih dahulu." };
+  }
+
+  // Rate Limiting by User (Security-Critical, Fail-Closed)
+  const rl = await checkRateLimit(`onboarding_redeem:${sessionUser.id}`, {
+    limit: 5,
+    windowSeconds: 60,
+    criticality: "fail_closed",
+  });
+  if (!rl.success) {
+    return { success: false, error: "Terlalu banyak percobaan penukaran undangan. Harap tunggu beberapa saat." };
   }
 
   const rawInput = (formData.get("inviteCode") as string) || (formData.get("inviteInput") as string) || "";

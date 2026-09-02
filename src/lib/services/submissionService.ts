@@ -23,63 +23,11 @@ import {
   ensureStorageDirectories,
 } from "@/lib/storage";
 
-const execFileAsync = promisify(execFile);
-
-/**
- * Validate buffer magic bytes against expected media format
- */
-function validateMagicBytes(buffer: Buffer, mediaType: "image" | "gif" | "video"): boolean {
-  if (buffer.length < 12) return false;
-
-  const hex = buffer.subarray(0, 12).toString("hex").toLowerCase();
-
-  if (mediaType === "image") {
-    const isJpeg = hex.startsWith("ffd8ff");
-    const isPng = hex.startsWith("89504e470d0a1a0a");
-    const isWebp = hex.startsWith("52494646") && buffer.subarray(8, 12).toString("utf-8") === "WEBP";
-    return isJpeg || isPng || isWebp;
-  }
-
-  if (mediaType === "gif") {
-    return hex.startsWith("47494638"); // GIF87a or GIF89a
-  }
-
-  if (mediaType === "video") {
-    const ftyp = buffer.subarray(4, 8).toString("utf-8");
-    const isWebm = hex.startsWith("1a45dfa3");
-    return ftyp === "ftyp" || isWebm;
-  }
-
-  return false;
-}
-
-function createWatermarkSvg(width: number, height: number): Buffer {
-  const fontSize = Math.max(14, Math.min(36, Math.floor(width / 35)));
-  const padding = Math.max(12, Math.floor(width / 50));
-
-  return Buffer.from(`
-    <svg width="${width}" height="${height}">
-      <style>
-        .watermark-text {
-          fill: rgba(255, 255, 255, 0.45);
-          font-family: 'Plus Jakarta Sans', sans-serif;
-          font-size: ${fontSize}px;
-          font-weight: 700;
-          letter-spacing: 1.5px;
-        }
-        .watermark-sub {
-          fill: rgba(255, 255, 255, 0.3);
-          font-family: 'JetBrains Mono', monospace;
-          font-size: ${Math.max(10, Math.floor(fontSize * 0.65))}px;
-        }
-      </style>
-      <g transform="translate(${width - padding}, ${height - padding})" text-anchor="end">
-        <text x="0" y="-${Math.floor(fontSize * 0.8)}" class="watermark-text">MENGART ATELIER</text>
-        <text x="0" y="0" class="watermark-sub">COMMUNITY PREVIEW</text>
-      </g>
-    </svg>
-  `);
-}
+import {
+  validateAndInspectMediaContent,
+  generateWatermarkedDerivatives,
+  type ValidatedMediaType,
+} from "@/lib/services/mediaValidation";
 
 export interface StagedMediaResult {
   masterStorageKey: string;
@@ -90,12 +38,12 @@ export interface StagedMediaResult {
   fileSizeBytes: number;
   width: number | null;
   height: number | null;
-  mediaType: "image" | "gif" | "video";
+  mediaType: ValidatedMediaType;
 }
 
 /**
  * Validates, processes derivatives, and promotes media files to durable unreferenced storage keys.
- * Implements safe decode limits, metadata stripping, usable non-empty derivatives, and exhaustive partial-file cleanup.
+ * Implements single authoritative validation, safe decode limits, metadata stripping, usable non-empty derivatives, and exhaustive partial-file cleanup.
  */
 export async function stageAndPromoteMedia(file: {
   buffer: Buffer;
@@ -105,42 +53,21 @@ export async function stageAndPromoteMedia(file: {
 }): Promise<StagedMediaResult> {
   await ensureStorageDirectories();
 
-  let mediaType: "image" | "gif" | "video" = "image";
-  if (file.type.startsWith("video/")) {
-    mediaType = "video";
-  } else if (file.type === "image/gif") {
-    mediaType = "gif";
-  }
+  // 1. Authoritative Validation & Inspection via Single Media Engine
+  const validated = await validateAndInspectMediaContent(file);
 
-  // Size limit validation (Image <= 25MB, Video <= 50MB)
-  const maxBytes = mediaType === "video" ? 50 * 1024 * 1024 : 25 * 1024 * 1024;
-  if (file.size > maxBytes || file.buffer.length > maxBytes) {
-    throw new Error(`Ukuran berkas melebihi batas maksimum (${mediaType === "video" ? "50MB" : "25MB"}).`);
-  }
-
-  // Magic bytes validation
-  if (!validateMagicBytes(file.buffer, mediaType)) {
-    throw new Error(`Format berkas tidak valid untuk tipe media '${mediaType}'.`);
-  }
-
-  const checksumSha256 = crypto.createHash("sha256").update(file.buffer).digest("hex");
-
-  // Derive storage extensions strictly from validated internal media type & magic bytes (NEVER from raw file.name)
+  // Derive storage extensions strictly from validated internal media type (NEVER from raw file.name)
   let masterExt = "png";
   let publicExt = "webp";
-  if (mediaType === "video") {
+  if (validated.mediaType === "video") {
     masterExt = "mp4";
     publicExt = "mp4";
-  } else if (mediaType === "gif") {
-    masterExt = "gif";
-    publicExt = "gif";
-  } else if (mediaType === "image") {
-    const hex = file.buffer.subarray(0, 4).toString("hex").toLowerCase();
-    if (hex.startsWith("ffd8")) {
+  } else if (validated.mediaType === "image") {
+    if (validated.detectedFormat === "jpeg") {
       masterExt = "jpg";
-    } else if (hex.startsWith("8950")) {
+    } else if (validated.detectedFormat === "png") {
       masterExt = "png";
-    } else if (hex.startsWith("5249")) {
+    } else if (validated.detectedFormat === "webp") {
       masterExt = "webp";
     } else {
       masterExt = "png";
@@ -160,155 +87,26 @@ export async function stageAndPromoteMedia(file: {
   const attemptPaths = [masterPath, publicPath, thumbPath, posterTempPath];
 
   try {
-    let width: number | null = null;
-    let height: number | null = null;
-    let durationSeconds: number | null = null;
-
-    if (mediaType === "image") {
-      // Safe image decode limits (50 million pixels max) & EXIF/ICC metadata stripping
-      const image = sharp(file.buffer, { limitInputPixels: 50000000 });
-      const meta = await image.metadata();
-      width = meta.width || null;
-      height = meta.height || null;
-
-      // 1. Write Clean Master (Metadata stripped)
-      await sharp(file.buffer, { limitInputPixels: 50000000 }).toFile(masterPath);
-
-      // 2. Generate Watermarked Public Derivative (.webp)
-      if (width && height) {
-        const targetWidth = Math.min(width, 1920);
-        const targetHeight = Math.round((height / width) * targetWidth);
-        const watermarkSvg = createWatermarkSvg(targetWidth, targetHeight);
-
-        await sharp(file.buffer, { limitInputPixels: 50000000 })
-          .resize(targetWidth, targetHeight, { fit: "inside" })
-          .composite([{ input: watermarkSvg, top: 0, left: 0 }])
-          .webp({ quality: 82 })
-          .toFile(publicPath);
-      } else {
-        await sharp(file.buffer, { limitInputPixels: 50000000 })
-          .webp({ quality: 82 })
-          .toFile(publicPath);
-      }
-
-      // 3. Generate Thumbnail (.webp)
-      await sharp(file.buffer, { limitInputPixels: 50000000 })
-        .resize(400, 400, { fit: "cover", position: "center" })
-        .webp({ quality: 80 })
-        .toFile(thumbPath);
-    } else if (mediaType === "gif") {
-      const gif = sharp(file.buffer, { animated: true, limitInputPixels: 50000000 });
-      const meta = await gif.metadata();
-      width = meta.width || null;
-      height = meta.height || null;
-
-      await sharp(file.buffer, { animated: true }).toFile(masterPath);
-      await sharp(file.buffer, { animated: true }).toFile(publicPath);
-
-      await sharp(file.buffer, { page: 0 })
-        .resize(400, 400, { fit: "cover", position: "center" })
-        .webp({ quality: 80 })
-        .toFile(thumbPath);
-    } else if (mediaType === "video") {
-      // 1. Write Master Video
-      await fs.writeFile(masterPath, file.buffer);
-
-      // 2. ffprobe duration & dimensions via execFile (NO SHELL INTERPRETATION)
-      try {
-        const { stdout: probeOut } = await execFileAsync(
-          "ffprobe",
-          [
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration:stream=width,height",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            masterPath,
-          ],
-          { shell: false }
-        );
-        const lines = probeOut.trim().split("\n");
-        if (lines.length >= 2) {
-          width = parseInt(lines[0], 10) || null;
-          height = parseInt(lines[1], 10) || null;
-          durationSeconds = parseFloat(lines[lines.length - 1]) || null;
-        }
-      } catch (probeErr: any) {
-        console.warn("ffprobe inspection note:", probeErr?.message);
-      }
-
-      // 3. Transcode public video derivative via ffmpeg (NO SHELL INTERPRETATION)
-      await execFileAsync(
-        "ffmpeg",
-        [
-          "-y",
-          "-i",
-          masterPath,
-          "-c:v",
-          "libx264",
-          "-preset",
-          "medium",
-          "-crf",
-          "23",
-          "-pix_fmt",
-          "yuv420p",
-          "-movflags",
-          "+faststart",
-          "-map_metadata",
-          "-1",
-          publicPath,
-        ],
-        { shell: false }
-      );
-
-      // 4. Extract video poster at 0s & generate thumbnail (NO SHELL INTERPRETATION)
-      try {
-        await execFileAsync(
-          "ffmpeg",
-          [
-            "-y",
-            "-ss",
-            "00:00:00",
-            "-i",
-            masterPath,
-            "-vframes",
-            "1",
-            "-q:v",
-            "2",
-            posterTempPath,
-          ],
-          { shell: false }
-        );
-        await sharp(posterTempPath)
-          .resize(400, 400, { fit: "cover", position: "center" })
-          .webp({ quality: 80 })
-          .toFile(thumbPath);
-      } finally {
-        await fs.unlink(posterTempPath).catch(() => {});
-      }
-    }
-
-    // Derivative Usability & Non-Empty Validation
-    const [publicStat, thumbStat] = await Promise.all([
-      fs.stat(publicPath),
-      fs.stat(thumbPath),
-    ]);
-
-    if (publicStat.size === 0 || thumbStat.size === 0) {
-      throw new Error("Gagal memproses derivatif media: berkas derivatif atau thumbnail kosong.");
-    }
+    // 2. Generate Watermarked Derivatives & Clean Master via Single Media Engine
+    const transformResult = await generateWatermarkedDerivatives({
+      buffer: file.buffer,
+      mediaType: validated.mediaType,
+      masterPath,
+      publicPath,
+      thumbPath,
+      posterTempPath,
+    });
 
     return {
       masterStorageKey,
       publicStorageKey,
       thumbnailStorageKey,
-      checksumSha256,
-      mimeType: file.type || "application/octet-stream",
-      fileSizeBytes: file.size,
-      width,
-      height,
-      mediaType,
+      checksumSha256: validated.checksumSha256,
+      mimeType: validated.mimeType,
+      fileSizeBytes: validated.fileSizeBytes,
+      width: transformResult.width,
+      height: transformResult.height,
+      mediaType: validated.mediaType,
     };
   } catch (err) {
     // Exhaustive cleanup: unlink all attempt paths

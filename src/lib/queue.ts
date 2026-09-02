@@ -19,7 +19,7 @@ export interface ProcessMediaJobData {
   artworkId: string;
   versionId: string;
   tempFilename: string;
-  mediaType: "image" | "gif" | "video";
+  mediaType: "image" | "video";
   originalFilename: string;
   userId: string;
 }
