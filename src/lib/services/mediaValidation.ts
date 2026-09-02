@@ -255,41 +255,10 @@ export async function inspectVideoContainerAndCodecs(filePath: string): Promise<
 }
 
 /**
- * Generate standard SVG watermark overlay
- */
-export function createWatermarkSvg(width: number, height: number): Buffer {
-  const fontSize = Math.max(14, Math.min(36, Math.floor(width / 35)));
-  const padding = Math.max(12, Math.floor(width / 50));
-
-  return Buffer.from(`
-    <svg width="${width}" height="${height}">
-      <style>
-        .watermark-text {
-          fill: rgba(255, 255, 255, 0.45);
-          font-family: 'Plus Jakarta Sans', sans-serif;
-          font-size: ${fontSize}px;
-          font-weight: 700;
-          letter-spacing: 1.5px;
-        }
-        .watermark-sub {
-          fill: rgba(255, 255, 255, 0.3);
-          font-family: 'JetBrains Mono', monospace;
-          font-size: ${Math.max(10, Math.floor(fontSize * 0.65))}px;
-        }
-      </style>
-      <g transform="translate(${width - padding}, ${height - padding})" text-anchor="end">
-        <text x="0" y="-${Math.floor(fontSize * 0.8)}" class="watermark-text">MENGART ATELIER</text>
-        <text x="0" y="0" class="watermark-sub">COMMUNITY PREVIEW</text>
-      </g>
-    </svg>
-  `);
-}
-
-/**
- * Transforms validated media and writes master, public watermarked derivative, and WebP thumbnail.
+ * Transforms validated media and writes clean master, resolution-limited public derivative (no watermark), and WebP thumbnail.
  * Guarantees that all created derivatives exist and are non-empty.
  */
-export async function generateWatermarkedDerivatives(params: {
+export async function generateMediaDerivatives(params: {
   buffer: Buffer;
   mediaType: ValidatedMediaType;
   masterPath: string;
@@ -312,15 +281,13 @@ export async function generateWatermarkedDerivatives(params: {
     const width = meta.width || null;
     const height = meta.height || null;
 
-    // 2. Generate Watermarked Public Derivative (.webp <= 1920px)
+    // 2. Generate Optimized Public Derivative (.webp <= 1920px, no watermark overlay)
     if (width && height) {
       const targetWidth = Math.min(width, 1920);
       const targetHeight = Math.round((height / width) * targetWidth);
-      const watermarkSvg = createWatermarkSvg(targetWidth, targetHeight);
 
       await sharp(buffer, { limitInputPixels: 50000000 })
         .resize(targetWidth, targetHeight, { fit: "inside" })
-        .composite([{ input: watermarkSvg, top: 0, left: 0 }])
         .webp({ quality: 82 })
         .toFile(publicPath);
     } else {
@@ -439,3 +406,8 @@ export async function generateWatermarkedDerivatives(params: {
     };
   }
 }
+
+/**
+ * Backward compatibility alias for generateMediaDerivatives
+ */
+export const generateWatermarkedDerivatives = generateMediaDerivatives;

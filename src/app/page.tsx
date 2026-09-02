@@ -36,7 +36,7 @@ export default async function HomePage() {
               </div>
               <h3 className="font-display font-semibold text-lg text-[#f6f2e9]">Portofolio Terkurasi</h3>
               <p className="text-sm text-zinc-400 leading-relaxed">
-                Showcase publik ber-watermark terlindungi berdampingan dengan arsip master penuh bagi sesama anggota.
+                Showcase publik teroptimasi berdampingan dengan arsip master penuh bagi sesama anggota.
               </p>
             </div>
 

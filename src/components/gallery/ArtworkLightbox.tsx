@@ -109,7 +109,7 @@ export function ArtworkLightbox({
                     : "text-zinc-400 hover:text-white"
                 }`}
               >
-                <span className="hidden sm:inline">Watermarked Preview</span>
+                <span className="hidden sm:inline">Public Preview</span>
                 <span className="sm:hidden">Preview</span>
               </button>
               <button
@@ -129,8 +129,8 @@ export function ArtworkLightbox({
           ) : (
             <span className="px-3 py-2 min-h-[44px] rounded-2xl bg-black/80 backdrop-blur-md border border-white/15 text-xs font-mono text-zinc-300 flex items-center gap-1.5">
               <ShieldCheck className="h-4 w-4 text-amber-400" />
-              <span className="hidden sm:inline">Versi Publik · Watermarked</span>
-              <span className="sm:hidden">Watermarked</span>
+              <span className="hidden sm:inline">Versi Publik</span>
+              <span className="sm:hidden">Publik</span>
             </span>
           )}
         </div>

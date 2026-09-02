@@ -100,7 +100,7 @@ export function UploadArtworkModal() {
                     Unggah Karya ke Vault Portofolio
                   </h3>
                   <p className="text-xs text-zinc-400">
-                    File master clean disimpan privat; versi watermarked digenerate otomatis untuk publik.
+                    File master clean disimpan privat; versi teroptimasi digenerate otomatis untuk publik.
                   </p>
                 </div>
               </div>

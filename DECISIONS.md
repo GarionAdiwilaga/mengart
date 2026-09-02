@@ -406,6 +406,11 @@
 **Business Rule:** Public mutations enforce rate limits early at action/API boundary; domain services enforce transactional database locks and invariants. Redis outages must never become total application outages for low-risk user profile/commission edits.
 **Reason:** Authoritative rate limiting and denial-of-service protection under Blueprint 2.2.2.
 
+### Gate F Amendment: Public Media Derivative Watermark Removal
+**Decision:** Removed SVG watermark overlay generation from the public media derivative pipeline (`generateMediaDerivatives`). Public derivatives remain separate from master files, resolution-limited ($\le 1920$px WebP for images, H.264 MP4 for videos), optimized, and access-controlled via ACLs. Clean master media protection and ACL rules remain unchanged.
+**Business Rule:** Mengart is an invite-only community platform. Public derivatives are resolution-limited and access-controlled without watermark overlays.
+**Reason:** Controlled Gate F amendment under Blueprint 2.2.2 as specified in `Gate_F_Revision_Plan_Remove_Watermark_v1.1.md`.
+
 
 
 

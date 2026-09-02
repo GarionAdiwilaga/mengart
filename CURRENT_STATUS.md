@@ -173,7 +173,9 @@
     - Enforces MP4 container only (`isom`, `iso2`, `mp41`, `mp42`, `avc1`, `dash`, `m4v`), rejecting QuickTime `.mov` (`qt  ` brand), `.webm`, `.mkv`, and `.avi`.
     - Enforces H.264 video codec (`h264`/`avc1`) and AAC audio codec (`aac`) or silent video (no audio stream).
     - No video duration limit per Blueprint 2.2.2.
-    - Safe derivative generation: clean master, single web-optimized public video derivative (`libx264`, `crf 23`, `preset fast`, `pix_fmt yuv420p`, `+faststart`), and 400x400 WebP grid thumbnail. Asserts non-empty file sizes (`stat.size > 0`).
+    - Safe derivative generation (`generateMediaDerivatives`): clean master, single web-optimized public video derivative (`libx264`, `crf 23`, `preset fast`, `pix_fmt yuv420p`, `+faststart`), and 400x400 WebP grid thumbnail. Asserts non-empty file sizes (`stat.size > 0`).
+  - Watermark Removal Amendment (`Gate_F_Revision_Plan_Remove_Watermark_v1.1.md`):
+    - Removed SVG watermark rendering from public derivative pipeline. Public derivatives remain separate from master files, resolution-limited ($\le 1920$px WebP), optimized, and access-controlled via ACLs. Clean master media protection remains unchanged.
   - Tiered Sliding-Window Rate Limiting (`src/lib/rateLimit.ts`):
     - Rate limit enforcement across all 14 write action surfaces.
     - Tiered degradation on Redis outage:
@@ -205,6 +207,7 @@
 - **QA-P0-013** (Direct canonical submission schema, portfolio auto-add, safe slug collision retry, in-tx ACTIVE ownership & usable media invariants): RESOLVED & VERIFIED
 - **QA-P0-014** (P0 FFmpeg/FFprobe shell injection elimination, video duration cap removal, superseded media cleanup, exhaustive partial file cleanup, strict owner-only mutations, challenge revision spoiler preservation): RESOLVED & VERIFIED
 - **QA-P0-015** (Single authoritative media validation engine, strict MP4-only video container, tiered rate limiting with fail-closed/fail-open degradation, trusted proxy IP protection, worker idempotency & validation parity): RESOLVED & VERIFIED
+- **QA-P0-016** (Watermark removal amendment from public derivative pipeline; resolution limits and ACL protection strictly preserved): RESOLVED & VERIFIED
 - **QA-P1-007** (Pause/resume deadline validation with round deadlines): RESOLVED & VERIFIED
 - **QA-P1-008** (RESULTS_REVOKED status, notice banner, snapshot audit & flow): RESOLVED & VERIFIED
 
@@ -212,7 +215,7 @@
 `main` (Base Candidate SHA: `f6b4d547789478e51588e1150e0f9db38181c810`)
 
 ## Current Focus
-- Gate F media pipeline and rate limiting complete and 100% verified across 28 dedicated test scenarios, full repository test suite matrix (`npm run test:all`), linter (`npm run lint`), and production build (`npm run build`). Ready for independent QA review.
+- Gate F media pipeline and rate limiting (with Watermark Removal Amendment v1.1) complete and 100% verified across 28 dedicated test scenarios, full repository test suite matrix (`npm run test:all`), linter (`npm run lint`), and production build (`npm run build`). Ready for independent QA review.
 
 ## Overall Status
 - **NO-GO** (Until Gates F–H pass independent QA. Hard stop after Gate F; do NOT start Gate G).

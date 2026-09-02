@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { resolveStoragePath, generateStorageKey, ensureStorageDirectories } from "./storage";
 import {
   validateAndInspectMediaContent,
-  generateWatermarkedDerivatives,
+  generateMediaDerivatives,
 } from "./services/mediaValidation";
 import type { ProcessMediaJobData } from "./queue";
 
@@ -59,7 +59,7 @@ export async function processArtworkMediaJob(jobData: ProcessMediaJobData) {
     const posterTempPath = resolveStoragePath("temp", `poster_${Date.now()}_${crypto.randomBytes(4).toString("hex")}.png`);
 
     // 2. Generate Derivatives & Clean Master via Single Media Engine
-    const transformResult = await generateWatermarkedDerivatives({
+    const transformResult = await generateMediaDerivatives({
       buffer: fileBuffer,
       mediaType: validated.mediaType,
       masterPath: masterDestPath,

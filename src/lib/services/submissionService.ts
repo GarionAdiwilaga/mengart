@@ -25,7 +25,7 @@ import {
 
 import {
   validateAndInspectMediaContent,
-  generateWatermarkedDerivatives,
+  generateMediaDerivatives,
   type ValidatedMediaType,
 } from "@/lib/services/mediaValidation";
 
@@ -87,8 +87,8 @@ export async function stageAndPromoteMedia(file: {
   const attemptPaths = [masterPath, publicPath, thumbPath, posterTempPath];
 
   try {
-    // 2. Generate Watermarked Derivatives & Clean Master via Single Media Engine
-    const transformResult = await generateWatermarkedDerivatives({
+    // 2. Generate Optimized Derivatives & Clean Master via Single Media Engine
+    const transformResult = await generateMediaDerivatives({
       buffer: file.buffer,
       mediaType: validated.mediaType,
       masterPath,

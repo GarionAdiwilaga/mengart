@@ -19,7 +19,7 @@ import {
   sniffMagicBytes,
   validateAndInspectMediaContent,
   inspectVideoContainerAndCodecs,
-  generateWatermarkedDerivatives,
+  generateMediaDerivatives,
 } from "@/lib/services/mediaValidation";
 import {
   stageAndPromoteMedia,
@@ -440,8 +440,8 @@ async function runGateFTestSuite() {
   }
   console.log("✓ Scenario 17 Passed: Shell metacharacters in filename processed safely with zero shell interpretation");
 
-  // Scenario 18: Single Public Video Derivative & Non-Empty Assertions
-  console.log("Scenario 18: Single public watermarked video derivative generation");
+  // Scenario 18: Single Public Derivative Generation (No Watermark, Resolution-Limited & Non-Empty)
+  console.log("Scenario 18: Public derivative generation without watermark");
   const stagedVideo = await stageAndPromoteMedia({
     buffer: validMp4.buffer,
     name: "artwork_video.mp4",
@@ -462,7 +462,22 @@ async function runGateFTestSuite() {
   if (masterStat.size === 0 || publicStat.size === 0 || thumbStat.size === 0) {
     throw new Error("Scenario 18 Failed: Zero-byte video derivative detected");
   }
-  console.log(`✓ Scenario 18 Passed: Master (${masterStat.size}B), Public (${publicStat.size}B), and Thumbnail (${thumbStat.size}B) verified non-empty`);
+
+  // Image derivative resolution test (assert <= 1920px width limit and clean WebP derivative)
+  const stagedLargeImg = await stageAndPromoteMedia({
+    buffer: jpegBuffer,
+    name: "photo_derivative_test.jpg",
+    type: "image/jpeg",
+    size: jpegBuffer.length,
+  });
+  const publicImgPath = resolveStoragePath("public", stagedLargeImg.publicStorageKey);
+  const publicImgMeta = await sharp(publicImgPath).metadata();
+  if ((publicImgMeta.width && publicImgMeta.width > 1920) || publicImgMeta.format !== "webp") {
+    throw new Error("Scenario 18 Failed: Image public derivative exceeded 1920px limit or is not WebP");
+  }
+  await cleanupPromotedMedia(stagedLargeImg);
+
+  console.log(`✓ Scenario 18 Passed: Master (${masterStat.size}B), Public (${publicStat.size}B, no watermark), and Thumbnail (${thumbStat.size}B) verified non-empty`);
 
   // Scenario 19: Rollback cleanup on transaction abort
   console.log("Scenario 19: Rollback cleanup of promoted storage files");

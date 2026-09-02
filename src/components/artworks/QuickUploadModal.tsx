@@ -114,7 +114,7 @@ export function QuickUploadModal() {
             <div>
               <DialogTitle>Unggah Karya Master</DialogTitle>
               <DialogDescription>
-                File master dilindungi, otomatis diekstrak WebP & watermark publik.
+                File master dilindungi, otomatis diekstrak WebP publik teroptimasi.
               </DialogDescription>
             </div>
           </div>
