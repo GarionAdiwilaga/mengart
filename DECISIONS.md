@@ -418,6 +418,12 @@
 **Business Rule:** Production deployment status remains NO-GO until Gates G and H complete and pass independent QA. Gate G is now unlocked for implementation.
 **Reason:** Strict verification of patch application against baseline `f6b4d547789478e51588e1150e0f9db38181c810`, exhaustive cumulative source inspection, 100% test pass rate across all 9 migration scenarios, 28 Gate F scenarios, 62 Gate E scenarios, 22 Gate D scenarios, 63 Gate C scenarios, 20 Gate B scenarios, clean ESLint (0 errors), and successful production Next.js/worker build.
 
+### Comprehensive Pre-Production Legacy Deprecation & Cleanup Policy
+**Decision:** All deprecated schemas, legacy compatibility columns/tables (such as `quorum_requirement`, `allow_revisions`, `challenge_winner_slots`, `challenge_jury_slot_assignments`, `challenge_jury_scores`), legacy aliases, and transitional code branches will be systematically pruned in a dedicated cleanup phase strictly scheduled after all feature gates (Gates G and H) have passed independent QA.
+**Business Rule:** Do not perform mid-stage destructive legacy refactorings during active feature gates (Gate G / Gate H) to prevent destabilizing active migration test harnesses. The codebase will launch into public production with zero legacy artifacts or deprecated debt.
+**Reason:** The application is in pre-production development; the user explicitly directed that the final release must carry zero legacy debt, scheduled cleanly after all functional gates achieve independent QA pass.
+
+
 
 
 

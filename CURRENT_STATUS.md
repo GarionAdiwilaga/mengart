@@ -190,6 +190,7 @@
     - 28/28 scenarios passed (100% success).
 - **Phase 7: Release Gate G (Community UX, Story Cards, A11y & Playwright E2E):** UNLOCKED / READY FOR IMPLEMENTATION
 - **Phase 8: Release Gate H (Disaster Recovery & Runtime Concurrency):** PENDING REVIEW
+- **Phase 9: Post-Gate-H Comprehensive Legacy Cleanup & Final Production Hardening:** SCHEDULED (After Gates G & H pass QA; systematically prune all deprecated schema columns/tables, legacy aliases, and transitional branches for a 100% legacy-free production launch)
 
 ## Addressed QA IDs in Phase 1, Phase 2, Phase 3, Phase 4, Phase 5 & Phase 6 (Gates A–F Fully Closed & Verified)
 - **QA-P0-001** (Database migration reproducibility & authoritative production backfill): RESOLVED & VERIFIED
@@ -217,6 +218,7 @@
 ## Current Focus
 - Gate E and Gate F (with Watermark Removal Amendment v1.1) formally PASSED by Independent QA.
 - Gate G (Community UX, Story Cards, A11y & Playwright E2E) is unlocked and ready for implementation.
+- Post-Gate-H Comprehensive Legacy Cleanup scheduled after all gates pass QA.
 
 ## Overall Status
 - **NO-GO** (Until Gates G–H pass independent QA).
