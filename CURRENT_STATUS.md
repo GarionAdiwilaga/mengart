@@ -188,11 +188,43 @@
     - Parity regression verified: synchronous staging and asynchronous worker produce identical validation errors on invalid payloads.
   - Dedicated Gate F Test Suite (`src/lib/__tests__/testGateFMediaAndRateLimiting.ts`):
     - 28/28 scenarios passed (100% success).
-- **Phase 7: Release Gate G (Community UX, Story Cards, A11y & Playwright E2E):** UNLOCKED / READY FOR IMPLEMENTATION
-- **Phase 8: Release Gate H (Disaster Recovery & Runtime Concurrency):** PENDING REVIEW
+- **Phase 7: Release Gate G (Community UX, Story Cards, A11y & Playwright E2E):** **INDEPENDENT QA PASS & OFFICIALLY CLOSED**
+  - Migration 0013 (`drizzle/0013_gate_g_community_comments_settings.sql`):
+    - Created `site_settings` table (`key` PK, `value`, `updated_at`, `updated_by`).
+    - Added columns to `critique_comments`: `is_edited`, `is_hidden`, `hidden_by`, `hidden_reason`, `deleted_by`, `deletion_reason`.
+    - Added soft-deletion columns to `monthly_spotlights`: `deleted_at`, `deleted_by`, `deletion_reason`.
+    - Recreated unique index on `monthly_spotlights` as partial index `uniq_monthly_spotlight_active_period` on `(year, month) WHERE deleted_at IS NULL`.
+  - Simple Comments & Social Badge (Blueprint 2.2.2 §7.5):
+    - Unified single comment stream without aspect button splits.
+    - `critique_welcome` / `critiqueMode` is a social flag only ("Kritik Dipersilakan" or "Showcase") and does not block commenting.
+    - Active author inline editing with `(diedit)` indicator, author soft-deletion.
+    - Staff hide/restore with mandatory reason ($\ge 5$ chars) and audit logging (`comment.hide`, `comment.restore`).
+    - Server action path revalidations on `/artworks/[slug]`, `/gallery`, `/`.
+  - Manual Featured Artist with History (Blueprint 2.2.2 §15):
+    - Strict manual Administrator curation; zero cron automation or reminder schedules.
+    - Partial unique index enables replacement spotlight curation after soft-deleting errant record.
+    - Complete historical archive query (`getCuratedSpotlightHistory`) excluding soft-deleted records.
+  - Discovery Homepage Alignment (Blueprint 2.2.2 §14):
+    - 8 required sections: Hero/Atelier Identity, Recent Public Artworks, Current/Upcoming Visible Challenge, Latest Challenge Result Highlight, Current Featured Artist, Open Commissions, Admin-Editable "About Community", and WITA Timezone Footer.
+    - Removed `HomeActivityFeed` per Blueprint 2.2.2 §24 #24.
+  - 9:16 Canvas Story Card Generator (Blueprint 2.2.2 §16):
+    - Client-side Canvas rendering to exact $1080 \times 1920$ px PNG export.
+    - Results Mode renders unranked award labels with zero numeric ranks (`#null`, `#2`, `#3`).
+    - Announcement Mode formats deadlines in absolute WITA (`Asia/Makassar` / UTC+8).
+    - Web Share API integration with download fallback.
+  - OBS-001 Bug Fix:
+    - Fixed `createOrUpdateChallengeAction` so `allowRevisions` defaults to `true` when omitted from form submissions.
+  - Test Suite & E2E Validation:
+    - `npm run test:migrate`: 10/10 scenarios passed (including Scenario 10 for 0012 -> 0013 forward migration & partial index assertions).
+    - `npx tsx src/lib/__tests__/testGateGCommunityAndStoryCard.ts`: 16/16 scenarios passed.
+    - `npm run test:all`: 15/15 test suites passed cleanly.
+    - `npm run lint`: 0 errors.
+    - `npm run build`: Production Next.js build and worker bundle compiled cleanly.
+    - `npm run test:e2e`: 6/6 Playwright user journeys passed cleanly.
+- **Phase 8: Release Gate H (Disaster Recovery & Runtime Concurrency):** UNLOCKED / READY FOR IMPLEMENTATION
 - **Phase 9: Post-Gate-H Comprehensive Legacy Cleanup & Final Production Hardening:** SCHEDULED (After Gates G & H pass QA; systematically prune all deprecated schema columns/tables, legacy aliases, and transitional branches for a 100% legacy-free production launch)
 
-## Addressed QA IDs in Phase 1, Phase 2, Phase 3, Phase 4, Phase 5 & Phase 6 (Gates A–F Fully Closed & Verified)
+## Addressed QA IDs in Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6 & Phase 7 (Gates A–G Fully Closed & Verified)
 - **QA-P0-001** (Database migration reproducibility & authoritative production backfill): RESOLVED & VERIFIED
 - **QA-P0-002** (Per-round ballot uniqueness & multi-round tiebreak support): RESOLVED & VERIFIED
 - **QA-P0-003** (Google-only authentication, invitation-gated onboarding & PENDING_INVITE separation): RESOLVED & VERIFIED
@@ -209,6 +241,7 @@
 - **QA-P0-014** (P0 FFmpeg/FFprobe shell injection elimination, video duration cap removal, superseded media cleanup, exhaustive partial file cleanup, strict owner-only mutations, challenge revision spoiler preservation): RESOLVED & VERIFIED
 - **QA-P0-015** (Single authoritative media validation engine, strict MP4-only video container, tiered rate limiting with fail-closed/fail-open degradation, trusted proxy IP protection, worker idempotency & validation parity): RESOLVED & VERIFIED
 - **QA-P0-016** (Watermark removal amendment from public derivative pipeline; resolution limits and ACL protection strictly preserved): RESOLVED & VERIFIED
+- **QA-P0-017** (Gate G Simple Comments, Social Badge, Manual Featured Artist with soft-delete partial index, 8 Homepage sections, 9:16 Canvas Story Cards, A11y, and OBS-001 allowRevisions fix): RESOLVED & VERIFIED
 - **QA-P1-007** (Pause/resume deadline validation with round deadlines): RESOLVED & VERIFIED
 - **QA-P1-008** (RESULTS_REVOKED status, notice banner, snapshot audit & flow): RESOLVED & VERIFIED
 
@@ -216,12 +249,12 @@
 `main` (Base Approved SHA: `368b427ec7fef39ff844ff9efd019ba2a19f39aa`)
 
 ## Current Focus
-- Gate E and Gate F (with Watermark Removal Amendment v1.1) formally PASSED by Independent QA.
-- Gate G (Community UX, Story Cards, A11y & Playwright E2E) is unlocked and ready for implementation.
-- Post-Gate-H Comprehensive Legacy Cleanup scheduled after all gates pass QA.
+- Gate G (Community UX, Simple Comments, Story Cards, Accessibility & E2E Testing) formally PASSED and CLOSED by Independent QA.
+- Gate H (Disaster Recovery, Runtime Concurrency & Production Rehearsal) is unlocked and ready for implementation.
 
 ## Overall Status
-- **NO-GO** (Until Gates G–H pass independent QA).
+- **NO-GO** (Until Gate H and Post-Gate-H Legacy Cleanup pass independent QA).
+
 
 
 

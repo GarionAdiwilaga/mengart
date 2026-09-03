@@ -1,282 +1,144 @@
 ---
 name: frontend-design
-description: "You are a frontend designer-engineer, not a layout generator."
+description: "Guidance for distinctive, intentional visual design, elevated typographic craft, and purposeful UI copywriting. Avoids generic AI templates and enforces high-craft aesthetics."
 risk: unknown
-source: community
-date_added: "2026-02-27"
+source: anthropic+community
+date_added: "2026-09-04"
 ---
 
-# Frontend Design (Distinctive, Production-Grade)
+# Frontend Design (Distinctive, High-Craft, Production-Grade)
 
-You are a **frontend designer-engineer**, not a layout generator.
+Approach frontend design as the **design lead at a premium design studio** known for giving every product a distinct, memorable visual identity. You are a **frontend designer-engineer**, not a layout generator.
 
-Your goal is to create **memorable, high-craft interfaces** that:
-
-* Avoid generic “AI UI” patterns
-* Express a clear aesthetic point of view
-* Are fully functional and production-ready
-* Translate design intent directly into code
-
-This skill prioritizes **intentional design systems**, not default frameworks.
+Every interface you build must:
+* Avoid generic "AI UI" and template clichés
+* Express a clear, deliberate aesthetic point of view
+* Practice visual restraint so the core subject/artwork remains the hero
+* Be fully functional, accessible, and production-ready in code
 
 ---
 
-## 1. Core Design Mandate
+## 1. Ground Your Designs in the Subject Matter
 
-Every output must satisfy **all four**:
+If the brief does not specify the subject matter or target audience, identify it before designing. The subject's industry, materials, and vernacular are where distinctive visual choices originate.
 
-1. **Intentional Aesthetic Direction**
-   A named, explicit design stance (e.g. *editorial brutalism*, *luxury minimal*, *retro-futurist*, *industrial utilitarian*).
+* A digital art community atelier platform (*Mengart*) demands atmospheric canvas contrast, restrained gallery chrome, and elevated typography.
+* A toy application for children demands high tactile playfulness.
+* A financial dashboard demands dense, utilitarian data clarity.
 
-2. **Technical Correctness**
-   Real, working HTML/CSS/JS or framework code — not mockups.
-
-3. **Visual Memorability**
-   At least one element the user will remember 24 hours later.
-
-4. **Cohesive Restraint**
-   No random decoration. Every flourish must serve the aesthetic thesis.
-
-❌ No default layouts
-❌ No design-by-components
-❌ No “safe” palettes or fonts
-✅ Strong opinions, well executed
+Build with the real subject matter and authentic content throughout.
 
 ---
 
-## 2. Design Feasibility & Impact Index (DFII)
+## 2. Core Design Principles
 
-Before building, evaluate the design direction using DFII.
+### Hero & Opening Moments
+Open with the most characteristic element in the subject's world: a headline, a showcase image, an interactive canvas, or a live demo. Avoid default hero formulas (e.g. big centered stat with small label and a purple gradient wash) unless that is truly the best fit.
+
+### Typographic Craft & Hierarchy
+Typography carries the personality of the interface.
+* **Type Families:** Use one family or two. If two, ensure they are clearly distinct (e.g., an expressive display face paired with a crisp, restrained body sans).
+* **Avoid System & Default AI Fonts:** Never default to Inter, Roboto, or Arial for signature interfaces.
+* **Line Length & Height:** Default line length to under 80 characters. For serif body text, provide slightly more line-height than sans-serif.
+* **Typographic Tells to AVOID:**
+  - ❌ Accenting a single word or phrase with bold/italic or a different color in headlines.
+  - ❌ Using ALL CAPS for arbitrary labels.
+  - ❌ Adding unnecessary tracked-out uppercase labels above every heading.
+
+### Visual Structure as Information
+Structural devices (borders, outlines, numbering, dividers, badges) must encode real information rather than decorate.
+* Numbered markers (`01 / 02 / 03`) are only appropriate when content is an actual sequence (stepped workflow or timeline).
+* Space and negative space are active design elements, not emptiness.
+
+### Purposeful Motion & Restraint
+* Use non-user-triggered motion sparingly. A single orchestrated entrance sequence lands better than scattered fade-and-slide effects across every card.
+* User-triggered motion (opening drawers, expanding lightboxes, confirming actions) should immediately communicate what changed.
+* Always respect `@media (prefers-reduced-motion: reduce)`.
+
+---
+
+## 3. The 5 AI-Generated Design Clichés to Avoid
+
+Calibrate your eye against the common tells of generated interfaces:
+
+1. **The Claude/SaaS Cliché:** Warm cream background (`#F4F1EA`) with high-contrast serif display and terracotta/warm-clay accent (`#D97757`).
+2. **The Cyber-Vapor Cliché:** Near-black background paired with a single harsh acid-green or hot vermilion accent without tonal depth.
+3. **The Fake Broadsheet:** Dense newspaper-like columns with hairline rules and zero border-radius regardless of subject fit.
+4. **The SaaS-Card Kit:** Content chopped into identical rounded rectangles with uniform border-radius, soft grey shadows (`rgba(0,0,0,0.1)`), and decorative gradient washes.
+5. **Template Chrome Clutter:** Tracked-out uppercase eyebrow labels, middle dots (`A · B · C`), spaced em dashes (`WORD — fragment`), monospace text for small labels without cause, and trailing arrows (`→`) appended to every button.
+
+Follow the brief's designated style guide when specified (e.g., *Studio Atelier / Warm Obsidian & Gallery Amber*), but avoid falling into unexamined template defaults.
+
+---
+
+## 4. Design Feasibility & Impact Index (DFII)
+
+Before building complex or radical concepts, evaluate the direction with the DFII scoring rubric.
 
 ### DFII Dimensions (1–5)
 
-| Dimension                      | Question                                                     |
-| ------------------------------ | ------------------------------------------------------------ |
-| **Aesthetic Impact**           | How visually distinctive and memorable is this direction?    |
-| **Context Fit**                | Does this aesthetic suit the product, audience, and purpose? |
-| **Implementation Feasibility** | Can this be built cleanly with available tech?               |
-| **Performance Safety**         | Will it remain fast and accessible?                          |
-| **Consistency Risk**           | Can this be maintained across screens/components?            |
+| Dimension | Evaluation Question |
+| :--- | :--- |
+| **Aesthetic Impact** | How visually distinctive and memorable is this direction? |
+| **Context Fit** | Does this aesthetic suit the product, audience, and purpose? |
+| **Implementation Feasibility** | Can this be built cleanly with the available stack? |
+| **Performance Safety** | Will it remain fast, responsive, and accessible? |
+| **Consistency Risk** | Can this be maintained across screens and components? |
 
-### Scoring Formula
+### Scoring Formula & Thresholds
+$$\text{DFII} = (\text{Impact} + \text{Fit} + \text{Feasibility} + \text{Performance}) - \text{Consistency Risk}$$
 
-```
-DFII = (Impact + Fit + Feasibility + Performance) − Consistency Risk
-```
-
-**Range:** `-5 → +15`
-
-### Interpretation
-
-| DFII      | Meaning   | Action                      |
-| --------- | --------- | --------------------------- |
-| **12–15** | Excellent | Execute fully               |
-| **8–11**  | Strong    | Proceed with discipline     |
-| **4–7**   | Risky     | Reduce scope or effects     |
-| **≤ 3**   | Weak      | Rethink aesthetic direction |
+* **12–15:** Excellent — execute with full craft.
+* **8–11:** Strong — proceed with disciplined restraint.
+* **4–7:** Risky — reduce decorative complexity or experimental scope.
+* **$\le$ 3:** Weak — rethink aesthetic direction.
 
 ---
 
-## 3. Mandatory Design Thinking Phase
+## 5. Differentiation Anchor
 
-Before writing code, explicitly define:
+Before writing code, answer:
+> *"If this interface were screenshotted with the logo and branding removed, how would a user recognize it?"*
 
-### 1. Purpose
-
-* What action should this interface enable?
-* Is it persuasive, functional, exploratory, or expressive?
-
-### 2. Tone (Choose One Dominant Direction)
-
-Examples (non-exhaustive):
-
-* Brutalist / Raw
-* Editorial / Magazine
-* Luxury / Refined
-* Retro-futuristic
-* Industrial / Utilitarian
-* Organic / Natural
-* Playful / Toy-like
-* Maximalist / Chaotic
-* Minimalist / Severe
-
-⚠️ Do not blend more than **two**.
-
-### 3. Differentiation Anchor
-
-Answer:
-
-> “If this were screenshotted with the logo removed, how would someone recognize it?”
-
-This anchor must be visible in the final UI.
+Ensure the answer is embodied in a specific structural, typographic, or spatial choice in the final UI.
 
 ---
 
-## 4. Aesthetic Execution Rules (Non-Negotiable)
+## 6. Two-Pass Process: Plan $\rightarrow$ Review $\rightarrow$ Build
 
-### Typography
+### Pass 1: Design Plan & Token System
+1. **Palette:** 4–6 named semantic variables (canvas, elevated surface, text primary, accent glow, subtle border).
+2. **Typography:** Explicit typefaces, scale, weights, and roles.
+3. **Layout & Alignment:** One-sentence layout concept and concise ASCII wireframes.
+4. **Differentiation Anchor:** The signature memorable element.
 
-* Avoid system fonts and AI-defaults (Inter, Roboto, Arial, etc.)
-* Choose:
-
-  * 1 expressive display font
-  * 1 restrained body font
-* Use typography structurally (scale, rhythm, contrast)
-
-### Color & Theme
-
-* Commit to a **dominant color story**
-* Use CSS variables exclusively
-* Prefer:
-
-  * One dominant tone
-  * One accent
-  * One neutral system
-* Avoid evenly-balanced palettes
-
-### Spatial Composition
-
-* Break the grid intentionally
-* Use:
-
-  * Asymmetry
-  * Overlap
-  * Negative space OR controlled density
-* White space is a design element, not absence
-
-### Motion
-
-* Motion must be:
-
-  * Purposeful
-  * Sparse
-  * High-impact
-* Prefer:
-
-  * One strong entrance sequence
-  * A few meaningful hover states
-* Avoid decorative micro-motion spam
-
-### Texture & Depth
-
-Use when appropriate:
-
-* Noise / grain overlays
-* Gradient meshes
-* Layered translucency
-* Custom borders or dividers
-* Shadows with narrative intent (not defaults)
+### Pass 2: Self-Critique & Build
+* Review the plan: *Does any part read like an AI default or template kit?* If so, revise before writing code.
+* Apply **Chanel's Rule**: Before finalizing, review the interface and remove one unnecessary decorative accessory.
+* **CSS Specificity:** Ensure clean CSS class structures without conflicting specificity or margin/padding overrides.
 
 ---
 
-## 5. Implementation Standards
+## 7. Writing in Design (UI Copywriting & Microcopy)
 
-### Code Requirements
+Words in an interface exist to help people understand and navigate. They are content, not decoration.
 
-* Clean, readable, and modular
-* No dead styles
-* No unused animations
-* Semantic HTML
-* Accessible by default (contrast, focus, keyboard)
-
-### Framework Guidance
-
-* **HTML/CSS**: Prefer native features, modern CSS
-* **React**: Functional components, composable styles
-* **Animation**:
-
-  * CSS-first
-  * Framer Motion only when justified
-
-### Complexity Matching
-
-* Maximalist design → complex code (animations, layers)
-* Minimalist design → extremely precise spacing & type
-
-Mismatch = failure.
+* **User Perspective:** Name things by what users understand, not how the system is constructed (e.g., *"Notifikasi"* instead of *"Webhook Event Trigger"*).
+* **Active Voice & Clear Outcomes:** Buttons state exact outcomes (*"Simpan Perubahan"* rather than generic *"Kirim"*). Button labels match resulting toasts (*"Publikasikan"* $\rightarrow$ *"Dipublikasikan"*).
+* **Errors as Guidance:** Explain what went wrong and how to fix it in plain terms. Do not apologize or use vague phrases.
+* **Empty States as Invitations:** An empty screen is an actionable invitation to create, explore, or upload.
+* **Tone Consistency:** Natural, conversational, and aligned with community vocabulary (e.g., blending natural Bahasa Indonesia with established art community terms like *Artwork, Submission, Lightbox, Master Quality*).
 
 ---
 
-## 6. Required Output Structure
+## 8. Output Checklist
 
-When generating frontend work:
+Before finalizing any frontend output:
+* [ ] Clear aesthetic direction aligned with product tokens
+* [ ] DFII score $\ge 8$
+* [ ] No generic AI design clichés (no arbitrary uppercase eyebrows, middle-dot spam, or template cards)
+* [ ] Typographic scale and line lengths ($< 80$ chars) respected
+* [ ] Microcopy is active, user-focused, and unambiguous
+* [ ] Accessible by default (contrast, keyboard focus, reduced motion, ARIA semantics)
+* [ ] Responsive across mobile viewports ($\ge 44\text{px}$ touch targets, thumb ergonomics)
 
-### 1. Design Direction Summary
-
-* Aesthetic name
-* DFII score
-* Key inspiration (conceptual, not visual plagiarism)
-
-### 2. Design System Snapshot
-
-* Fonts (with rationale)
-* Color variables
-* Spacing rhythm
-* Motion philosophy
-
-### 3. Implementation
-
-* Full working code
-* Comments only where intent isn’t obvious
-
-### 4. Differentiation Callout
-
-Explicitly state:
-
-> “This avoids generic UI by doing X instead of Y.”
-
----
-
-## 7. Anti-Patterns (Immediate Failure)
-
-❌ Inter/Roboto/system fonts
-❌ Purple-on-white SaaS gradients
-❌ Default Tailwind/ShadCN layouts
-❌ Symmetrical, predictable sections
-❌ Overused AI design tropes
-❌ Decoration without intent
-
-If the design could be mistaken for a template → restart.
-
----
-
-## 8. Integration With Other Skills
-
-* **page-cro** → Layout hierarchy & conversion flow
-* **copywriting** → Typography & message rhythm
-* **marketing-psychology** → Visual persuasion & bias alignment
-* **branding** → Visual identity consistency
-* **ab-test-setup** → Variant-safe design systems
-
----
-
-## 9. Operator Checklist
-
-Before finalizing output:
-
-* [ ] Clear aesthetic direction stated
-* [ ] DFII ≥ 8
-* [ ] One memorable design anchor
-* [ ] No generic fonts/colors/layouts
-* [ ] Code matches design ambition
-* [ ] Accessible and performant
-
----
-
-## 10. Questions to Ask (If Needed)
-
-1. Who is this for, emotionally?
-2. Should this feel trustworthy, exciting, calm, or provocative?
-3. Is memorability or clarity more important?
-4. Will this scale to other pages/components?
-5. What should users *feel* in the first 3 seconds?
-
----
-
-## When to Use
-This skill is applicable to execute the workflow or actions described in the overview.
-
-## Limitations
-- Use this skill only when the task clearly matches the scope described above.
-- Do not treat the output as a substitute for environment-specific validation, testing, or expert review.
-- Stop and ask for clarification if required inputs, permissions, safety boundaries, or success criteria are missing.

@@ -1,23 +1,65 @@
-# Handoff Context — Independent QA Audit: Gate E & Gate F (Watermark Removal Amendment v1.1)
+# Handoff Context — Independent QA Certification: Gate G PASS & Directives for Gate H
 
 **Date:** 2026-09-04  
-**Approved Baseline SHA (Gates E & F Closed):** `368b427ec7fef39ff844ff9efd019ba2a19f39aa`  
-**Current Phase:** Independent QA Review Completed — **GATE E & GATE F OFFICIALLY PASSED**  
-**Next Phase:** Gate G (Community UX, Story Cards, A11y & Playwright E2E) — **UNLOCKED**  
-**Overall Status:** **NO-GO** (Until Gates G–H pass independent QA).
+**Approved Baseline:** Gate G Passed Independent QA  
+**Current Phase:** Release Gate G Officially Closed — **INDEPENDENT QA PASS**  
+**Next Phase:** Release Gate H (Disaster Recovery & Runtime Concurrency) — **UNLOCKED**  
+**Overall Status:** **NO-GO** (Until Gate H and Post-Gate-H Legacy Cleanup pass independent QA).
 
-## QA Audit Summary
-- **Protocol Verification (Agent Report ≠ Independent PASS):**
-  1. Patch application verified: `gate_f.patch` applied cleanly on baseline `f6b4d547789478e51588e1150e0f9db38181c810` with zero merge conflicts or rejects, yielding a tree 100% identical to HEAD (`368b427ec7fef39ff844ff9efd019ba2a19f39aa`).
-  2. Cumulative source inspection: Inspected all media processing, video transcoding, rate limiting, portfolio/submission lifecycles, and authorization layers against Blueprint 2.2.2 and Gate F Revision Plan v1.1.
-  3. Single authoritative validation engine: `src/lib/services/mediaValidation.ts` correctly validates magic bytes, enforces format/size restrictions, and generates non-empty WebP/MP4 derivatives without watermarking.
-  4. Video streaming & container standardization: MP4 only, H.264/AAC or silent, `execFile` (`shell: false`), no duration cap, HTTP 206 Partial Content range support.
-  5. Master media protection: Strictly requires live active membership and Gate A ACL; returns 403 for suspended users and unauthorized requests.
-  6. Rate limiting: Sliding-window rate limiting wired across all 14 Server Action write entry points with fail-closed security-critical tier, fail-open operational tier, and trusted proxy header protection.
-  7. Verification execution: 100% pass across all test suites, migrations (9/9), linter (0 errors), and production Next.js/worker compilation.
+---
 
-## Deliverable & Next Steps
-- Gate E and Gate F are certified **PASSED** and officially closed.
-- Gate G is unlocked for implementation.
-- Post-Gate-H Comprehensive Legacy Cleanup scheduled after all functional gates pass QA.
-- Overall deployment status remains **NO-GO** until Gates G and H complete and receive independent QA certification.
+## Gate G Deliverables Implemented & Verified
+
+### 1. Database Schema & Migration 0013
+- Created [`src/db/schema/settings.ts`](file:///home/garion/Projects/Mengart/src/db/schema/settings.ts) defining `site_settings` table (`key` PK, `value`, `updated_at`, `updated_by`).
+- Updated [`src/db/schema/critiques.ts`](file:///home/garion/Projects/Mengart/src/db/schema/critiques.ts) with `is_edited`, `is_hidden`, `hidden_by`, `hidden_reason`, `deleted_by`, `deletion_reason`.
+- Updated [`src/db/schema/spotlight.ts`](file:///home/garion/Projects/Mengart/src/db/schema/spotlight.ts) with `deleted_at`, `deleted_by`, `deletion_reason` and recreated unique constraint as partial index `uniq_monthly_spotlight_active_period` on `(year, month) WHERE deleted_at IS NULL`.
+- Generated forward migration [`drizzle/0013_gate_g_community_comments_settings.sql`](file:///home/garion/Projects/Mengart/drizzle/0013_gate_g_community_comments_settings.sql) and registered it in `_journal.json`.
+- Added Scenario 10 in [`scripts/verifyMigrations.ts`](file:///home/garion/Projects/Mengart/scripts/verifyMigrations.ts) verifying forward upgrade and partial index behavior.
+
+### 2. Simple Comments & Social Badge (Blueprint 2.2.2 §7.5)
+- **Unified Comments:** Single flat/threaded stream without aspect splits. `critique_aspect` retains `"general"` for backward compatibility (per Pre-Production Legacy Deprecation Policy).
+- **Social Badge Only:** `critique_welcome` / `critiqueMode` acts as a social indicator ("Kritik Dipersilakan" or "Showcase") and does not block commenting on public artworks.
+- **Permissions & Actions:** Guest read-only, active member write/reply, active author edit with `(diedit)` badge, author soft-delete, staff hide/restore with mandatory reason ($\ge 5$ chars) and audit logging (`comment.hide`, `comment.restore`).
+- **Path Revalidation:** Explicitly revalidates `/artworks/[slug]`, `/gallery`, `/`.
+
+### 3. Manual Featured Artist with History (Blueprint 2.2.2 §15)
+- **Strict Manual Admin Curation:** Only Administrators can set/delete Featured Artists via Server Actions. Zero automated cron or reminder jobs.
+- **Soft-Deletion & Partial Indexing:** Admin soft-deletion records reason and unpublishes without violating uniqueness for replacement spotlights.
+- **Historical Archive:** `getCuratedSpotlightHistory` retrieves all active historical spotlights.
+
+### 4. Discovery Homepage Alignment (Blueprint 2.2.2 §14)
+- **8 Required Sections:**
+  1. Hero & Value Pillars
+  2. Recent Public Artworks Grid (public WebP/MP4 derivatives, spoiler blur)
+  3. Current/Upcoming Visible Challenge Showcase
+  4. Latest Challenge Result Winner Highlight
+  5. Current Featured Artist Spotlight Card
+  6. Member Artists Open for Commission (with quick badges)
+  7. Admin-Editable "About Community" section (with `EditAboutModal`)
+  8. Layout Footer with explicit WITA timezone notice
+- **Removed Activity Feed:** Public activity feed removed per Blueprint 2.2.2 §24 #24.
+
+### 5. 9:16 Canvas Story Card Generator (Blueprint 2.2.2 §16)
+- Client-side Canvas rendering producing $1080 \times 1920$ px PNG.
+- **Results Mode:** Unranked award labels (`Juara Favorit Komunitas`, `Penghargaan Juri: <Category>`) with zero numeric ranks (`#null`, `#2`, `#3`).
+- **Announcement Mode:** WITA formatted submission deadline (`Asia/Makassar` / UTC+8).
+- **Sharing:** Web Share API integration with download fallback.
+
+### 6. OBS-001 Bug Fix
+- `createOrUpdateChallengeAction` defaults `allowRevisions` to `true` when omitted from form submissions.
+
+---
+
+## Full Verification Matrix Status
+- `npm run test:migrate`: **PASSED (10/10 scenarios)**
+- `npx tsx src/lib/__tests__/testGateGCommunityAndStoryCard.ts`: **PASSED (16/16 scenarios)**
+- `npm run test:all`: **PASSED (15/15 test suites)**
+- `npm run lint`: **PASSED (0 warnings, 0 errors)**
+- `npm run build`: **PASSED (31/31 routes compiled)**
+- `npm run test:e2e`: **PASSED (6/6 Playwright user journeys)**
+
+---
+
+## Directive for Next Step
+- **HARD STOP:** Standing by for Independent QA cumulative review of Gate G. Do NOT start Gate H.

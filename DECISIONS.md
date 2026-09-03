@@ -423,6 +423,38 @@
 **Business Rule:** Do not perform mid-stage destructive legacy refactorings during active feature gates (Gate G / Gate H) to prevent destabilizing active migration test harnesses. The codebase will launch into public production with zero legacy artifacts or deprecated debt.
 **Reason:** The application is in pre-production development; the user explicitly directed that the final release must carry zero legacy debt, scheduled cleanly after all functional gates achieve independent QA pass.
 
+### Gate G: Unified Simple Comments & Critique Welcome Social Flag
+**Decision:** Simplified the commenting architecture into a single unified comment stream without technical aspect splits:
+1. **Social Indicator Only:** The `critique_welcome` / `critiqueMode` attribute is treated purely as a visual badge ("Kritik Dipersilakan" or "Showcase") and does not block commenting on public artworks.
+2. **Author Actions:** Active comment authors can edit their comments (setting `isEdited = true`, `updatedAt = new Date()`, displaying an explicit `(diedit)` indicator) or soft-delete them (`deletedAt = new Date()`, `deletedBy = user.id`, `deletionReason = 'Dihapus oleh penulis'`).
+3. **Staff Moderation:** Moderators/Admins can hide comments with a mandatory $\ge 5$ character reason (`isHidden = true`, `hiddenBy = user.id`, `hiddenReason`, recorded in `audit_logs` as `comment.hide`), or restore them (`comment.restore`).
+4. **Cache Invalidation:** Actions explicitly revalidate affected paths (`/artworks/[slug]`, `/gallery`, `/`).
+**Business Rule:** Guests have read-only access to comments; active members can post/reply/edit/delete; staff have hide/restore moderation authority with audit trails.
+**Reason:** Documented in Blueprint 2.2.2 §7.5.
+
+### Gate G: Manual Featured Artist with Soft-Deletion & Partial Indexing
+**Decision:** Replaced automated spotlight processes with strict manual Administrator curation:
+1. **Manual Admin Curation:** Only Administrators can curate Featured Artists (`monthly_spotlights`). Automated background crons and reminder notifications are eliminated.
+2. **Soft-Deletion & Partial Indexing:** Added `deleted_at`, `deleted_by`, and `deletion_reason` to `monthly_spotlights`. Created a partial unique index `uniq_monthly_spotlight_active_period` on `(year, month) WHERE deleted_at IS NULL`, allowing replacement spotlights to be created after an errant record is soft-deleted.
+3. **Historical Archive:** `getCuratedSpotlightHistory` retrieves all published, non-deleted historical spotlights.
+**Business Rule:** Featured Artist is manually curated by administrators with soft-delete safety; duplicate active spotlights for the same period are rejected fail-closed.
+**Reason:** Documented in Blueprint 2.2.2 §15.
+
+### Gate G: 9:16 Story Card Generator Standards
+**Decision:** Implemented client-side Canvas 9:16 Story Card Generator ($1080 \times 1920$ px PNG export):
+1. **Results Mode:** Renders Challenge Title, Winner Artwork, Artist Display Name, and Award Label (`Juara Favorit Komunitas`, `Penghargaan Juri: <Category>`). Strictly prohibits numeric ranks (`#null`, `#2`, `#3`).
+2. **Announcement Mode:** Renders Challenge Title, Theme Banner, and Submission Deadline in absolute WITA (`Asia/Makassar` / UTC+8).
+3. **Sharing:** Integrated Web Share API (`navigator.share`) with graceful fallback to direct PNG download.
+4. **Client-Side Processing:** Rendering executes entirely on the client without backend render queues or storage overhead.
+**Business Rule:** Story cards must export at $1080 \times 1920$ px with unranked result badges and absolute WITA deadlines.
+**Reason:** Documented in Blueprint 2.2.2 §16.
+
+### Gate G: OBS-001 allowRevisions Default Fix
+**Decision:** Fixed OBS-001 in `createOrUpdateChallengeAction` so `allowRevisions` defaults to `true` when omitted from form data, matching the database schema default.
+**Business Rule:** Challenge creation/edit forms default `allowRevisions` to `true` unless explicitly unchecked.
+**Reason:** Prevents accidental disabling of challenge revisions when the field is omitted from form submissions.
+
+
 
 
 

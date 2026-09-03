@@ -12,6 +12,7 @@ export interface ArtworkListItem {
   mediaType: "image" | "gif" | "video";
   audience: "public" | "members_only" | "unlisted" | "private";
   critiqueMode: "showcase_only" | "open_for_critique";
+  isSpoiler?: boolean;
   createdAt: string;
   artistName: string;
   artistSlug: string;

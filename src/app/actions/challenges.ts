@@ -133,7 +133,13 @@ export async function createOrUpdateChallengeAction(formData: FormData) {
       ? parseInt(rawStars as string, 10)
       : 1;
   const starsPerMember = Number.isInteger(parsedStars) && parsedStars >= 1 ? parsedStars : 1;
-  const allowRevisions = formData.get("allowRevisions") === "true";
+  const rawAllowRevisions = formData.get("allowRevisions");
+  const allowRevisions =
+    rawAllowRevisions === null || rawAllowRevisions === undefined
+      ? true
+      : rawAllowRevisions === "true" ||
+        rawAllowRevisions === "1" ||
+        rawAllowRevisions === "on";
 
   const subStartsRaw = formData.get("submissionStartsAt") as string;
   const subDeadRaw = formData.get("submissionDeadline") as string;

@@ -11,6 +11,7 @@ export * from "./commissions";
 export * from "./badges";
 export * from "./notifications";
 export * from "./auditLogs";
+export * from "./settings";
 
 import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 

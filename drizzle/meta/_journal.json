@@ -92,6 +92,13 @@
       "when": 1788150000000,
       "tag": "0012_gate_e_submission_portfolio_spoiler",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1788200000000,
+      "tag": "0013_gate_g_community_comments_settings",
+      "breakpoints": true
     }
   ]
 }

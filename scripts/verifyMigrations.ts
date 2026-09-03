@@ -52,6 +52,7 @@ async function runMigrationVerification() {
   const upgradeDbName0009 = `mengart_test_upgrade_0009_${Date.now()}`;
   const upgradeDbName0010 = `mengart_test_upgrade_0010_${Date.now()}`;
   const upgradeDbName0011 = `mengart_test_upgrade_0011_${Date.now()}`;
+  const upgradeDbName0012 = `mengart_test_upgrade_0012_${Date.now()}`;
   const failDbName0012Dirty = `mengart_test_fail_0012_dirty_${Date.now()}`;
   const failDbNameEmailCollision = `mengart_test_fail_email_${Date.now()}`;
   const failDbName1 = `mengart_test_fail1_${Date.now()}`;
@@ -63,6 +64,7 @@ async function runMigrationVerification() {
   const temp0009Dir = path.resolve("./.tmp_drizzle_0009");
   const temp0010Dir = path.resolve("./.tmp_drizzle_0010");
   const temp0011Dir = path.resolve("./.tmp_drizzle_0011");
+  const temp0012Dir = path.resolve("./.tmp_drizzle_0012");
 
   // Pre-generate historical migration subsets
   await createMigrationSubsetDir(temp0006Dir, 6);
@@ -71,6 +73,7 @@ async function runMigrationVerification() {
   await createMigrationSubsetDir(temp0009Dir, 9);
   await createMigrationSubsetDir(temp0010Dir, 10);
   await createMigrationSubsetDir(temp0011Dir, 11);
+  await createMigrationSubsetDir(temp0012Dir, 12);
 
   try {
     // --------------------------------------------------------------------------
@@ -1480,8 +1483,141 @@ async function runMigrationVerification() {
     await upgradeClient0011.end();
     console.log("🎉 SCENARIO 9B (0011 -> 0012 UPGRADE & GATE E SCHEMA VERIFICATION) PASSED!\n");
 
+    // --------------------------------------------------------------------------
+    // SCENARIO 10: FORWARD MIGRATION 0012 -> 0013 CLEAN UPGRADE PATH & GATE G SCHEMA VERIFICATION
+    // --------------------------------------------------------------------------
+    console.log(`[Scenario 10] Creating upgrade database for 0012 -> 0013: ${upgradeDbName0012}...`);
+    await adminClient.unsafe(`CREATE DATABASE "${upgradeDbName0012}";`);
+
+    const upgradeDbUrl0012 = `${urlObj.protocol}//${urlObj.username}:${urlObj.password}@${urlObj.host}/${upgradeDbName0012}`;
+    const upgradeClient0012 = postgres(upgradeDbUrl0012, { max: 1 });
+    const upgradeDrizzle0012 = drizzle(upgradeClient0012, { schema });
+
+    console.log("-> Running migrations 0000 -> 0012 on clean upgrade database...");
+    await migrate(upgradeDrizzle0012, { migrationsFolder: temp0012Dir });
+    console.log("✓ Pre-0013 baseline (0000 -> 0012) applied cleanly.");
+
+    // Verify pre-0013 schema does NOT have site_settings
+    const [tablePre0013] = await upgradeClient0012`
+      SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'site_settings';
+    `;
+    if (tablePre0013) {
+      throw new Error("Did not expect site_settings to exist prior to 0013.");
+    }
+    console.log("✓ Verified pre-0013 schema does not contain site_settings table.");
+
+    console.log("-> Running forward migration 0012 -> 0013 via Drizzle migrator...");
+    await migrate(upgradeDrizzle0012, { migrationsFolder: "./drizzle" });
+    console.log("✓ Migration 0012 -> 0013 succeeded cleanly!");
+
+    // Verify site_settings table exists with primary key on key
+    const [siteSettingsTable] = await upgradeClient0012`
+      SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'site_settings';
+    `;
+    if (!siteSettingsTable) {
+      throw new Error("Expected site_settings table to exist after migration 0013!");
+    }
+    const [pkCol] = await upgradeClient0012`
+      SELECT kcu.column_name
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
+      WHERE tc.table_name = 'site_settings' AND tc.constraint_type = 'PRIMARY KEY';
+    `;
+    if (!pkCol || pkCol.column_name !== "key") {
+      throw new Error("Expected primary key on site_settings.key!");
+    }
+    console.log("✓ Verified site_settings table created with PK on key.");
+
+    // Verify critique_comments new columns
+    const critiqueCols = await upgradeClient0012`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'critique_comments' 
+        AND column_name IN ('is_edited', 'is_hidden', 'hidden_by', 'hidden_reason', 'deleted_by', 'deletion_reason');
+    `;
+    if (critiqueCols.length !== 6) {
+      throw new Error(`Expected 6 new columns on critique_comments, found ${critiqueCols.length}`);
+    }
+    console.log("✓ Verified all 6 moderation and edit columns present on critique_comments.");
+
+    // Verify monthly_spotlights soft deletion columns and partial unique index
+    const spotlightCols = await upgradeClient0012`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'monthly_spotlights' 
+        AND column_name IN ('deleted_at', 'deleted_by', 'deletion_reason');
+    `;
+    if (spotlightCols.length !== 3) {
+      throw new Error(`Expected 3 soft deletion columns on monthly_spotlights, found ${spotlightCols.length}`);
+    }
+    console.log("✓ Verified soft-deletion columns present on monthly_spotlights.");
+
+    const [partialIdx] = await upgradeClient0012`
+      SELECT indexname, indexdef FROM pg_indexes 
+      WHERE schemaname = 'public' AND indexname = 'uniq_monthly_spotlight_active_period';
+    `;
+    if (!partialIdx || !partialIdx.indexdef.includes("WHERE (deleted_at IS NULL)")) {
+      throw new Error("Expected uniq_monthly_spotlight_active_period partial unique index on monthly_spotlights!");
+    }
+    console.log("✓ Verified partial unique index uniq_monthly_spotlight_active_period created.");
+
+    // Verify partial unique constraint functionality in database
+    const [testUser] = await upgradeClient0012`
+      INSERT INTO users (email, role, membership_status)
+      VALUES ('spotlight_test@mengart.local', 'member', 'active')
+      RETURNING id;
+    `;
+    const [testProfile] = await upgradeClient0012`
+      INSERT INTO profiles (user_id, display_name, slug)
+      VALUES (${testUser.id}, 'Spotlight Artist', 'spotlight-artist')
+      RETURNING id;
+    `;
+
+    // Insert active spotlight 1
+    const [spot1] = await upgradeClient0012`
+      INSERT INTO monthly_spotlights (year, month, artist_profile_id, curator_quote, is_published)
+      VALUES (2026, 9, ${testProfile.id}, 'First curator quote', true)
+      RETURNING id;
+    `;
+
+    // Attempt inserting second active spotlight for same year/month -> should fail with unique constraint
+    let activeCollisionBlocked = false;
+    try {
+      await upgradeClient0012`
+        INSERT INTO monthly_spotlights (year, month, artist_profile_id, curator_quote, is_published)
+        VALUES (2026, 9, ${testProfile.id}, 'Second active curator quote', true);
+      `;
+    } catch (err: any) {
+      activeCollisionBlocked = true;
+    }
+    if (!activeCollisionBlocked) {
+      throw new Error("Expected duplicate active spotlight insertion for same year/month to be rejected by partial unique index!");
+    }
+    console.log("✓ Verified duplicate active spotlight rejected fail-closed by partial unique index.");
+
+    // Soft-delete spotlight 1
+    await upgradeClient0012`
+      UPDATE monthly_spotlights 
+      SET deleted_at = now(), deletion_reason = 'Mistake replaced' 
+      WHERE id = ${spot1.id};
+    `;
+
+    // Insert replacement spotlight for same year/month -> should succeed now that previous is soft-deleted
+    const [spot2] = await upgradeClient0012`
+      INSERT INTO monthly_spotlights (year, month, artist_profile_id, curator_quote, is_published)
+      VALUES (2026, 9, ${testProfile.id}, 'Replacement curator quote', true)
+      RETURNING id;
+    `;
+    if (!spot2) {
+      throw new Error("Expected replacement spotlight insertion for same year/month to succeed after soft-deletion!");
+    }
+    console.log("✓ Verified replacement spotlight for same year/month succeeds after soft-deleting previous record.");
+
+    await upgradeClient0012.end();
+    console.log("🎉 SCENARIO 10 (0012 -> 0013 UPGRADE & GATE G SCHEMA VERIFICATION) PASSED!\n");
+
     console.log("=================================================================");
-    console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A, B, C, D, E)");
+    console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A, B, C, D, E, F, G)");
     console.log("=================================================================\n");
     process.exit(0);
   } finally {
@@ -1493,6 +1629,7 @@ async function runMigrationVerification() {
       await fs.rm(temp0009Dir, { recursive: true, force: true });
       await fs.rm(temp0010Dir, { recursive: true, force: true });
       await fs.rm(temp0011Dir, { recursive: true, force: true });
+      await fs.rm(temp0012Dir, { recursive: true, force: true });
     } catch (_e) {
       // Ignored cleanup error
     }
@@ -1504,6 +1641,7 @@ async function runMigrationVerification() {
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0009}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0010}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0011}";`);
+      await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0012}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName0012Dirty}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbNameEmailCollision}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName1}";`);

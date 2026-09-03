@@ -18,7 +18,8 @@
     "worker:media": "node dist/worker.mjs",
     "cron:materialize": "tsx scripts/runScheduler.ts",
     "test:migrate": "tsx scripts/verifyMigrations.ts",
-    "test:all": "tsx scripts/verifyMigrations.ts && tsx src/lib/__tests__/testGateFMediaAndRateLimiting.ts && tsx src/lib/__tests__/testGateESubmissionAndPortfolio.ts && tsx src/lib/__tests__/testPhase4AuthAndInvites.ts && tsx src/lib/__tests__/testPhase2VotingAndTiebreak.ts && tsx src/lib/__tests__/testPhase3SimplifiedJury.ts && tsx src/lib/__tests__/testGate1SecurityAndIntegrity.ts && tsx src/lib/__tests__/testConcurrency.ts && tsx src/lib/__tests__/testPhase1LifecycleAndState.ts && tsx src/lib/__tests__/testPhase2Pipeline.ts && tsx src/lib/__tests__/testPhase3Challenges.ts && tsx src/lib/__tests__/testPhase4Voting.ts && tsx src/lib/__tests__/testPhase5Community.ts && tsx src/lib/__tests__/testPhase6HistoricalAndMedia.ts && tsx src/lib/__tests__/testLoginFlow.ts && tsx src/lib/__tests__/testModernizedArchitecture.ts"
+    "test:e2e": "playwright test",
+    "test:all": "tsx scripts/verifyMigrations.ts && tsx src/lib/__tests__/testGateGCommunityAndStoryCard.ts && tsx src/lib/__tests__/testGateFMediaAndRateLimiting.ts && tsx src/lib/__tests__/testGateESubmissionAndPortfolio.ts && tsx src/lib/__tests__/testPhase4AuthAndInvites.ts && tsx src/lib/__tests__/testPhase2VotingAndTiebreak.ts && tsx src/lib/__tests__/testPhase3SimplifiedJury.ts && tsx src/lib/__tests__/testGate1SecurityAndIntegrity.ts && tsx src/lib/__tests__/testConcurrency.ts && tsx src/lib/__tests__/testPhase1LifecycleAndState.ts && tsx src/lib/__tests__/testPhase2Pipeline.ts && tsx src/lib/__tests__/testPhase3Challenges.ts && tsx src/lib/__tests__/testPhase4Voting.ts && tsx src/lib/__tests__/testPhase5Community.ts && tsx src/lib/__tests__/testPhase6HistoricalAndMedia.ts && tsx src/lib/__tests__/testLoginFlow.ts && tsx src/lib/__tests__/testModernizedArchitecture.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.23",
@@ -50,6 +51,7 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4.0.7",
     "@types/node": "^22.13.4",
     "@types/react": "^19.0.10",

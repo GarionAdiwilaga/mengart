@@ -37,6 +37,12 @@ export const critiqueComments = pgTable(
     content: text("content").notNull(),
     isPinned: boolean("is_pinned").default(false).notNull(),
     isResolved: boolean("is_resolved").default(false).notNull(),
+    isEdited: boolean("is_edited").default(false).notNull(),
+    isHidden: boolean("is_hidden").default(false).notNull(),
+    hiddenBy: uuid("hidden_by").references(() => users.id, { onDelete: "set null" }),
+    hiddenReason: text("hidden_reason"),
+    deletedBy: uuid("deleted_by").references(() => users.id, { onDelete: "set null" }),
+    deletionReason: text("deletion_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -45,5 +51,6 @@ export const critiqueComments = pgTable(
     index("idx_critique_artwork_id").on(table.artworkId),
     index("idx_critique_user_id").on(table.userId),
     index("idx_critique_parent_id").on(table.parentCommentId),
+    index("idx_critique_is_hidden").on(table.isHidden),
   ]
 );
