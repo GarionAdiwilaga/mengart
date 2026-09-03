@@ -1,7 +1,6 @@
 import { db } from "@/db";
 import {
   challenges,
-  challengeWinnerSlots,
   challengeSubmissions,
   challengeJuryAssignments,
   artworks,

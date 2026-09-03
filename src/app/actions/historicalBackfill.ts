@@ -5,7 +5,6 @@ import { requireModerator } from "@/lib/rbac";
 import { db } from "@/db";
 import {
   challenges,
-  challengeWinnerSlots,
   challengeSubmissions,
   artworks,
   artworkVersions,
@@ -87,52 +86,7 @@ export async function importHistoricalChallengeAction(data: HistoricalChallengeI
       })
       .returning();
 
-    // 2. Create Standard Winner Slots for the Challenge
-    const [slotGold] = await tx
-      .insert(challengeWinnerSlots)
-      .values({
-        challengeId: challenge.id,
-        slotType: "community_vote",
-        rank: 1,
-        title: "Juara 1 Favorit Komunitas",
-        displayOrder: 1,
-      })
-      .returning();
-
-    const [slotSilver] = await tx
-      .insert(challengeWinnerSlots)
-      .values({
-        challengeId: challenge.id,
-        slotType: "community_vote",
-        rank: 2,
-        title: "Juara 2 Favorit Komunitas",
-        displayOrder: 2,
-      })
-      .returning();
-
-    const [slotBronze] = await tx
-      .insert(challengeWinnerSlots)
-      .values({
-        challengeId: challenge.id,
-        slotType: "community_vote",
-        rank: 3,
-        title: "Juara 3 Favorit Komunitas",
-        displayOrder: 3,
-      })
-      .returning();
-
-    const [slotJury] = await tx
-      .insert(challengeWinnerSlots)
-      .values({
-        challengeId: challenge.id,
-        slotType: "jury_award",
-        rank: 1,
-        title: "Pilihan Dewan Juri Atelier",
-        displayOrder: 4,
-      })
-      .returning();
-
-    // 3. Process Each Participant Entry
+    // 2. Process Each Participant Entry
     for (let i = 0; i < data.entries.length; i++) {
       const entry = data.entries[i];
 
@@ -199,29 +153,23 @@ export async function importHistoricalChallengeAction(data: HistoricalChallengeI
         })
         .returning();
 
-      // Determine Winner Slot ID
-      let assignedWinnerSlotId: string | null = null;
-      if (entry.winnerSlotType === "community_vote") {
-        if (entry.finalRank === 1) assignedWinnerSlotId = slotGold.id;
-        else if (entry.finalRank === 2) assignedWinnerSlotId = slotSilver.id;
-        else if (entry.finalRank === 3) assignedWinnerSlotId = slotBronze.id;
-      } else if (entry.winnerSlotType === "jury_award") {
-        assignedWinnerSlotId = slotJury.id;
-      }
+      const awardType = entry.winnerSlotType === "jury_award" ? "jury_award" : "community_vote_winner";
+      const categoryLabel = entry.slotTitle || (entry.winnerSlotType === "jury_award" ? "Pilihan Dewan Juri Atelier" : "Juara Favorit Komunitas");
 
       // Create Challenge Result Entry
       await tx.insert(challengeResults).values({
         challengeId: challenge.id,
         submissionId: sub.id,
-        winnerSlotId: assignedWinnerSlotId,
         finalRank: entry.finalRank,
+        awardType,
+        categoryLabel,
         totalCommunityStars: entry.totalCommunityStars || 0,
         juryScore: entry.juryScore ? entry.juryScore.toString() : null,
         isPublished: true,
       });
     }
 
-    // 4. Audit Log & Activity Log
+    // 3. Audit Log & Activity Log
     await tx.insert(auditLogs).values({
       actorId: actor.id,
       action: "historical_challenge_imported",
@@ -240,23 +188,23 @@ export async function importHistoricalChallengeAction(data: HistoricalChallengeI
       targetType: "challenge",
       targetId: challenge.id,
       metadata: {
-        challengeTitle: challenge.title,
-        challengeSlug: challenge.slug,
-        theme: challenge.theme,
-        isHistorical: true,
+        actorId: actor.id,
+        description: `Data historis hasil event "${challenge.title}" berhasil diimpor ke dalam Hall of Fame.`,
+        slug: challenge.slug,
+        title: challenge.title,
       },
-      isPublic: true,
     });
 
     revalidatePath("/challenges");
     revalidatePath(`/challenges/${challenge.slug}`);
     revalidatePath(`/challenges/${challenge.slug}/results`);
-    revalidatePath("/admin/challenges");
+    revalidatePath("/admin/historical-backfill");
 
     return {
       success: true,
       challengeId: challenge.id,
       slug: challenge.slug,
+      entriesImported: data.entries.length,
     };
   });
 }

@@ -5,7 +5,6 @@ import {
   artworkVersions,
   artworks,
   profiles,
-  challengeWinnerSlots,
   challengeResults,
 } from "@/db/schema";
 import { eq, and, asc, sql } from "drizzle-orm";
@@ -87,8 +86,7 @@ export async function getChallengeResultsData(
       totalCommunityStars: challengeResults.totalCommunityStars,
       juryScore: challengeResults.juryScore,
       isPublished: challengeResults.isPublished,
-      slotTitle: sql<string>`COALESCE(${challengeResults.categoryLabel}, ${challengeWinnerSlots.title}, 'Pilihan Juri')`,
-      slotType: challengeWinnerSlots.slotType,
+      slotTitle: sql<string>`COALESCE(${challengeResults.categoryLabel}, 'Pilihan Juri')`,
       submissionId: challengeSubmissions.id,
       artworkId: challengeSubmissions.artworkId,
       artworkVersionId: challengeSubmissions.artworkVersionId,
@@ -108,7 +106,6 @@ export async function getChallengeResultsData(
     .innerJoin(artworks, eq(artworks.id, challengeSubmissions.artworkId))
     .leftJoin(profiles, eq(profiles.id, challengeSubmissions.profileId))
     .leftJoin(artworkVersions, eq(artworkVersions.id, challengeSubmissions.artworkVersionId))
-    .leftJoin(challengeWinnerSlots, eq(challengeWinnerSlots.id, challengeResults.winnerSlotId))
     .where(whereCondition)
     .orderBy(
       asc(sql`CASE WHEN ${challengeResults.awardType} = 'community_vote_winner' THEN 0 ELSE 1 END`),
@@ -128,5 +125,5 @@ export async function getChallengeResultsData(
  * Moderator & Curator review result retrieval for REVIEW and RESULTS_REVOKED stages
  */
 export async function getModeratorReviewResultsData(challengeId: string) {
-  return await getChallengeResultsData(challengeId, { includeUnpublished: true });
+  return getChallengeResultsData(challengeId, { includeUnpublished: true });
 }

@@ -99,6 +99,13 @@
       "when": 1788200000000,
       "tag": "0013_gate_g_community_comments_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1788465000000,
+      "tag": "0014_phase_9_legacy_cleanup",
+      "breakpoints": true
     }
   ]
 }

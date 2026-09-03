@@ -5,21 +5,18 @@ import { db } from "@/db";
 import {
   challenges,
   challengeSubmissions,
-  challengeWinnerSlots,
   challengeVotingRounds,
   challengeVotingRoundCandidates,
   challengeBallots,
   challengeBallotStars,
   challengeJuryAssignments,
-  challengeJurySlotAssignments,
-  challengeJuryScores,
   challengeResults,
   auditLogs,
 } from "@/db/schema";
 import { eq, and, sql, desc, asc, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getEffectiveChallengeStatus } from "@/lib/challenges";
-import { canVoteInChallenge, canSubmitJuryScore } from "@/lib/policy";
+import { canVoteInChallenge } from "@/lib/policy";
 import { createNotification } from "@/lib/notifications";
 import { checkRateLimit } from "@/lib/rateLimit";
 
@@ -245,32 +242,6 @@ export async function resolveTieManuallyAction(params: {
   revalidatePath("/admin/challenges");
 
   return result;
-}
-
-/**
- * Shared Jury Winner-Slot Assignment (Deprecated under Blueprint 2.2.1)
- */
-export async function assignJurySlotAction(_params: {
-  challengeId: string;
-  winnerSlotId: string;
-  submissionId: string;
-  expectedVersion?: number;
-  notes?: string;
-}) {
-  throw new Error("Sistem penetapan slot juri legacy telah dinonaktifkan (Blueprint 2.2.1). Gunakan createJuryAwardAction.");
-}
-
-/**
- * Submit jury score evaluation (Deprecated under Blueprint 2.2.1)
- */
-export async function submitJuryScoreAction(
-  _challengeId: string,
-  _submissionId: string,
-  _winnerSlotId?: string,
-  _score?: number,
-  _critiqueNotes?: string
-) {
-  throw new Error("Sistem penilaian skor numerik juri legacy telah dinonaktifkan (Blueprint 2.2.1). Gunakan createJuryAwardAction.");
 }
 
 import {

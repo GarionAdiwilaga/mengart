@@ -53,6 +53,7 @@ async function runMigrationVerification() {
   const upgradeDbName0010 = `mengart_test_upgrade_0010_${Date.now()}`;
   const upgradeDbName0011 = `mengart_test_upgrade_0011_${Date.now()}`;
   const upgradeDbName0012 = `mengart_test_upgrade_0012_${Date.now()}`;
+  const upgradeDbName0013 = `mengart_test_upgrade_0013_${Date.now()}`;
   const failDbName0012Dirty = `mengart_test_fail_0012_dirty_${Date.now()}`;
   const failDbNameEmailCollision = `mengart_test_fail_email_${Date.now()}`;
   const failDbName1 = `mengart_test_fail1_${Date.now()}`;
@@ -65,6 +66,7 @@ async function runMigrationVerification() {
   const temp0010Dir = path.resolve("./.tmp_drizzle_0010");
   const temp0011Dir = path.resolve("./.tmp_drizzle_0011");
   const temp0012Dir = path.resolve("./.tmp_drizzle_0012");
+  const temp0013Dir = path.resolve("./.tmp_drizzle_0013");
 
   // Pre-generate historical migration subsets
   await createMigrationSubsetDir(temp0006Dir, 6);
@@ -74,6 +76,7 @@ async function runMigrationVerification() {
   await createMigrationSubsetDir(temp0010Dir, 10);
   await createMigrationSubsetDir(temp0011Dir, 11);
   await createMigrationSubsetDir(temp0012Dir, 12);
+  await createMigrationSubsetDir(temp0013Dir, 13);
 
   try {
     // --------------------------------------------------------------------------
@@ -99,7 +102,7 @@ async function runMigrationVerification() {
           'challenges', 
           'challenge_voting_rounds', 
           'challenge_voting_round_candidates', 
-          'challenge_jury_slot_assignments', 
+          'challenge_jury_assignments', 
           'challenge_jury_awards',
           'challenge_ballots', 
           'challenge_results'
@@ -111,16 +114,21 @@ async function runMigrationVerification() {
     }
     console.log("✓ All 7 core challenge tables verified in fresh database schema.");
 
-    // Verify challenge_submission_versions was dropped cleanly
+    // Verify deprecated tables were dropped cleanly
     const droppedTable = await freshClient`
       SELECT table_name 
       FROM information_schema.tables 
-      WHERE table_schema = 'public' AND table_name = 'challenge_submission_versions';
+      WHERE table_schema = 'public' AND table_name IN (
+        'challenge_submission_versions',
+        'challenge_winner_slots',
+        'challenge_jury_slot_assignments',
+        'challenge_jury_scores'
+      );
     `;
     if (droppedTable.length > 0) {
-      throw new Error("challenge_submission_versions table still exists on fresh database!");
+      throw new Error(`Deprecated tables still exist on fresh database: ${JSON.stringify(droppedTable)}`);
     }
-    console.log("✓ Verified challenge_submission_versions table does not exist in fresh schema.");
+    console.log("✓ Verified deprecated tables do not exist in fresh schema.");
 
     // Verify unique indexes and new columns exist
     const freshIndexes = await freshClient`
@@ -1507,7 +1515,7 @@ async function runMigrationVerification() {
     console.log("✓ Verified pre-0013 schema does not contain site_settings table.");
 
     console.log("-> Running forward migration 0012 -> 0013 via Drizzle migrator...");
-    await migrate(upgradeDrizzle0012, { migrationsFolder: "./drizzle" });
+    await migrate(upgradeDrizzle0012, { migrationsFolder: temp0013Dir });
     console.log("✓ Migration 0012 -> 0013 succeeded cleanly!");
 
     // Verify site_settings table exists with primary key on key
@@ -1616,8 +1624,172 @@ async function runMigrationVerification() {
     await upgradeClient0012.end();
     console.log("🎉 SCENARIO 10 (0012 -> 0013 UPGRADE & GATE G SCHEMA VERIFICATION) PASSED!\n");
 
+    // --------------------------------------------------------------------------
+    // SCENARIO 11: FORWARD MIGRATION 0013 -> 0014 (PHASE 9 LEGACY CLEANUP VERIFICATION)
+    // --------------------------------------------------------------------------
+    console.log(`[Scenario 11] Creating upgrade database for 0013 -> 0014: ${upgradeDbName0013}...`);
+    await adminClient.unsafe(`CREATE DATABASE "${upgradeDbName0013}";`);
+
+    const upgradeDbUrl0013 = `${urlObj.protocol}//${urlObj.username}:${urlObj.password}@${urlObj.host}/${upgradeDbName0013}`;
+    const upgradeClient0013 = postgres(upgradeDbUrl0013, { max: 1 });
+    const upgradeDrizzle0013 = drizzle(upgradeClient0013, { schema });
+
+    console.log("-> Running migrations 0000 -> 0013 on clean upgrade database...");
+    await migrate(upgradeDrizzle0013, { migrationsFolder: temp0013Dir });
+    console.log("✓ Pre-0014 baseline (0000 -> 0013) applied cleanly.");
+
+    // 1. Verify that legacy columns and tables DO exist prior to 0014
+    const pre0014Cols = await upgradeClient0013`
+      SELECT table_name, column_name 
+      FROM information_schema.columns 
+      WHERE table_schema = 'public' 
+        AND (
+          (table_name = 'challenges' AND column_name IN ('quorum_requirement', 'allow_revisions'))
+          OR (table_name = 'challenge_voting_rounds' AND column_name = 'round_sequence')
+          OR (table_name = 'critique_comments' AND column_name = 'critique_aspect')
+        );
+    `;
+    if (pre0014Cols.length !== 4) {
+      throw new Error(`Expected 4 legacy columns in pre-0014 baseline, found ${pre0014Cols.length}`);
+    }
+
+    const pre0014Tables = await upgradeClient0013`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public' 
+        AND table_name IN ('challenge_winner_slots', 'challenge_jury_slot_assignments', 'challenge_jury_scores');
+    `;
+    if (pre0014Tables.length !== 3) {
+      throw new Error(`Expected 3 legacy tables in pre-0014 baseline, found ${pre0014Tables.length}`);
+    }
+    console.log("✓ Verified pre-0014 schema contains legacy columns and tables before cleanup.");
+
+    // 2. Insert sample legacy records to test safe forward dropping
+    const [p9User] = await upgradeClient0013`
+      INSERT INTO users (email, role, membership_status)
+      VALUES ('p9_user@mengart.local', 'member', 'active')
+      RETURNING id;
+    `;
+    const [p9Prof] = await upgradeClient0013`
+      INSERT INTO profiles (user_id, display_name, slug)
+      VALUES (${p9User.id}, 'P9 Artist', 'p9-artist')
+      RETURNING id;
+    `;
+    const [p9Ch] = await upgradeClient0013`
+      INSERT INTO challenges (title, slug, theme, description, prompt_rules, status, award_mode, stars_per_member, quorum_requirement, allow_revisions, created_by_user_id)
+      VALUES ('P9 Test Challenge', 'p9-test-ch', 'P9 Theme', 'Desc', 'Rules', 'voting_open', 'vote_and_jury', 1, 0, true, ${p9User.id})
+      RETURNING id;
+    `;
+    const [p9Round] = await upgradeClient0013`
+      INSERT INTO challenge_voting_rounds (challenge_id, round_type, round_sequence, status, stars_per_member)
+      VALUES (${p9Ch.id}, 'main', 1, 'open', 1)
+      RETURNING id;
+    `;
+    const [p9Slot] = await upgradeClient0013`
+      INSERT INTO challenge_winner_slots (challenge_id, slot_type, rank, title, display_order)
+      VALUES (${p9Ch.id}, 'community_vote', 1, 'Juara 1 Komunitas', 1)
+      RETURNING id;
+    `;
+    const [p9Art] = await upgradeClient0013`
+      INSERT INTO artworks (user_id, slug, title, media_type, audience, publication_status)
+      VALUES (${p9User.id}, 'p9-art', 'P9 Art', 'image', 'public', 'published')
+      RETURNING id;
+    `;
+    const [p9Ver] = await upgradeClient0013`
+      INSERT INTO artwork_versions (artwork_id, version_number, media_type, master_storage_key, mime_type, file_size_bytes, checksum_sha256, processing_status)
+      VALUES (${p9Art.id}, 1, 'image', 'm_p9', 'image/png', 100, 'c_p9', 'ready')
+      RETURNING id;
+    `;
+    await upgradeClient0013`
+      UPDATE artworks SET current_version_id = ${p9Ver.id} WHERE id = ${p9Art.id};
+    `;
+    const [p9Sub] = await upgradeClient0013`
+      INSERT INTO challenge_submissions (challenge_id, user_id, profile_id, artwork_id, artwork_version_id, title, submission_status)
+      VALUES (${p9Ch.id}, ${p9User.id}, ${p9Prof.id}, ${p9Art.id}, ${p9Ver.id}, 'P9 Art Sub', 'submitted')
+      RETURNING id;
+    `;
+    await upgradeClient0013`
+      INSERT INTO critique_comments (artwork_id, user_id, profile_id, critique_aspect, content)
+      VALUES (${p9Art.id}, ${p9User.id}, ${p9Prof.id}, 'color_lighting', 'Sample critique comment');
+    `;
+    await upgradeClient0013`
+      INSERT INTO challenge_results (challenge_id, submission_id, winner_slot_id, final_rank, award_type, total_community_stars, is_published)
+      VALUES (${p9Ch.id}, ${p9Sub.id}, ${p9Slot.id}, 1, 'community_vote_winner', 5, true);
+    `;
+
+    console.log("✓ Pre-0014 sample legacy records inserted.");
+
+    // 3. Execute forward migration 0013 -> 0014
+    console.log("-> Running forward migration 0013 -> 0014 (Legacy Cleanup) via Drizzle migrator...");
+    await migrate(upgradeDrizzle0013, { migrationsFolder: "./drizzle" });
+    console.log("✓ Migration 0013 -> 0014 succeeded cleanly!");
+
+    // 4. Assert all deprecated columns are dropped
+    const post0014Cols = await upgradeClient0013`
+      SELECT table_name, column_name 
+      FROM information_schema.columns 
+      WHERE table_schema = 'public' 
+        AND (
+          (table_name = 'challenges' AND column_name IN ('quorum_requirement', 'allow_revisions'))
+          OR (table_name = 'challenge_voting_rounds' AND column_name = 'round_sequence')
+          OR (table_name = 'critique_comments' AND column_name = 'critique_aspect')
+          OR (table_name = 'challenge_results' AND column_name = 'winner_slot_id')
+        );
+    `;
+    if (post0014Cols.length > 0) {
+      throw new Error(`Found unexpected deprecated columns after 0014: ${JSON.stringify(post0014Cols)}`);
+    }
+    console.log("✓ Verified all deprecated columns (quorum_requirement, allow_revisions, round_sequence, critique_aspect, winner_slot_id) dropped cleanly.");
+
+    // 5. Assert all deprecated tables are dropped
+    const post0014Tables = await upgradeClient0013`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public' 
+        AND table_name IN ('challenge_winner_slots', 'challenge_jury_slot_assignments', 'challenge_jury_scores');
+    `;
+    if (post0014Tables.length > 0) {
+      throw new Error(`Found unexpected deprecated tables after 0014: ${JSON.stringify(post0014Tables)}`);
+    }
+    console.log("✓ Verified all deprecated tables (challenge_winner_slots, challenge_jury_slot_assignments, challenge_jury_scores) dropped cleanly.");
+
+    // 6. Assert deprecated enum types are dropped
+    const post0014Enums = await upgradeClient0013`
+      SELECT typname FROM pg_type WHERE typname IN ('critique_aspect', 'slot_type');
+    `;
+    if (post0014Enums.length > 0) {
+      throw new Error(`Found unexpected deprecated enums after 0014: ${JSON.stringify(post0014Enums)}`);
+    }
+    console.log("✓ Verified deprecated enums (critique_aspect, slot_type) dropped cleanly.");
+
+    // 7. Assert existing data integrity preserved
+    const [persistedCh] = await upgradeClient0013`
+      SELECT id, title, slug, status, stars_per_member FROM challenges WHERE id = ${p9Ch.id};
+    `;
+    if (!persistedCh || persistedCh.title !== "P9 Test Challenge" || persistedCh.status !== "voting_open") {
+      throw new Error("Challenge data corrupted during migration 0014!");
+    }
+
+    const [persistedComment] = await upgradeClient0013`
+      SELECT id, content FROM critique_comments WHERE artwork_id = ${p9Art.id};
+    `;
+    if (!persistedComment || persistedComment.content !== "Sample critique comment") {
+      throw new Error("Critique comment content corrupted during migration 0014!");
+    }
+
+    const [persistedResult] = await upgradeClient0013`
+      SELECT id, final_rank, award_type, total_community_stars FROM challenge_results WHERE challenge_id = ${p9Ch.id};
+    `;
+    if (!persistedResult || persistedResult.final_rank !== 1 || persistedResult.award_type !== "community_vote_winner") {
+      throw new Error("Challenge result corrupted during migration 0014!");
+    }
+    console.log("✓ Verified existing records in challenges, critique_comments, and challenge_results preserved intact.");
+
+    await upgradeClient0013.end();
+    console.log("🎉 SCENARIO 11 (0013 -> 0014 FORWARD MIGRATION & PHASE 9 CLEANUP) PASSED!\n");
+
     console.log("=================================================================");
-    console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A, B, C, D, E, F, G)");
+    console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A, B, C, D, E, F, G, PHASE 9)");
     console.log("=================================================================\n");
     process.exit(0);
   } finally {
@@ -1630,6 +1802,7 @@ async function runMigrationVerification() {
       await fs.rm(temp0010Dir, { recursive: true, force: true });
       await fs.rm(temp0011Dir, { recursive: true, force: true });
       await fs.rm(temp0012Dir, { recursive: true, force: true });
+      await fs.rm(temp0013Dir, { recursive: true, force: true });
     } catch (_e) {
       // Ignored cleanup error
     }
@@ -1642,6 +1815,7 @@ async function runMigrationVerification() {
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0010}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0011}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0012}";`);
+      await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0013}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName0012Dirty}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbNameEmailCollision}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName1}";`);

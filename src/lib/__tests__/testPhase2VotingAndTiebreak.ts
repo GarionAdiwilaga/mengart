@@ -200,7 +200,6 @@ async function runTests() {
       .values({
         challengeId: ch1.id,
         roundType: "main",
-        roundSequence: 1,
         status: "open",
         startsAt: new Date(Date.now() - 3600000),
         deadline: futureDeadline,
@@ -294,7 +293,6 @@ async function runTests() {
       .values({
         challengeId: ch2a.id,
         roundType: "main",
-        roundSequence: 1,
         status: "open",
         startsAt: new Date(Date.now() - 3600000),
         deadline: pastDeadline,
@@ -344,7 +342,6 @@ async function runTests() {
       .values({
         challengeId: ch2b.id,
         roundType: "main",
-        roundSequence: 1,
         status: "open",
         startsAt: new Date(Date.now() - 3600000),
         deadline: pastDeadline,
@@ -397,7 +394,6 @@ async function runTests() {
       .values({
         challengeId: ch3.id,
         roundType: "main",
-        roundSequence: 1,
         status: "open",
         startsAt: new Date(Date.now() - 3600000),
         deadline: futureDeadline,
@@ -524,7 +520,7 @@ async function runTests() {
 
     const [round4Main] = await db
       .insert(challengeVotingRounds)
-      .values({ challengeId: ch4.id, roundType: "main", roundSequence: 1, status: "closed", deadline: pastDeadline })
+      .values({ challengeId: ch4.id, roundType: "main", status: "closed", deadline: pastDeadline })
       .returning();
     await db.insert(challengeVotingRoundCandidates).values([
       { votingRoundId: round4Main.id, submissionId: sub4A.id },
@@ -600,7 +596,7 @@ async function runTests() {
     const sub5B = await createSubmission(ch5.id, artist2, prof2, "Art 5B");
     const [round5] = await db
       .insert(challengeVotingRounds)
-      .values({ challengeId: ch5.id, roundType: "main", roundSequence: 1, status: "open", starsPerMember: 3 })
+      .values({ challengeId: ch5.id, roundType: "main", status: "open", starsPerMember: 3 })
       .returning();
     await db.insert(challengeVotingRoundCandidates).values([
       { votingRoundId: round5.id, submissionId: sub5A.id },
@@ -814,7 +810,7 @@ async function runTests() {
 
     const [round9Main] = await db
       .insert(challengeVotingRounds)
-      .values({ challengeId: ch9.id, roundType: "main", roundSequence: 1, status: "open", deadline: futureDeadline, starsPerMember: 2 })
+      .values({ challengeId: ch9.id, roundType: "main", status: "open", deadline: futureDeadline, starsPerMember: 2 })
       .returning();
     await db.insert(challengeVotingRoundCandidates).values([
       { votingRoundId: round9Main.id, submissionId: sub9A.id },
@@ -874,7 +870,7 @@ async function runTests() {
 
     const [round10Pending] = await db
       .insert(challengeVotingRounds)
-      .values({ challengeId: ch10Pending.id, roundType: "main", roundSequence: 1, status: "pending", deadline: pastDeadline })
+      .values({ challengeId: ch10Pending.id, roundType: "main", status: "pending", deadline: pastDeadline })
       .returning();
     let pendingFinalizeRejected = false;
     try {
@@ -905,7 +901,7 @@ async function runTests() {
     const futureDeadline10 = new Date(Date.now() + 3600 * 1000);
     const [round10Future] = await db
       .insert(challengeVotingRounds)
-      .values({ challengeId: ch10Future.id, roundType: "main", roundSequence: 1, status: "open", deadline: futureDeadline10 })
+      .values({ challengeId: ch10Future.id, roundType: "main", status: "open", deadline: futureDeadline10 })
       .returning();
     let futureFinalizeRejected = false;
     try {
@@ -935,7 +931,7 @@ async function runTests() {
 
     const [round10WrongStatus] = await db
       .insert(challengeVotingRounds)
-      .values({ challengeId: ch10WrongStatus.id, roundType: "main", roundSequence: 1, status: "open", deadline: pastDeadline })
+      .values({ challengeId: ch10WrongStatus.id, roundType: "main", status: "open", deadline: pastDeadline })
       .returning();
     let wrongChallengeStatusRejected = false;
     try {
@@ -977,7 +973,7 @@ async function runTests() {
     const sub11A = await createSubmission(ch11.id, artist1, prof1, "Art 11A");
     const [round11] = await db
       .insert(challengeVotingRounds)
-      .values({ challengeId: ch11.id, roundType: "main", roundSequence: 1, status: "open", deadline: futureDeadline, starsPerMember: 2 })
+      .values({ challengeId: ch11.id, roundType: "main", status: "open", deadline: futureDeadline, starsPerMember: 2 })
       .returning();
     await db.insert(challengeVotingRoundCandidates).values([{ votingRoundId: round11.id, submissionId: sub11A.id }]);
 
@@ -1106,7 +1102,7 @@ async function runTests() {
     const sub13B = await createSubmission(ch13.id, artist2, prof2, "Art 13B");
     const [round13] = await db
       .insert(challengeVotingRounds)
-      .values({ challengeId: ch13.id, roundType: "main", roundSequence: 1, status: "closed", deadline: pastDeadline })
+      .values({ challengeId: ch13.id, roundType: "main", status: "closed", deadline: pastDeadline })
       .returning();
     await db.insert(challengeVotingRoundCandidates).values([
       { votingRoundId: round13.id, submissionId: sub13A.id },
@@ -1169,7 +1165,7 @@ async function runTests() {
     const sub14B = await createSubmission(ch14.id, artist2, prof2, "Art 14B");
     const [round14] = await db
       .insert(challengeVotingRounds)
-      .values({ challengeId: ch14.id, roundType: "main", roundSequence: 1, status: "closed", deadline: pastDeadline })
+      .values({ challengeId: ch14.id, roundType: "main", status: "closed", deadline: pastDeadline })
       .returning();
     await db.insert(challengeVotingRoundCandidates).values([
       { votingRoundId: round14.id, submissionId: sub14A.id },
@@ -1439,7 +1435,6 @@ async function runTests() {
       .values({
         challengeId: ch18.id,
         roundType: "main",
-        roundSequence: 1,
         status: "open",
         startsAt: new Date(Date.now() + 3600 * 1000), // starts in 1 hour
         deadline: new Date(Date.now() + 7200 * 1000),
@@ -1550,7 +1545,6 @@ async function runTests() {
       .values({
         challengeId: ch19.id,
         roundType: "main",
-        roundSequence: 1,
         status: "open",
         startsAt: new Date(Date.now() - 3600 * 1000),
         deadline: new Date(Date.now() + 3600 * 1000),

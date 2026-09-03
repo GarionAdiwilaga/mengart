@@ -467,7 +467,7 @@ async function runGateETestSuite() {
   const [subB] = await db.insert(challengeSubmissions).values({ challengeId: chVoteOnly.id, userId: artist2.id, profileId: artist2Prof.id, artworkId: artB.id, artworkVersionId: verB.id, title: "Art B", submissionStatus: "submitted" }).returning();
 
   // Create Main Round with future deadline for voting
-  const [round1] = await db.insert(challengeVotingRounds).values({ challengeId: chVoteOnly.id, roundType: "main", roundSequence: 1, status: "open", deadline: futureDeadline }).returning();
+  const [round1] = await db.insert(challengeVotingRounds).values({ challengeId: chVoteOnly.id, roundType: "main", status: "open", deadline: futureDeadline }).returning();
   await db.insert(challengeVotingRoundCandidates).values([
     { votingRoundId: round1.id, submissionId: subA.id },
     { votingRoundId: round1.id, submissionId: subB.id },

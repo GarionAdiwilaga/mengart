@@ -406,8 +406,3 @@ export async function generateMediaDerivatives(params: {
     };
   }
 }
-
-/**
- * Backward compatibility alias for generateMediaDerivatives
- */
-export const generateWatermarkedDerivatives = generateMediaDerivatives;

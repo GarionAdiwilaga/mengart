@@ -469,6 +469,23 @@
 **Business Rule:** Release Gate H is formally closed. Phase 9 (Post-Gate-H Comprehensive Legacy Cleanup & Final Production Hardening) is unlocked. Production deployment status remains NO-GO until Phase 9 legacy cleanup passes Independent QA for final production release sign-off.
 **Reason:** 100% verification across all 10 migration scenarios, 6/6 Gate H concurrency & DR scenarios, 16/16 Gate G scenarios, 16/16 repository test suites, clean ESLint (0 errors), clean Next.js 16.3.3 + worker production build (31/31 routes), and 6/6 Playwright E2E user journeys.
 
+## 2026-09-04
+
+### Phase 9: Post-Gate-H Comprehensive Legacy Cleanup & Schema Pruning
+**Decision:** Executed forward migration `0014_phase_9_legacy_cleanup.sql` and pruned all legacy database columns, types, and tables to launch Mengart with zero technical debt:
+1. **Pruned Columns:** Dropped `challenges.quorum_requirement`, `challenges.allow_revisions`, `challenge_voting_rounds.round_sequence`, `critique_comments.critique_aspect`, and `challenge_results.winner_slot_id`.
+2. **Pruned Types:** Dropped `critique_aspect` and `slot_type` enum types from PostgreSQL.
+3. **Pruned Tables:** Dropped `challenge_jury_scores` CASCADE, `challenge_jury_slot_assignments` CASCADE, and `challenge_winner_slots` CASCADE.
+4. **Backend Code Pruning:**
+   - Removed `allowRevisions` logic in `src/app/actions/challenges.ts` and `challengeService.ts`.
+   - Removed `quorumRequirement`, `roundSequence`, and podium slot references in `challengeService.ts` and `votingService.ts`.
+   - Removed `critiqueAspect` across comment creation and views.
+   - Removed `generateWatermarkedDerivatives` alias in `mediaValidation.ts` in favor of canonical `generateMediaDerivatives`.
+   - Removed unused legacy component `JuryEvaluationForm.tsx` and legacy MIME fallback mappings.
+**Business Rule:** Mengart operates with zero legacy debt, fully aligned with Blueprint 2.2.2 dynamic jury awards and unified comment models.
+**Reason:** Post-Gate-H cleanup directive per `phase_9_legacy_cleanup_instructions.md`.
+
+
 
 
 

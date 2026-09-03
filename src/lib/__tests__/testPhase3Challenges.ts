@@ -5,7 +5,6 @@ import {
   artworks,
   artworkVersions,
   challenges,
-  challengeWinnerSlots,
   challengeSubmissions,
 } from "@/db/schema";
 import { eq, and } from "drizzle-orm";

@@ -1,52 +1,60 @@
-# Handoff Context — Independent QA Certification: Gate H PASS & Directives for Phase 9
+# Handoff Context — Phase 9: Post-Gate-H Comprehensive Legacy Cleanup & Final Production Hardening
 
 **Date:** 2026-09-04  
-**Approved Baseline:** `2c40f51c378f8e0f47a28535d814ab79c8dcc74b` (Gate H Formally Passed)  
-**Current Phase:** Release Gate H Officially Closed — **INDEPENDENT QA PASS**  
-**Next Phase:** Phase 9 (Post-Gate-H Comprehensive Legacy Cleanup & Final Production Hardening) — **UNLOCKED**  
-**Overall Status:** **NO-GO** (Until Phase 9 passes independent QA for final production release sign-off).
+**Approved Baseline:** `2c40f51c378f8e0f47a28535d814ab79c8dcc74b` (Gate H Officially Passed)  
+**Current State:** Phase 9 (Post-Gate-H Comprehensive Legacy Cleanup) — **IMPLEMENTATION COMPLETE & 100% VERIFIED**  
+**Next State:** Final Independent QA Production Release Certification  
+**Overall Status:** **NO-GO** (Pending final Independent QA release sign-off).
 
 ---
 
-## Gate H Deliverables Implemented & Verified
+## Phase 9 Deliverables Implemented & Verified
 
-### 1. Production Configuration & Secret Invariant Audit (Blueprint 2.2.2 §26)
-- **Fail-Closed Missing Env Secrets:**
-  - `src/db/index.ts`: Enforces fail-closed assertion when `DATABASE_URL` is missing in production.
-  - `src/lib/queue.ts`: Enforces fail-closed assertion when `REDIS_URL` is missing in production.
-  - `src/app/api/cron/materialize-challenges/route.ts`: Returns HTTP 503 (disabled) when `CRON_SECRET` is unset, and HTTP 401 on unauthorized token.
-- **Insecure Default Elimination:**
-  - Verified zero hardcoded development secrets in production execution paths (`insecure-defaults` skill audit).
+### 1. Database Forward Migration & Schema Pruning
+- **Migration 0014 ([`drizzle/0014_phase_9_legacy_cleanup.sql`](file:///home/garion/Projects/Mengart/drizzle/0014_phase_9_legacy_cleanup.sql)):**
+  - Dropped deprecated columns: `challenges.quorum_requirement`, `challenges.allow_revisions`, `challenge_voting_rounds.round_sequence`, `critique_comments.critique_aspect`, `challenge_results.winner_slot_id`.
+  - Dropped deprecated enum types: `critique_aspect`, `slot_type`.
+  - Dropped deprecated tables: `challenge_jury_scores` CASCADE, `challenge_jury_slot_assignments` CASCADE, `challenge_winner_slots` CASCADE.
+- **Drizzle Schema Pruning:**
+  - [`src/db/schema/challenges.ts`](file:///home/garion/Projects/Mengart/src/db/schema/challenges.ts): Removed `slotTypeEnum`, `quorumRequirement`, `allowRevisions`, `roundSequence`, `challengeWinnerSlots`, `challengeJurySlotAssignments`.
+  - [`src/db/schema/critiques.ts`](file:///home/garion/Projects/Mengart/src/db/schema/critiques.ts): Removed `critiqueAspectEnum` and `critiqueAspect`.
+  - [`src/db/schema/ballots.ts`](file:///home/garion/Projects/Mengart/src/db/schema/ballots.ts): Removed `challengeJuryScores` and `winnerSlotId`.
 
-### 2. Security & Production Headers
-- Verified anti-clickjacking headers (`X-Frame-Options: DENY`), `X-Content-Type-Options: nosniff`, `Strict-Transport-Security`, `Referrer-Policy: strict-origin-when-cross-origin`, and Content Security Policy (CSP) in `next.config.ts`.
-- Trusted proxy IP extraction (`getClientIpFromHeaders`) strictly ignores spoofed forwarded headers unless `TRUSTED_PROXY=true`.
+### 2. Backend Actions & Services Pruning
+- [`src/app/actions/challenges.ts`](file:///home/garion/Projects/Mengart/src/app/actions/challenges.ts): Removed `allowRevisions` from validation and mutations.
+- [`src/app/actions/critiques.ts`](file:///home/garion/Projects/Mengart/src/app/actions/critiques.ts): Removed `critiqueAspect` from comment creation.
+- [`src/lib/services/mediaValidation.ts`](file:///home/garion/Projects/Mengart/src/lib/services/mediaValidation.ts): Removed legacy `generateWatermarkedDerivatives` alias in favor of canonical `generateMediaDerivatives`.
+- [`src/app/api/media/public/[key]/route.ts`](file:///home/garion/Projects/Mengart/src/app/api/media/public/[key]/route.ts): Removed `.gif` and `.webm` fallback mappings.
+- [`src/lib/services/challengeService.ts`](file:///home/garion/Projects/Mengart/src/lib/services/challengeService.ts): Removed `challengeWinnerSlots`, `challengeJurySlotAssignments`, and `roundSequence` references.
+- [`src/lib/services/votingService.ts`](file:///home/garion/Projects/Mengart/src/lib/services/votingService.ts): Removed `roundSequence` ordering and mutations.
+- [`src/app/challenges/[slug]/page.tsx`](file:///home/garion/Projects/Mengart/src/app/challenges/[slug]/page.tsx): Updated awards panel to display dynamic awards based on `awardMode` without `winnerSlots`.
+- [`src/components/jury/JuryEvaluationForm.tsx`](file:///home/garion/Projects/Mengart/src/components/jury/JuryEvaluationForm.tsx): Deleted unused legacy component.
 
-### 3. Runtime Concurrency & Memory Safety
-- **Rate Limit Saturation:** 20 concurrent requests under sliding-window rate limit strictly allow 10 and reject 10 with 429 under a 10-limit window.
-- **Sharp Concurrency & Memory Clamping:** 15 simultaneous high-resolution image transforms execute cleanly without memory leak or heap exhaustion.
-- **Database Connection Pool:** 30 concurrent transactional database queries execute smoothly across connection pool.
-
-### 4. Disaster Recovery & Data Replay Idempotency
-- Verified complete idempotency for backfills and upsert replay scripts without constraint violations.
-
----
-
-## Dedicated Gate H Test Suite
-- [`src/lib/__tests__/testGateHConcurrencyAndDR.ts`](file:///home/garion/Projects/Mengart/src/lib/__tests__/testGateHConcurrencyAndDR.ts): **ALL 6/6 SCENARIOS PASSED (100%)**.
+### 3. Test Suites Modernization & Dedicated Phase 9 Suite
+- **Dedicated Test Suite ([`src/lib/__tests__/testPhase9LegacyCleanup.ts`](file:///home/garion/Projects/Mengart/src/lib/__tests__/testPhase9LegacyCleanup.ts)):**
+  - Scenario 1: Schema cleanliness verification (zero deprecated columns/tables/types).
+  - Scenario 2: Challenge creation and updating without `allowRevisions`.
+  - Scenario 3: Star voting and tiebreak round creation without `roundSequence`.
+  - Scenario 4: Dynamic jury award assignment without `challenge_winner_slots`.
+  - Scenario 5: Unified comment creation without `critique_aspect`.
+  - Scenario 6: Media pipeline execution with canonical `generateMediaDerivatives`.
+  - **Result: 6/6 Scenarios Passed (100%)**.
+- **Upgraded Migration Test Suite ([`scripts/verifyMigrations.ts`](file:///home/garion/Projects/Mengart/scripts/verifyMigrations.ts)):**
+  - Added **Scenario 11** verifying forward migration 0013 -> 0014 and asserting dropped columns/tables/types while verifying data preservation.
+  - **Result: 11/11 Scenarios Passed (100%)**.
 
 ---
 
 ## Full Verification Matrix Status
-- `npm run test:migrate`: **PASSED (10/10 scenarios)**
-- `npx tsx src/lib/__tests__/testGateHConcurrencyAndDR.ts`: **PASSED (6/6 scenarios)**
-- `npx tsx src/lib/__tests__/testGateGCommunityAndStoryCard.ts`: **PASSED (16/16 scenarios)**
-- `npm run test:all`: **PASSED (16/16 test suites)**
-- `npm run lint`: **PASSED (0 warnings, 0 errors)**
-- `npm run build`: **PASSED (31/31 routes compiled)**
+- `npm run db:migrate`: **PASSED (Migration 0014 applied)**
+- `npm run test:migrate`: **PASSED (11/11 scenarios)**
+- `npx tsx src/lib/__tests__/testPhase9LegacyCleanup.ts`: **PASSED (6/6 scenarios)**
+- `npm run test:all`: **PASSED (18/18 test suites)**
+- `npm run lint`: **PASSED (0 errors, 0 warnings)**
+- `npm run build`: **PASSED (31/31 routes + media worker compiled cleanly)**
 - `npm run test:e2e`: **PASSED (6/6 Playwright user journeys)**
 
 ---
 
 ## Directive for Next Step
-- **HARD STOP:** Standing by for Independent QA cumulative audit on Gate H. Do NOT start Phase 9 (Post-Gate-H Legacy Cleanup) until Gate H receives formal QA approval.
+- **HARD STOP:** Standing by for Independent QA final production release certification.

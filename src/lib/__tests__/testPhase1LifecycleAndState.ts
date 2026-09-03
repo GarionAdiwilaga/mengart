@@ -1,7 +1,6 @@
 import { db } from "@/db";
 import {
   challenges,
-  challengeWinnerSlots,
   challengeSubmissions,
   challengeJuryAssignments,
   challengeVotingRounds,
@@ -189,17 +188,6 @@ async function runPhase1LifecycleTests() {
     })
     .returning();
 
-  const [slotGold] = await db
-    .insert(challengeWinnerSlots)
-    .values({
-      challengeId: finChallenge.id,
-      slotType: "community_vote",
-      rank: 1,
-      title: "Juara 1 Komunitas",
-      displayOrder: 1,
-    })
-    .returning();
-
   const [artSubA] = await db.insert(artworks).values({ userId: member.id, title: "Sub A Art", slug: `sub-a-art-${Date.now()}`, mediaType: "image", publicationStatus: "published" }).returning();
   const [verSubA] = await db.insert(artworkVersions).values({ artworkId: artSubA.id, versionNumber: 1, mediaType: "image", masterStorageKey: `k-suba-${Date.now()}`, mimeType: "image/png", fileSizeBytes: 100, checksumSha256: `c-suba-${Date.now()}`, processingStatus: "ready" }).returning();
   await db.update(artworks).set({ currentVersionId: verSubA.id }).where(eq(artworks.id, artSubA.id));
@@ -222,7 +210,6 @@ async function runPhase1LifecycleTests() {
     .values({
       challengeId: finChallenge.id,
       roundType: "main",
-      roundSequence: 1,
       status: "open",
       startsAt: new Date(Date.now() - 3600000),
       deadline: new Date(Date.now() - 1000),

@@ -70,7 +70,7 @@ export async function postCritiqueCommentAction(formData: FormData) {
     }
   }
 
-  // 3. Insert unified comment (critiqueAspect defaults to 'general' for legacy compatibility)
+  // 3. Insert unified comment
   const [newComment] = await db
     .insert(critiqueComments)
     .values({
@@ -78,7 +78,6 @@ export async function postCritiqueCommentAction(formData: FormData) {
       userId: user.id,
       profileId: profile.id,
       parentCommentId,
-      critiqueAspect: "general",
       content: rawContent,
     })
     .returning();

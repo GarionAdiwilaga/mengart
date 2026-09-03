@@ -1,7 +1,6 @@
 import { db } from "@/db";
 import {
   challenges,
-  challengeWinnerSlots,
   challengeSubmissions,
   challengeResults,
   users,
@@ -62,7 +61,7 @@ async function runPhase6Tests() {
     .values({
       userId: artist2.id,
       displayName: "Vespera Dreamweaver",
-      slug: `vespera-${uniqueSuffix}-2`,
+      slug: `dream-artist-${uniqueSuffix}-2`,
     })
     .returning();
 
@@ -79,24 +78,23 @@ async function runPhase6Tests() {
     .values({
       userId: artist3.id,
       displayName: "Komorebi Digital Arts",
-      slug: `komorebi-${uniqueSuffix}-3`,
+      slug: `komorebi-artist-${uniqueSuffix}-3`,
     })
     .returning();
 
   console.log("✓ Admin and 3 Historical Artists initialized.");
 
-  // 2. Simulate Historical Challenge Import
+  // 2. Simulate Historical Challenge Backfill
   console.log("\n[Test 2] Simulating Historical Challenge Backfill Import...");
-  const historicalSlug = `historical-event-${uniqueSuffix}`;
-
+  const historicalSlug = `grand-cyber-nusantara-${uniqueSuffix}`;
   const [historicalChallenge] = await db
     .insert(challenges)
     .values({
       title: `Grand Cyber Nusantara Invitational ${uniqueSuffix}`,
       slug: historicalSlug,
-      theme: "Cyber Nusantara 2024",
-      description: "Kompetisi seni digital retrospektif perdana komunitas Mengart Atelier.",
-      promptRules: "Menampilkan kota futuristik Nusantara dengan sentuhan budaya kepulauan.",
+      theme: "Cyberpunk Archipelago",
+      description: "Tribute untuk lanskap masa depan nusantara.",
+      promptRules: "Desain visual arsitektur dan kultur lokal dengan sentuhan neon.",
       status: "finished",
       awardMode: "vote_and_jury",
       starsPerMember: 3,
@@ -109,96 +107,52 @@ async function runPhase6Tests() {
     })
     .returning();
 
-  // Create Winner Slots
-  const [slotGold] = await db
-    .insert(challengeWinnerSlots)
-    .values({
-      challengeId: historicalChallenge.id,
-      slotType: "community_vote",
-      rank: 1,
-      title: "Juara 1 Favorit Komunitas",
-      displayOrder: 1,
-    })
-    .returning();
-
-  const [slotSilver] = await db
-    .insert(challengeWinnerSlots)
-    .values({
-      challengeId: historicalChallenge.id,
-      slotType: "community_vote",
-      rank: 2,
-      title: "Juara 2 Favorit Komunitas",
-      displayOrder: 2,
-    })
-    .returning();
-
-  const [slotBronze] = await db
-    .insert(challengeWinnerSlots)
-    .values({
-      challengeId: historicalChallenge.id,
-      slotType: "community_vote",
-      rank: 3,
-      title: "Juara 3 Favorit Komunitas",
-      displayOrder: 3,
-    })
-    .returning();
-
-  const [slotJury] = await db
-    .insert(challengeWinnerSlots)
-    .values({
-      challengeId: historicalChallenge.id,
-      slotType: "jury_award",
-      rank: 1,
-      title: "Pilihan Dewan Juri Atelier",
-      displayOrder: 4,
-    })
-    .returning();
-
-  console.log("✓ Historical Challenge and Winner Slots persisted.");
+  console.log("✓ Historical Challenge persisted.");
 
   // 3. Create Artworks, Submissions, and Results
   console.log("\n[Test 3] Inserting historical submissions and ranking cache...");
-  const entriesData = [
+  const entries = [
     {
       user: artist1,
       profile: profile1,
       title: "Batavia 2099: Neon Harbor",
       rank: 1,
+      awardType: "community_vote_winner",
+      categoryLabel: "Juara 1 Favorit Komunitas",
       stars: 35,
-      juryScore: 97.5,
-      slotId: slotGold.id,
+      juryScore: 92.5,
     },
     {
       user: artist2,
       profile: profile2,
       title: "Floating Sky Palace of Majapahit",
-      rank: 2,
+      rank: null,
+      awardType: "jury_award",
+      categoryLabel: "Penghargaan Khusus Komposisi Visual",
       stars: 28,
-      juryScore: 94.0,
-      slotId: slotSilver.id,
+      juryScore: 88.0,
     },
     {
       user: artist3,
       profile: profile3,
       title: "Spirits of the Silicon Forest",
-      rank: 3,
-      stars: 22,
+      rank: null,
+      awardType: "jury_award",
+      categoryLabel: "Pilihan Dewan Juri Atelier",
+      stars: 12,
       juryScore: 95.0,
-      slotId: slotJury.id, // Won Jury Award
     },
   ];
 
-  for (let i = 0; i < entriesData.length; i++) {
-    const entry = entriesData[i];
-
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
     // Create Artwork
     const [art] = await db
       .insert(artworks)
       .values({
         userId: entry.user.id,
-        slug: `art-${historicalSlug}-${entry.profile.slug}`,
+        slug: `art-${historicalSlug}-${i + 1}`,
         title: entry.title,
-        description: "Historical artwork archived from 2024 atelier exhibition.",
         mediaType: "image",
         audience: "public",
         critiqueMode: "open_for_critique",
@@ -206,19 +160,19 @@ async function runPhase6Tests() {
       })
       .returning();
 
-    // Create Artwork Version
+    // Create Version
     const [artVer] = await db
       .insert(artworkVersions)
       .values({
         artworkId: art.id,
         versionNumber: 1,
         mediaType: "image",
-        masterStorageKey: `master_hist_${i}.png`,
-        publicStorageKey: `public_hist_${i}.webp`,
-        thumbnailStorageKey: `thumb_hist_${i}.webp`,
+        masterStorageKey: `historical_master_${uniqueSuffix}_${i}.png`,
+        publicStorageKey: `historical_public_${uniqueSuffix}_${i}.webp`,
+        thumbnailStorageKey: `historical_thumb_${uniqueSuffix}_${i}.webp`,
         mimeType: "image/webp",
         fileSizeBytes: 1024 * 1024,
-        checksumSha256: `sha256_hist_${i}`,
+        checksumSha256: `historical_sha256_${uniqueSuffix}_${i}`,
         processingStatus: "ready",
       })
       .returning();
@@ -243,8 +197,9 @@ async function runPhase6Tests() {
     await db.insert(challengeResults).values({
       challengeId: historicalChallenge.id,
       submissionId: sub.id,
-      winnerSlotId: entry.slotId,
       finalRank: entry.rank,
+      awardType: entry.awardType,
+      categoryLabel: entry.categoryLabel,
       totalCommunityStars: entry.stars,
       juryScore: entry.juryScore.toString(),
       isPublished: true,
@@ -306,6 +261,6 @@ async function runPhase6Tests() {
 runPhase6Tests()
   .then(() => process.exit(0))
   .catch((err) => {
-    console.error("❌ Phase 6 Test Failed:", err);
+    console.error("Phase 6 tests failed:", err);
     process.exit(1);
   });

@@ -236,10 +236,20 @@
     - Verified complete idempotency for backfills and upsert replay scripts.
   - Dedicated Gate H Test Suite (`src/lib/__tests__/testGateHConcurrencyAndDR.ts`):
     - 6/6 scenarios passed (100% success).
-- **Phase 9: Post-Gate-H Comprehensive Legacy Cleanup & Final Production Hardening:** **UNLOCKED / READY FOR IMPLEMENTATION**
-  - Systematically prune all deprecated schema columns/tables (`quorum_requirement`, `allow_revisions`, `challenge_winner_slots`, `challenge_jury_slot_assignments`, `challenge_jury_scores`, `critique_aspect`), legacy aliases, and transitional branches for a 100% legacy-free production launch.
+- **Phase 9: Post-Gate-H Comprehensive Legacy Cleanup & Final Production Hardening:** **IMPLEMENTED & 100% VERIFIED**
+  - Schema Pruning & Migration 0014:
+    - Forward migration `drizzle/0014_phase_9_legacy_cleanup.sql` drops deprecated columns (`quorum_requirement`, `allow_revisions`, `round_sequence`, `critique_aspect`, `winner_slot_id`).
+    - Drops deprecated types (`critique_aspect`, `slot_type`).
+    - Drops deprecated tables (`challenge_jury_scores` CASCADE, `challenge_jury_slot_assignments` CASCADE, `challenge_winner_slots` CASCADE).
+  - Production Code Pruning:
+    - Pruned legacy actions, services, and queries (`allowRevisions`, `quorumRequirement`, `roundSequence`, `critiqueAspect`, `generateWatermarkedDerivatives` alias, legacy `.gif`/`.webm` fallback mappings).
+    - Removed unused legacy component `JuryEvaluationForm.tsx`.
+  - Dedicated Phase 9 Test Suite (`src/lib/__tests__/testPhase9LegacyCleanup.ts`):
+    - 6/6 scenarios passed (100% success).
+  - Migration Verification Upgrade (`scripts/verifyMigrations.ts`):
+    - 11/11 scenarios passed, including Scenario 11 verifying forward migration 0013 -> 0014.
 
-## Addressed QA IDs in Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7 & Phase 8 (Gates A–H Fully Closed & Verified)
+## Addressed QA IDs in Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8 & Phase 9 (Gates A–H & Phase 9 Fully Verified)
 - **QA-P0-001** (Database migration reproducibility & authoritative production backfill): RESOLVED & VERIFIED
 - **QA-P0-002** (Per-round ballot uniqueness & multi-round tiebreak support): RESOLVED & VERIFIED
 - **QA-P0-003** (Google-only authentication, invitation-gated onboarding & PENDING_INVITE separation): RESOLVED & VERIFIED
@@ -258,6 +268,7 @@
 - **QA-P0-016** (Watermark removal amendment from public derivative pipeline; resolution limits and ACL protection strictly preserved): RESOLVED & VERIFIED
 - **QA-P0-017** (Gate G Simple Comments, Social Badge, Manual Featured Artist with soft-delete partial index, 8 Homepage sections, 9:16 Canvas Story Cards, A11y, and OBS-001 allowRevisions fix): RESOLVED & VERIFIED
 - **QA-P0-018** (Gate H fail-closed production config, zero secret fallbacks, trusted proxy IP protection, rate limit concurrency, Sharp memory clamping, DB pool concurrency, DR replay idempotency): RESOLVED & VERIFIED
+- **QA-P0-019** (Phase 9 Post-Gate-H Comprehensive Legacy Cleanup, Zero Legacy Debt Schema & Code Pruning): RESOLVED & VERIFIED
 - **QA-P1-007** (Pause/resume deadline validation with round deadlines): RESOLVED & VERIFIED
 - **QA-P1-008** (RESULTS_REVOKED status, notice banner, snapshot audit & flow): RESOLVED & VERIFIED
 
@@ -265,11 +276,10 @@
 `main` (Base Approved Gate H SHA: `2c40f51c378f8e0f47a28535d814ab79c8dcc74b`)
 
 ## Current Focus
-- Gate H (Disaster Recovery, Runtime Concurrency & Production Rehearsal) formally PASSED and CLOSED by Independent QA.
-- Phase 9 (Post-Gate-H Comprehensive Legacy Cleanup & Final Production Hardening) is unlocked and ready for implementation.
+- Phase 9 (Post-Gate-H Comprehensive Legacy Cleanup & Final Production Hardening) is completely implemented, verified across 18 test suites + 11 migration scenarios + 6 Playwright E2E tests, and awaiting Independent QA Final Production Release Certification.
 
 ## Overall Status
-- **NO-GO** (Until Phase 9 Post-Gate-H Legacy Cleanup passes independent QA for final production release).
+- **NO-GO** (Pending Independent QA Final Production Release Sign-Off).
 
 
 

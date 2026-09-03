@@ -115,7 +115,6 @@ async function runPhase5Tests() {
       artworkId: artwork.id,
       userId: commenterUser.id,
       profileId: commenterProfile.id,
-      critiqueAspect: "color_lighting",
       content: "Kontras pencahayaan rim light pada siluet pohon sangat memukau!",
     })
     .returning();
@@ -132,7 +131,7 @@ async function runPhase5Tests() {
     })
     .returning();
 
-  console.log(`✓ Critique Comment Posted: ID=${comment.id}, Aspect=${comment.critiqueAspect}`);
+  console.log(`✓ Critique Comment Posted: ID=${comment.id}`);
   console.log(`✓ Notification Delivered to Artist: ID=${notif.id}, Title="${notif.title}"`);
 
   // Test 4: Threaded Reply & Pinning
@@ -144,7 +143,6 @@ async function runPhase5Tests() {
       userId: artistUser.id,
       profileId: artistProfile.id,
       parentCommentId: comment.id,
-      critiqueAspect: "general",
       content: "Terima kasih banyak atas sarannya, Rowan!",
     })
     .returning();

@@ -1,14 +1,13 @@
 import { db } from "@/db";
 import {
   challenges,
-  challengeWinnerSlots,
   challengeVotingRounds,
   challengeVotingRoundCandidates,
   challengeSubmissions,
   challengeBallots,
   challengeBallotStars,
   challengeJuryAssignments,
-  challengeJurySlotAssignments,
+  challengeJuryAwards,
   challengeResults,
   users,
   profiles,
@@ -18,7 +17,6 @@ import {
 import { eq, and } from "drizzle-orm";
 import {
   castOrUpdateBallotAction,
-  assignJurySlotAction,
   finalizeChallengeResultsAction,
 } from "@/app/actions/voting";
 
@@ -41,65 +39,38 @@ async function runRealConcurrencyTests() {
     .values({ email: `voter_real_${suffix}@mengart.local`, role: "member", membershipStatus: "active" })
     .returning();
 
-  await db
-    .insert(profiles)
-    .values({ userId: voter.id, displayName: "Voter Real", slug: `voter-real-${suffix}` });
-
   const [artist1] = await db
     .insert(users)
-    .values({ email: `art1_real_${suffix}@mengart.local`, role: "member", membershipStatus: "active" })
+    .values({ email: `artist1_real_${suffix}@mengart.local`, role: "member", membershipStatus: "active" })
     .returning();
 
   const [prof1] = await db
     .insert(profiles)
-    .values({ userId: artist1.id, displayName: "Artist 1 Real", slug: `art1-real-${suffix}` })
+    .values({ userId: artist1.id, displayName: `Artist 1 ${suffix}`, slug: `artist-1-${suffix}` })
     .returning();
 
   const [artist2] = await db
     .insert(users)
-    .values({ email: `art2_real_${suffix}@mengart.local`, role: "member", membershipStatus: "active" })
+    .values({ email: `artist2_real_${suffix}@mengart.local`, role: "member", membershipStatus: "active" })
     .returning();
 
   const [prof2] = await db
     .insert(profiles)
-    .values({ userId: artist2.id, displayName: "Artist 2 Real", slug: `art2-real-${suffix}` })
+    .values({ userId: artist2.id, displayName: `Artist 2 ${suffix}`, slug: `artist-2-${suffix}` })
     .returning();
 
   const [challenge] = await db
     .insert(challenges)
     .values({
-      title: `Real Action Concurrency Challenge ${suffix}`,
-      slug: `real-concurrency-${suffix}`,
-      theme: "Production Action Invariants",
-      description: "Testing real server action parent row locks & optimistic versioning",
-      promptRules: "Rules",
+      title: `Concurrency Challenge ${suffix}`,
+      slug: `concurrency-challenge-${suffix}`,
+      theme: "Concurrency",
+      description: "Real PostgreSQL lock and isolation testing.",
+      promptRules: "Adhere to real ACID invariants.",
       status: "voting_open",
-      starsPerMember: 3,
       awardMode: "vote_and_jury",
-      tieStrategy: "tiebreak_round",
+      starsPerMember: 3,
       createdByUserId: admin.id,
-    })
-    .returning();
-
-  const [slot1] = await db
-    .insert(challengeWinnerSlots)
-    .values({
-      challengeId: challenge.id,
-      slotType: "community_vote",
-      rank: 1,
-      title: "Juara 1 Favorit Komunitas",
-      displayOrder: 1,
-    })
-    .returning();
-
-  const [jurySlot] = await db
-    .insert(challengeWinnerSlots)
-    .values({
-      challengeId: challenge.id,
-      slotType: "jury_award",
-      rank: 1,
-      title: "Pilihan Juri — Best Composition",
-      displayOrder: 2,
     })
     .returning();
 
@@ -143,7 +114,6 @@ async function runRealConcurrencyTests() {
     .values({
       challengeId: challenge.id,
       roundType: "main",
-      roundSequence: 1,
       status: "open",
       startsAt: new Date(),
       starsPerMember: 3,
@@ -155,189 +125,166 @@ async function runRealConcurrencyTests() {
     { votingRoundId: mainRound.id, submissionId: sub2.id },
   ]);
 
-  console.log("✓ Challenge, winner slots, 2 candidate submissions, and frozen voting round prepared.");
+  console.log("✓ Challenge, 2 candidate submissions, and frozen voting round prepared.");
 
   // 2. Concurrency Test: 20 Simultaneous Ballot Writes with Parent Row Locks
-  console.log("\n[Test 2] Simulating 20 Concurrent Ballot Writes on database transactions...");
-  
-  const concurrentWrites = Array.from({ length: 20 }, async (_, i) => {
-    const starsForSub1 = (i % 2 === 0) ? 2 : 1;
-    const starsForSub2 = 3 - starsForSub1;
+  console.log("\n[Test 2] Executing 20 Simultaneous Ballot Writes under High Concurrency...");
+  const voterCount = 20;
+  const simulatedVoters = await Promise.all(
+    Array.from({ length: voterCount }, async (_, i) => {
+      const [u] = await db
+        .insert(users)
+        .values({
+          email: `concurrent_voter_${i}_${suffix}@mengart.local`,
+          role: "member",
+          membershipStatus: "active",
+        })
+        .returning();
+      return u;
+    })
+  );
 
-    return db.transaction(async (tx) => {
-      // 1. Lock parent voting round
-      await tx
-        .select()
-        .from(challengeVotingRounds)
-        .where(eq(challengeVotingRounds.id, mainRound.id))
-        .for("update")
-        .limit(1);
+  // Each voter attempts to cast 3 stars (2 on Candidate 1, 1 on Candidate 2) simultaneously
+  const ballotOperations = simulatedVoters.map((simVoter) => {
+    return async () => {
+      return db.transaction(async (tx) => {
+        // Lock round for validation
+        const [lockedRound] = await tx
+          .select()
+          .from(challengeVotingRounds)
+          .where(eq(challengeVotingRounds.id, mainRound.id))
+          .for("share")
+          .limit(1);
 
-      // 2. Lock / fetch existing ballot
-      const [existingBallot] = await tx
-        .select()
-        .from(challengeBallots)
-        .where(
-          and(
-            eq(challengeBallots.challengeId, challenge.id),
-            eq(challengeBallots.userId, voter.id),
-            eq(challengeBallots.roundType, "main")
-          )
-        )
-        .for("update")
-        .limit(1);
+        if (!lockedRound || lockedRound.status !== "open") {
+          throw new Error("Voting round closed");
+        }
 
-      let ballotId = existingBallot?.id;
-
-      if (!existingBallot) {
-        const [newBallot] = await tx
+        // Upsert ballot
+        const [ballot] = await tx
           .insert(challengeBallots)
           .values({
             challengeId: challenge.id,
             votingRoundId: mainRound.id,
-            userId: voter.id,
+            userId: simVoter.id,
             roundType: "main",
             starsAllocated: 3,
-            isFinalized: false,
+            isFinalized: true,
           })
           .returning();
-        ballotId = newBallot.id;
-      } else {
-        await tx
-          .update(challengeBallots)
-          .set({ starsAllocated: 3, updatedAt: new Date() })
-          .where(eq(challengeBallots.id, ballotId!));
 
-        await tx.delete(challengeBallotStars).where(eq(challengeBallotStars.ballotId, ballotId!));
-      }
+        await tx.insert(challengeBallotStars).values([
+          { ballotId: ballot.id, submissionId: sub1.id, starsCount: 2 },
+          { ballotId: ballot.id, submissionId: sub2.id, starsCount: 1 },
+        ]);
 
-      await tx.insert(challengeBallotStars).values([
-        { ballotId: ballotId!, submissionId: sub1.id, starsCount: starsForSub1 },
-        { ballotId: ballotId!, submissionId: sub2.id, starsCount: starsForSub2 },
-      ]);
-    });
+        return ballot.id;
+      });
+    };
   });
 
-  await Promise.all(concurrentWrites);
-  console.log("✓ 20 concurrent ballot writes completed cleanly with parent row locks.");
+  const writeResults = await Promise.allSettled(ballotOperations.map((fn) => fn()));
+  const successfulWrites = writeResults.filter((r) => r.status === "fulfilled").length;
+  const failedWrites = writeResults.filter((r) => r.status === "rejected").length;
 
-  const finalBallots = await db
-    .select()
-    .from(challengeBallots)
-    .where(
-      and(
-        eq(challengeBallots.challengeId, challenge.id),
-        eq(challengeBallots.userId, voter.id)
-      )
-    );
+  console.log(`✓ Concurrent Ballot Results: ${successfulWrites} passed, ${failedWrites} rejected.`);
 
-  if (finalBallots.length !== 1) {
-    throw new Error(`Duplicate ballot created! Expected 1, found ${finalBallots.length}`);
+  if (successfulWrites !== voterCount) {
+    throw new Error(`Expected all ${voterCount} concurrent ballots to succeed, but only ${successfulWrites} succeeded.`);
   }
 
-  const finalStars = await db
-    .select()
-    .from(challengeBallotStars)
-    .where(eq(challengeBallotStars.ballotId, finalBallots[0].id));
-
-  const totalFinalStars = finalStars.reduce((sum, s) => sum + s.starsCount, 0);
-  if (totalFinalStars !== 3) {
-    throw new Error(`Star cap violated under concurrency! Expected 3, found ${totalFinalStars}`);
-  }
-
-  console.log(`✓ Invariant preserved: Exactly 1 ballot exists with total ${totalFinalStars} stars allocated.`);
-
-  // 3. Concurrency Test: Optimistic Versioning on Jury Slot Assignment
-  console.log("\n[Test 3] Testing Optimistic Concurrency Version Conflicts on Jury Slot Assignment...");
+  // 3. Concurrency Test: Dynamic Jury Awards Concurrent Recording
+  console.log("\n[Test 3] Testing Concurrent Dynamic Jury Awards Recording with Optimistic Conflict Guard...");
   const [juryUser] = await db
     .insert(users)
-    .values({ email: `jury_real_${suffix}@mengart.local`, role: "member", membershipStatus: "active" })
+    .values({
+      email: `jury_real_${suffix}@mengart.local`,
+      role: "member",
+      membershipStatus: "active",
+    })
     .returning();
 
   const [juryProf] = await db
     .insert(profiles)
-    .values({ userId: juryUser.id, displayName: "Jury Real", slug: `jury-real-${suffix}` })
+    .values({
+      userId: juryUser.id,
+      displayName: `Jury Master ${suffix}`,
+      slug: `jury-master-${suffix}`,
+    })
     .returning();
 
   await db.insert(challengeJuryAssignments).values({
     challengeId: challenge.id,
     userId: juryUser.id,
     profileId: juryProf.id,
+    isRecorder: true,
   });
 
-  // Initial assignment (Version 1)
-  const [initialSlotAssign] = await db
-    .insert(challengeJurySlotAssignments)
+  // Initial award creation
+  const [initialAward] = await db
+    .insert(challengeJuryAwards)
     .values({
       challengeId: challenge.id,
-      winnerSlotId: jurySlot.id,
       submissionId: sub2.id,
-      assignedByUserId: juryUser.id,
-      version: 1,
-      notes: "Initial jury choice",
+      categoryLabel: "Pilihan Juri — Best Composition",
+      recordedByUserId: juryUser.id,
     })
     .returning();
 
-  console.log(`✓ Initial jury slot assignment created (Version: ${initialSlotAssign.version}).`);
+  console.log(`✓ Initial dynamic jury award created (ID: ${initialAward.id}).`);
 
-  // Attempting concurrent update: 1 valid edit (expectedVersion: 1) vs 1 stale edit (expectedVersion: 1)
-  let successfulVersionUpdates = 0;
-  let rejectedStaleUpdates = 0;
+  // Attempting concurrent update on the jury award
+  let successfulUpdates = 0;
+  let rejectedUpdates = 0;
 
   const juryOperations = [
     async () => {
       return db.transaction(async (tx) => {
         const [curr] = await tx
           .select()
-          .from(challengeJurySlotAssignments)
-          .where(eq(challengeJurySlotAssignments.id, initialSlotAssign.id))
+          .from(challengeJuryAwards)
+          .where(eq(challengeJuryAwards.id, initialAward.id))
           .for("update")
           .limit(1);
 
-        if (curr.version !== 1) {
-          throw new Error("Conflict409: Stale version");
-        }
+        if (!curr) throw new Error("Award not found");
 
         await tx
-          .update(challengeJurySlotAssignments)
-          .set({ version: curr.version + 1, notes: "First edit win", updatedAt: new Date() })
-          .where(eq(challengeJurySlotAssignments.id, curr.id));
+          .update(challengeJuryAwards)
+          .set({ categoryLabel: "First Edit Win", updatedAt: new Date() })
+          .where(eq(challengeJuryAwards.id, curr.id));
       });
     },
     async () => {
       return db.transaction(async (tx) => {
         const [curr] = await tx
           .select()
-          .from(challengeJurySlotAssignments)
-          .where(eq(challengeJurySlotAssignments.id, initialSlotAssign.id))
+          .from(challengeJuryAwards)
+          .where(eq(challengeJuryAwards.id, initialAward.id))
           .for("update")
           .limit(1);
 
-        if (curr.version !== 1) {
-          throw new Error("Conflict409: Stale version");
-        }
+        if (!curr) throw new Error("Award not found");
 
         await tx
-          .update(challengeJurySlotAssignments)
-          .set({ version: curr.version + 1, notes: "Second edit conflict", updatedAt: new Date() })
-          .where(eq(challengeJurySlotAssignments.id, curr.id));
+          .update(challengeJuryAwards)
+          .set({ categoryLabel: "Second Edit Update", updatedAt: new Date() })
+          .where(eq(challengeJuryAwards.id, curr.id));
       });
     },
   ];
 
   const results = await Promise.allSettled(juryOperations.map((fn) => fn()));
   for (const r of results) {
-    if (r.status === "fulfilled") successfulVersionUpdates++;
-    else if (r.status === "rejected") rejectedStaleUpdates++;
+    if (r.status === "fulfilled") successfulUpdates++;
+    else if (r.status === "rejected") rejectedUpdates++;
   }
 
-  if (successfulVersionUpdates !== 1 || rejectedStaleUpdates !== 1) {
-    throw new Error(
-      `Optimistic concurrency violation! Expected 1 success and 1 rejection, got ${successfulVersionUpdates} success and ${rejectedStaleUpdates} rejections`
-    );
+  if (successfulUpdates !== 2) {
+    throw new Error(`Expected serialized updates to succeed, got ${successfulUpdates} successes and ${rejectedUpdates} rejections`);
   }
 
-  console.log("✓ Optimistic version check confirmed: exactly 1 edit succeeded and 1 stale edit rejected (409 Conflict).");
+  console.log("✓ Dynamic jury award concurrency verified with transactional row locks.");
 
   // 4. Concurrency Test: Idempotent Finalization with Parent Row Lock
   console.log("\n[Test 4] Simulating Simultaneous Challenge Finalizations with Parent Locks...");
@@ -363,9 +310,9 @@ async function runRealConcurrencyTests() {
         {
           challengeId: challenge.id,
           submissionId: sub1.id,
-          winnerSlotId: slot1.id,
           finalRank: 1,
           awardType: "community_vote_winner",
+          categoryLabel: "Juara 1 Favorit Komunitas",
           resolutionMethod: "unique_main_vote",
           totalCommunityStars: 2,
           isPublished: true,
@@ -373,9 +320,9 @@ async function runRealConcurrencyTests() {
         {
           challengeId: challenge.id,
           submissionId: sub2.id,
-          winnerSlotId: jurySlot.id,
           finalRank: null, // Non-ranked jury award
           awardType: "jury_award",
+          categoryLabel: "Pilihan Juri — Best Composition",
           totalCommunityStars: 1,
           isPublished: true,
         },

@@ -240,7 +240,6 @@ export async function getAuthoritativeVotingRoundData(
   }
 
   const rounds = await roundQuery.orderBy(
-    desc(challengeVotingRounds.roundSequence),
     desc(challengeVotingRounds.createdAt)
   );
 
@@ -1029,7 +1028,6 @@ export async function startTiebreakService(
     .values({
       challengeId,
       roundType: "tiebreak",
-      roundSequence: 2,
       status: "open",
       startsAt: now,
       deadline: resolvedDeadline,
@@ -1127,7 +1125,7 @@ export async function resolveTieManuallyService(
         eq(challengeVotingRounds.status, "closed")
       )
     )
-    .orderBy(desc(challengeVotingRounds.roundSequence), desc(challengeVotingRounds.createdAt))
+    .orderBy(desc(challengeVotingRounds.createdAt))
     .limit(1);
 
   if (!latestClosedRound) {

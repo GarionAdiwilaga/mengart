@@ -155,7 +155,6 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
       id: critiqueComments.id,
       userId: critiqueComments.userId,
       parentCommentId: critiqueComments.parentCommentId,
-      critiqueAspect: critiqueComments.critiqueAspect,
       content: critiqueComments.content,
       isPinned: critiqueComments.isPinned,
       isEdited: critiqueComments.isEdited,

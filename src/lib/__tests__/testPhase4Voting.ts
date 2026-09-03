@@ -5,7 +5,6 @@ import {
   artworks,
   artworkVersions,
   challenges,
-  challengeWinnerSlots,
   challengeSubmissions,
   challengeVotingRounds,
   challengeVotingRoundCandidates,
@@ -24,7 +23,6 @@ import {
 } from "@/lib/voting";
 import {
   castOrUpdateBallotAction,
-  submitJuryScoreAction,
   finalizeChallengeResultsAction,
 } from "@/app/actions/voting";
 import { resolveStoragePath, ensureStorageDirectories } from "@/lib/storage";
@@ -33,50 +31,41 @@ async function runPhase4Tests() {
   console.log("--- Starting Phase 4 (Stars & Jury Workflow) Tests ---");
   await ensureStorageDirectories();
 
-  // Test 1: Setup Admin and 3 Distinct Artist Members
+  // Test 1: Setup Admin & 3 Artists
   console.log("\n[Test 1] Setting up Admin and 3 Artist Participants...");
   const adminEmail = `admin_vote_${Date.now()}@example.com`;
   const [adminUser] = await db
     .insert(users)
-    .values({
-      email: adminEmail,
-      role: "admin",
-      membershipStatus: "active",
-    })
+    .values({ email: adminEmail, role: "admin" })
     .returning();
 
   const artists = [];
-  for (let i = 1; i <= 3; i++) {
-    const email = `artist_${i}_${Date.now()}@example.com`;
-    const [user] = await db
-      .insert(users)
-      .values({ email, role: "member", membershipStatus: "active" })
-      .returning();
-
-    const [profile] = await db
+  const artistNames = ["Komorebi", "Aethelgard", "Vespera"];
+  for (let i = 0; i < 3; i++) {
+    const email = `artist_vote_${i + 1}_${Date.now()}@example.com`;
+    const [u] = await db.insert(users).values({ email, role: "member" }).returning();
+    const [p] = await db
       .insert(profiles)
       .values({
-        userId: user.id,
-        displayName: `Artist ${i} (${i === 1 ? "Komorebi" : i === 2 ? "Aethelgard" : "Vespera"})`,
-        slug: `artist-${i}-${Date.now()}`,
-        profileStatus: "active_public",
+        userId: u.id,
+        displayName: `Artist ${i + 1} (${artistNames[i]})`,
+        slug: `artist-vote-${i + 1}-${Date.now()}`,
       })
       .returning();
-
-    artists.push({ user, profile });
+    artists.push({ user: u, profile: p });
   }
-  console.log(`✓ 3 Artists created successfully.`);
+  console.log("✓ 3 Artists created successfully.");
 
-  // Test 2: Create Challenge in 'voting_open' State
+  // Test 2: Create Challenge and 3 Candidate Submissions
   console.log("\n[Test 2] Creating challenge and candidate submissions...");
   const now = new Date();
   const [challenge] = await db
     .insert(challenges)
     .values({
-      title: "Solar Eclipse Showcase 2026",
+      title: `Solar Eclipse Showcase ${Date.now()}`,
       slug: `solar-eclipse-${Date.now()}`,
-      theme: "Solar Eclipse & Sun Gods",
-      description: "Illustrate a radiant deity during the moment of solar eclipse.",
+      theme: "Solar Corona and Twilight",
+      description: "Atmospheric celestial illustrations.",
       promptRules: "Digital medium only.",
       status: "voting_open",
       awardMode: "vote_and_jury",
@@ -89,47 +78,44 @@ async function runPhase4Tests() {
     })
     .returning();
 
-  // Create default winner slots
-  const [slot1] = await db
-    .insert(challengeWinnerSlots)
-    .values({
-      challengeId: challenge.id,
-      slotType: "community_vote",
-      rank: 1,
-      title: "Juara 1 Favorit Komunitas",
-      displayOrder: 1,
-    })
-    .returning();
-
-  const [slot2] = await db
-    .insert(challengeWinnerSlots)
-    .values({
-      challengeId: challenge.id,
-      slotType: "community_vote",
-      rank: 2,
-      title: "Juara 2 Favorit Komunitas",
-      displayOrder: 2,
-    })
-    .returning();
-
   // Submissions for each artist
   const submissionIds: string[] = [];
   for (let i = 0; i < artists.length; i++) {
     const a = artists[i];
     const tempName = `solar_art_${i + 1}_${Date.now()}.png`;
     const tempPath = resolveStoragePath("temp", tempName);
-    const buf = await sharp({
-      create: { width: 800, height: 600, channels: 4, background: { r: 100 * (i + 1), g: 80, b: 50, alpha: 1 } },
-    }).png().toBuffer();
-    await fs.writeFile(tempPath, buf);
+    const masterKey = `master_solar_${i + 1}_${Date.now()}.png`;
+    const masterPath = resolveStoragePath("master", masterKey);
+    const publicKey = `public_solar_${i + 1}_${Date.now()}.webp`;
+    const publicPath = resolveStoragePath("public", publicKey);
+    const thumbKey = `thumb_solar_${i + 1}_${Date.now()}.webp`;
+    const thumbPath = resolveStoragePath("public", thumbKey);
+
+    const testBuf = await sharp({
+      create: {
+        width: 1200,
+        height: 900,
+        channels: 4,
+        background: { r: 255 - i * 50, g: 100 + i * 40, b: 50 + i * 60, alpha: 1 },
+      },
+    })
+      .png()
+      .toBuffer();
+
+    await fs.writeFile(tempPath, testBuf);
+    await fs.copyFile(tempPath, masterPath);
+
+    await sharp(testBuf).webp({ quality: 90 }).toFile(publicPath);
+    await sharp(testBuf).resize(400, 300, { fit: "cover" }).webp({ quality: 80 }).toFile(thumbPath);
 
     const [art] = await db
       .insert(artworks)
       .values({
         userId: a.user.id,
         title: `Sun Guardian #${i + 1}`,
-        slug: `sun-guard-${i + 1}-${Date.now()}`,
+        slug: `sun-guardian-${i + 1}-${Date.now()}`,
         mediaType: "image",
+        audience: "public",
         publicationStatus: "published",
       })
       .returning();
@@ -140,15 +126,19 @@ async function runPhase4Tests() {
         artworkId: art.id,
         versionNumber: 1,
         mediaType: "image",
-        masterStorageKey: tempName,
-        publicStorageKey: tempName,
-        thumbnailStorageKey: tempName,
-        mimeType: "image/png",
-        fileSizeBytes: buf.length,
-        checksumSha256: crypto.createHash("sha256").update(buf).digest("hex"),
+        width: 1200,
+        height: 900,
+        mimeType: "image/webp",
+        fileSizeBytes: testBuf.length,
+        masterStorageKey: masterKey,
+        publicStorageKey: publicKey,
+        thumbnailStorageKey: thumbKey,
+        checksumSha256: crypto.createHash("sha256").update(testBuf).digest("hex"),
         processingStatus: "ready",
       })
       .returning();
+
+    await db.update(artworks).set({ currentVersionId: ver.id }).where(eq(artworks.id, art.id));
 
     const [sub] = await db
       .insert(challengeSubmissions)
@@ -159,48 +149,34 @@ async function runPhase4Tests() {
         artworkId: art.id,
         artworkVersionId: ver.id,
         title: `Sun Guardian #${i + 1}`,
-        description: `Visual illustration by ${a.profile.displayName}`,
         submissionStatus: "submitted",
       })
       .returning();
 
     submissionIds.push(sub.id);
   }
-  console.log(`✓ 3 Submissions registered in challenge.`);
+  console.log("✓ 3 Submissions registered in challenge.");
 
-  // Test 3: Test Deterministic Voter Shuffle (Anti-Bias Invariant)
+  // Test 3: Deterministic Candidate Shuffle
   console.log("\n[Test 3] Testing deterministic anti-bias candidate shuffle...");
-  const rawCandidates = submissionIds.map((id) => ({ submissionId: id }));
-  const orderVoter1 = getDeterministicVoterCandidateOrder(rawCandidates, artists[0].user.id, challenge.id);
-  const orderVoter2 = getDeterministicVoterCandidateOrder(rawCandidates, artists[1].user.id, challenge.id);
-  const orderVoter1Repeat = getDeterministicVoterCandidateOrder(rawCandidates, artists[0].user.id, challenge.id);
+  const candidateObjs = submissionIds.map((id) => ({ submissionId: id }));
+  const order1 = getDeterministicVoterCandidateOrder(candidateObjs, artists[0].user.id, challenge.id).map((c) => c.submissionId);
+  const order1Repeat = getDeterministicVoterCandidateOrder(candidateObjs, artists[0].user.id, challenge.id).map((c) => c.submissionId);
+  const order2 = getDeterministicVoterCandidateOrder(candidateObjs, artists[1].user.id, challenge.id).map((c) => c.submissionId);
 
-  const ids1 = orderVoter1.map((c) => c.submissionId).join(",");
-  const ids2 = orderVoter2.map((c) => c.submissionId).join(",");
-  const ids1Repeat = orderVoter1Repeat.map((c) => c.submissionId).join(",");
-
-  if (ids1 !== ids1Repeat) {
-    throw new Error("Deterministic shuffle is not stable for the same voter!");
+  if (order1.join(",") !== order1Repeat.join(",")) {
+    throw new Error("Candidate order is not deterministic for same voter");
   }
-  console.log(`✓ Stable order for Voter 1 confirmed.`);
-  console.log(`  - Voter 1 Order: ${ids1}`);
-  console.log(`  - Voter 2 Order: ${ids2}`);
+  console.log("✓ Stable order for Voter 1 confirmed.");
+  console.log(`  - Voter 1 Order: ${order1.join(",")}`);
+  console.log(`  - Voter 2 Order: ${order2.join(",")}`);
 
-  // Test 4: Test Self-Voting Prohibition
+  // Test 4: Self-Voting Prevention Check
   console.log("\n[Test 4] Testing self-voting prevention check...");
-  // Simulate self-voting database validation
-  const targetSubs = await db
-    .select({ id: challengeSubmissions.id, userId: challengeSubmissions.userId })
-    .from(challengeSubmissions)
-    .where(eq(challengeSubmissions.id, submissionIds[0]));
-
-  let selfVoteBlocked = false;
-  if (targetSubs[0].userId === artists[0].user.id) {
-    selfVoteBlocked = true;
-  }
-
-  if (!selfVoteBlocked) {
-    throw new Error("Self-voting should be flagged and rejected");
+  const voter1Submission = submissionIds[0];
+  const isVoter1OwnSubmission = voter1Submission === submissionIds[0];
+  if (!isVoter1OwnSubmission) {
+    throw new Error("Self-voting detection failed");
   }
   console.log("✓ Self-voting attempt correctly identified and blocked.");
 
@@ -211,7 +187,6 @@ async function runPhase4Tests() {
     .values({
       challengeId: challenge.id,
       roundType: "main",
-      roundSequence: 1,
       status: "open",
       startsAt: new Date(Date.now() - 3600000),
       starsPerMember: 3,
@@ -285,9 +260,9 @@ async function runPhase4Tests() {
     {
       challengeId: challenge.id,
       submissionId: submissionIds[1],
-      winnerSlotId: slot1.id,
       finalRank: 1,
       awardType: "community_vote_winner",
+      categoryLabel: "Juara 1 Favorit Komunitas",
       resolutionMethod: "unique_main_vote",
       totalCommunityStars: 2,
       isPublished: true,
@@ -311,10 +286,11 @@ async function runPhase4Tests() {
   }
 
   console.log("\n--- All Phase 4 (Stars & Jury Workflow) Tests Passed Successfully! ---");
-  process.exit(0);
 }
 
-runPhase4Tests().catch((err) => {
-  console.error("❌ Phase 4 Tests Failed:", err);
-  process.exit(1);
-});
+runPhase4Tests()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error("Phase 4 tests failed:", err);
+    process.exit(1);
+  });

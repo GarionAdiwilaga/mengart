@@ -372,26 +372,42 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
           <section className="glass-panel p-6 rounded-3xl flex flex-col gap-4">
             <div className="flex items-center gap-2">
               <Award className="h-5 w-5 text-amber-400" />
-              <h3 className="font-display font-bold text-base text-[#f6f2e9]">Slot Juara & Penghargaan</h3>
+              <h3 className="font-display font-bold text-base text-[#f6f2e9]">Penghargaan & Kategori</h3>
             </div>
 
             <div className="flex flex-col gap-2.5">
-              {challenge.winnerSlots.map((slot) => (
-                <div
-                  key={slot.id}
-                  className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-between gap-3 text-xs"
-                >
+              {(challenge.awardMode === "vote_only" || challenge.awardMode === "vote_and_jury") && (
+                <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-between gap-3 text-xs">
                   <div className="flex items-center gap-2.5">
                     <span className="h-6 w-6 rounded-lg bg-amber-500/20 text-amber-400 font-bold font-mono flex items-center justify-center text-xs">
-                      #{slot.rank}
+                      #1
                     </span>
-                    <span className="font-semibold text-zinc-200">{slot.title}</span>
+                    <span className="font-semibold text-zinc-200">Juara Favorit Komunitas</span>
                   </div>
-                  <span className="text-[10px] font-mono uppercase text-zinc-500">
-                    {slot.slotType === "community_vote" ? "VOTING" : "JURI"}
+                  <span className="text-[10px] font-mono uppercase text-amber-400/80">
+                    BINTANG KOMUNITAS
                   </span>
                 </div>
-              ))}
+              )}
+              {(challenge.awardMode === "jury_only" || challenge.awardMode === "vote_and_jury") && (
+                <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2.5">
+                    <span className="h-6 w-6 rounded-lg bg-purple-500/20 text-purple-400 font-bold font-mono flex items-center justify-center text-xs">
+                      ★
+                    </span>
+                    <span className="font-semibold text-zinc-200">Penghargaan Khusus Dewan Juri</span>
+                  </div>
+                  <span className="text-[10px] font-mono uppercase text-purple-400/80">
+                    PILIHAN JURI
+                  </span>
+                </div>
+              )}
+              {challenge.awardMode === "showcase_only" && (
+                <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-between gap-3 text-xs">
+                  <span className="font-semibold text-zinc-300">Galeri Eksplorasi Kreatif</span>
+                  <span className="text-[10px] font-mono uppercase text-zinc-500">SHOWCASE</span>
+                </div>
+              )}
             </div>
           </section>
         </div>

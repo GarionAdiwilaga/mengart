@@ -283,7 +283,7 @@ async function runPhase3SimplifiedJuryTests() {
     const sub9A = await createSubmission(ch9.id, artist1, artist1Prof, "Art 9A");
     const sub9B = await createSubmission(ch9.id, artist2, artist2Prof, "Art 9B");
     const [round9] = await db.insert(challengeVotingRounds).values({
-      challengeId: ch9.id, roundType: "main", roundSequence: 1, status: "open",
+      challengeId: ch9.id, roundType: "main", status: "open",
       startsAt: new Date(Date.now() - 3600000), deadline: new Date(Date.now() - 1000), starsPerMember: 1
     }).returning();
     await db.insert(challengeVotingRoundCandidates).values([
@@ -319,7 +319,7 @@ async function runPhase3SimplifiedJuryTests() {
     const sub10A = await createSubmission(ch10.id, artist1, artist1Prof, "Art 10A");
     const sub10B = await createSubmission(ch10.id, artist2, artist2Prof, "Art 10B");
     const [round10] = await db.insert(challengeVotingRounds).values({
-      challengeId: ch10.id, roundType: "main", roundSequence: 1, status: "closed",
+      challengeId: ch10.id, roundType: "main", status: "closed",
       startsAt: new Date(Date.now() - 7200000), deadline: new Date(Date.now() - 3600000), starsPerMember: 1
     }).returning();
     await db.insert(challengeVotingRoundCandidates).values([
@@ -899,7 +899,7 @@ async function runPhase3SimplifiedJuryTests() {
 
     // Main round: 7 stars
     const [round42Main] = await db.insert(challengeVotingRounds).values({
-      challengeId: ch42.id, roundType: "main", roundSequence: 1, status: "closed",
+      challengeId: ch42.id, roundType: "main", status: "closed",
       startsAt: new Date(Date.now() - 7200000), deadline: new Date(Date.now() - 3600000), starsPerMember: 1
     }).returning();
     const [b42Main] = await db.insert(challengeBallots).values({
@@ -909,7 +909,7 @@ async function runPhase3SimplifiedJuryTests() {
 
     // Tiebreak round: 1 star
     const [round42Tb] = await db.insert(challengeVotingRounds).values({
-      challengeId: ch42.id, roundType: "tiebreak", roundSequence: 2, status: "closed",
+      challengeId: ch42.id, roundType: "tiebreak", status: "closed",
       startsAt: new Date(Date.now() - 3600000), deadline: new Date(Date.now() - 1000), starsPerMember: 1
     }).returning();
     const [b42Tb] = await db.insert(challengeBallots).values({
@@ -949,7 +949,7 @@ async function runPhase3SimplifiedJuryTests() {
 
     // Main round with 5 stars
     const [round43] = await db.insert(challengeVotingRounds).values({
-      challengeId: ch43.id, roundType: "main", roundSequence: 1, status: "closed",
+      challengeId: ch43.id, roundType: "main", status: "closed",
       startsAt: new Date(Date.now() - 7200000), deadline: new Date(Date.now() - 3600000), starsPerMember: 1
     }).returning();
     const [b43] = await db.insert(challengeBallots).values({

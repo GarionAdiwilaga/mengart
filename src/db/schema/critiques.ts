@@ -5,19 +5,10 @@ import {
   uuid,
   boolean,
   index,
-  pgEnum,
 } from "drizzle-orm/pg-core";
 import { users } from "./users";
 import { profiles } from "./profiles";
 import { artworks } from "./artworks";
-
-export const critiqueAspectEnum = pgEnum("critique_aspect", [
-  "general",
-  "composition",
-  "color_lighting",
-  "anatomy_perspective",
-  "technique",
-]);
 
 export const critiqueComments = pgTable(
   "critique_comments",
@@ -33,7 +24,6 @@ export const critiqueComments = pgTable(
       .notNull()
       .references(() => profiles.id, { onDelete: "cascade" }),
     parentCommentId: uuid("parent_comment_id"),
-    critiqueAspect: critiqueAspectEnum("critique_aspect").default("general").notNull(),
     content: text("content").notNull(),
     isPinned: boolean("is_pinned").default(false).notNull(),
     isResolved: boolean("is_resolved").default(false).notNull(),

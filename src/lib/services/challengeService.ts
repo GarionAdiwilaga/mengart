@@ -2,12 +2,10 @@ import { db as defaultDb } from "@/db";
 import {
   challenges,
   challengeSubmissions,
-  challengeWinnerSlots,
   challengeVotingRounds,
   challengeVotingRoundCandidates,
   challengeBallots,
   challengeBallotStars,
-  challengeJurySlotAssignments,
   challengeResults,
   auditLogs,
   users,
@@ -391,34 +389,7 @@ export async function computeChallengeResultsService(
     throw new Error(`Hasil tidak dapat dihitung pada status "${challenge.status}".`);
   }
 
-  // 2. Fetch Configured Winner Slots
-  const winnerSlots = await dbOrTx
-    .select()
-    .from(challengeWinnerSlots)
-    .where(eq(challengeWinnerSlots.challengeId, challengeId))
-    .orderBy(asc(challengeWinnerSlots.displayOrder), asc(challengeWinnerSlots.rank));
-
-  const jurySlots = winnerSlots.filter((s: any) => s.slotType === "jury_award");
-
-  // 3. Required Jury Slots Completion Check for jury-enabled modes
-  const juryAssignments = await dbOrTx
-    .select()
-    .from(challengeJurySlotAssignments)
-    .where(eq(challengeJurySlotAssignments.challengeId, challengeId));
-
-  if (challenge.awardMode === "jury_only" || challenge.awardMode === "vote_and_jury") {
-    if (jurySlots.length > 0) {
-      const assignedSlotIds = new Set(juryAssignments.map((a: any) => a.winnerSlotId));
-      const unassignedSlots = jurySlots.filter((slot: any) => !assignedSlotIds.has(slot.id));
-      if (unassignedSlots.length > 0) {
-        throw new Error(
-          `Finalisasi diblokir: Terdapat ${unassignedSlots.length} slot penghargaan dewan juri yang belum ditetapkan (${unassignedSlots.map((s: any) => s.title).join(", ")}).`
-        );
-      }
-    }
-  }
-
-  // 4. Preserve existing authoritative Community Winner if already resolved in Gate B
+  // 2. Preserve existing authoritative Community Winner if already resolved in Gate B
   const [existingCommunityWinner] = await dbOrTx
     .select()
     .from(challengeResults)
@@ -430,7 +401,7 @@ export async function computeChallengeResultsService(
     )
     .limit(1);
 
-  // 5. Snapshot previous results before update
+  // 3. Snapshot previous results before update
   const previousResults = await dbOrTx
     .select()
     .from(challengeResults)
@@ -450,16 +421,16 @@ export async function computeChallengeResultsService(
     });
   }
 
-  // Delete only previous results and re-insert preserved authoritative community winner + jury results
+  // Delete only previous results and re-insert preserved authoritative community winner
   await dbOrTx.delete(challengeResults).where(eq(challengeResults.challengeId, challengeId));
 
   if (existingCommunityWinner) {
     await dbOrTx.insert(challengeResults).values({
       challengeId,
       submissionId: existingCommunityWinner.submissionId,
-      winnerSlotId: existingCommunityWinner.winnerSlotId,
       finalRank: 1,
       awardType: "community_vote_winner",
+      categoryLabel: existingCommunityWinner.categoryLabel,
       resolutionMethod: existingCommunityWinner.resolutionMethod,
       sourceVotingRoundId: existingCommunityWinner.sourceVotingRoundId,
       totalCommunityStars: existingCommunityWinner.totalCommunityStars,
@@ -467,25 +438,7 @@ export async function computeChallengeResultsService(
     });
   }
 
-  const championSubmissionId = existingCommunityWinner?.submissionId;
-
-  // Persist Jury Award Slots (finalRank remains NULL)
-  for (const ja of juryAssignments) {
-    // Community Winner excluded from jury awards
-    if (ja.submissionId !== championSubmissionId) {
-      await dbOrTx.insert(challengeResults).values({
-        challengeId,
-        submissionId: ja.submissionId,
-        winnerSlotId: ja.winnerSlotId,
-        finalRank: null,
-        awardType: "jury_award",
-        totalCommunityStars: 0,
-        isPublished: false,
-      });
-    }
-  }
-
-  // 6. Transition Challenge to REVIEW stage
+  // 4. Transition Challenge to REVIEW stage
   await dbOrTx
     .update(challenges)
     .set({ status: "review", updatedAt: new Date() })
@@ -569,19 +522,18 @@ export async function publishChallengeResultsService(
       submissionId: challengeResults.submissionId,
       finalRank: challengeResults.finalRank,
       awardType: challengeResults.awardType,
-      winnerSlotTitle: challengeWinnerSlots.title,
+      categoryLabel: challengeResults.categoryLabel,
       artistUserId: challengeSubmissions.userId,
     })
     .from(challengeResults)
     .innerJoin(challengeSubmissions, eq(challengeSubmissions.id, challengeResults.submissionId))
-    .leftJoin(challengeWinnerSlots, eq(challengeWinnerSlots.id, challengeResults.winnerSlotId))
     .where(eq(challengeResults.challengeId, challengeId));
 
   const pendingNotifications: WinnerNotificationPayload[] = [];
   for (const wr of winningResults) {
-    const title = wr.awardType === "community_rank"
-      ? `Selamat! Juara #${wr.finalRank} di ${challenge.title}`
-      : `Selamat! Meraih Penghargaan "${wr.winnerSlotTitle || 'Pilihan Juri'}" di ${challenge.title}`;
+    const title = wr.awardType === "community_vote_winner"
+      ? `Selamat! Juara Favorit Komunitas di ${challenge.title}`
+      : `Selamat! Meraih Penghargaan "${wr.categoryLabel || 'Pilihan Juri'}" di ${challenge.title}`;
 
     pendingNotifications.push({
       userId: wr.artistUserId,
@@ -877,7 +829,6 @@ export async function materializeScheduledTransitionsService(
               .values({
                 challengeId: challenge.id,
                 roundType: "main",
-                roundSequence: 1,
                 status: "pending",
                 startsAt: challenge.votingStartsAt || now,
                 deadline: challenge.votingDeadline,

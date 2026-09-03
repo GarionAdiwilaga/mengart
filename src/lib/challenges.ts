@@ -2,7 +2,6 @@ import { db } from "@/db";
 import {
   challenges,
   challengeKitFiles,
-  challengeWinnerSlots,
   challengeJuryAssignments,
   challengeSubmissions,
   artworkVersions,
@@ -88,12 +87,6 @@ export async function getChallengeWithRelations(challengeId: string) {
     .where(eq(challengeKitFiles.challengeId, challengeId))
     .orderBy(asc(challengeKitFiles.createdAt));
 
-  const winnerSlots = await db
-    .select()
-    .from(challengeWinnerSlots)
-    .where(eq(challengeWinnerSlots.challengeId, challengeId))
-    .orderBy(asc(challengeWinnerSlots.displayOrder));
-
   const juryAssignments = await db
     .select({
       id: challengeJuryAssignments.id,
@@ -113,7 +106,6 @@ export async function getChallengeWithRelations(challengeId: string) {
     ...challenge,
     effectiveStatus,
     kitFiles,
-    winnerSlots,
     juryAssignments,
   };
 }

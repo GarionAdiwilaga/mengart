@@ -164,7 +164,6 @@ async function runGateGTestSuite() {
         userId: artistB.id,
         profileId: profileB.id,
         content: "Pewarnaan dan atmosfer pencahayaannya sangat memukau!",
-        critiqueAspect: "general",
       })
       .returning();
 
@@ -183,7 +182,6 @@ async function runGateGTestSuite() {
         profileId: profileA.id,
         parentCommentId: comment1.id,
         content: "Terima kasih banyak atas apresiasinya!",
-        critiqueAspect: "general",
       })
       .returning();
 
@@ -462,36 +460,31 @@ async function runGateGTestSuite() {
     console.log(`✓ Scenario 15 Passed: Deadline formatted in WITA: '${formattedWita}'`);
 
     // -------------------------------------------------------------------------
-    // SECTION 5: OBS-001 REGRESSION (ALLOW REVISIONS DEFAULT = TRUE)
+    // SECTION 5: OBS-001 REGRESSION / PHASE 9 PRUNING VERIFICATION
     // -------------------------------------------------------------------------
-    console.log("\n--- SECTION 5: OBS-001 Regression (allowRevisions default = true) ---");
+    console.log("\n--- SECTION 5: OBS-001 Regression / Phase 9 Pruning Verification ---");
 
-    // Scenario 16: Challenge created with omitted allowRevisions defaults to true
-    console.log("Scenario 16: Verifying allowRevisions defaults to true when omitted from form data");
-    const rawAllowRevisionsNull: string | null = null;
-    const resolvedAllowRevisionsNull =
-      rawAllowRevisionsNull === null || rawAllowRevisionsNull === undefined
-        ? true
-        : rawAllowRevisionsNull === "true" ||
-          rawAllowRevisionsNull === "1" ||
-          rawAllowRevisionsNull === "on";
+    // Scenario 16: Challenge created and queried cleanly without allowRevisions column
+    console.log("Scenario 16: Verifying challenge creation and persistence without allowRevisions");
+    const [chPhase9] = await db
+      .insert(schema.challenges)
+      .values({
+        title: "Test Challenge Phase 9 Clean",
+        slug: `test-ch-p9-${timestamp}`,
+        theme: "Clean Architecture",
+        description: "Zero legacy debt challenge testing.",
+        promptRules: "Adhere strictly to Blueprint 2.2.2.",
+        status: "draft",
+        awardMode: "vote_and_jury",
+        starsPerMember: 1,
+        createdByUserId: adminUser.id,
+      })
+      .returning();
 
-    if (resolvedAllowRevisionsNull !== true) {
-      throw new Error("Scenario 16 Failed: Omitted allowRevisions evaluated to false");
+    if (!chPhase9 || chPhase9.status !== "draft") {
+      throw new Error("Scenario 16 Failed: Clean challenge insert failed");
     }
-
-    const rawAllowRevisionsExplicitFalse: string | null = "false";
-    const resolvedAllowRevisionsFalse =
-      rawAllowRevisionsExplicitFalse === null || rawAllowRevisionsExplicitFalse === undefined
-        ? true
-        : rawAllowRevisionsExplicitFalse === "true" ||
-          rawAllowRevisionsExplicitFalse === "1" ||
-          rawAllowRevisionsExplicitFalse === "on";
-
-    if (resolvedAllowRevisionsFalse !== false) {
-      throw new Error("Scenario 16 Failed: Explicit 'false' allowRevisions evaluated to true");
-    }
-    console.log("✓ Scenario 16 Passed: OBS-001 fixed (omitted allowRevisions defaults to true matching schema default)");
+    console.log("✓ Scenario 16 Passed: Clean challenge creation and persistence without deprecated columns verified");
 
     console.log("\n=================================================================");
     console.log("🎉 ALL 16 GATE G INTEGRATION TEST SCENARIOS PASSED (100% SUCCESS)!");
