@@ -5,10 +5,15 @@ import * as dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 dotenv.config({ path: ".env" });
 
-const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+const redisUrl = process.env.REDIS_URL;
+if (!redisUrl && process.env.NODE_ENV === "production") {
+  throw new Error("FATAL: REDIS_URL must be configured in production environment.");
+}
+
+const finalRedisUrl = redisUrl || "redis://localhost:6379";
 
 // Shared Redis connection instance
-export const redisConnection = new IORedis(redisUrl, {
+export const redisConnection = new IORedis(finalRedisUrl, {
   maxRetriesPerRequest: null,
   lazyConnect: true,
 });

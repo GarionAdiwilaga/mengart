@@ -46,7 +46,7 @@ test.describe("Gate G: End-to-End User Journey Tests", () => {
   test("Persona 2: Guest visits invitation redemption page", async ({ page }) => {
     await page.goto("/invite");
     await expect(page.locator("h1, h2, h3").first()).toContainText(/Undangan/i);
-    await expect(page.locator("input[name='inviteInput']")).toBeVisible();
+    await expect(page.locator("input[name='inviteInput']").first()).toBeVisible();
   });
 
   // ---------------------------------------------------------------------------

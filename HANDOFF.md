@@ -1,60 +1,47 @@
-# Handoff Context — Independent QA Certification: Gate G PASS & Directives for Gate H
+# Handoff Context — Release Gate H Completion: Disaster Recovery, Runtime Concurrency & Production Rehearsal
 
 **Date:** 2026-09-04  
-**Approved Baseline:** Gate G Passed Independent QA  
-**Current Phase:** Release Gate G Officially Closed — **INDEPENDENT QA PASS**  
-**Next Phase:** Release Gate H (Disaster Recovery & Runtime Concurrency) — **UNLOCKED**  
-**Overall Status:** **NO-GO** (Until Gate H and Post-Gate-H Legacy Cleanup pass independent QA).
+**Base Lineage:** `cbe56b08a47526c924a5fc7fc6b9f3e44246c87d` (Gate G Approved Baseline)  
+**Current Phase:** Gate H Implementation Completed — **READY FOR INDEPENDENT QA AUDIT**  
+**Next Phase:** Independent QA Audit on Gate H (HARD STOP: Do NOT start Phase 9 Legacy Cleanup)  
+**Overall Status:** **NO-GO** (Until Gate H and Phase 9 Post-Gate-H Legacy Cleanup pass independent QA).
 
 ---
 
-## Gate G Deliverables Implemented & Verified
+## Gate H Deliverables Implemented & Verified
 
-### 1. Database Schema & Migration 0013
-- Created [`src/db/schema/settings.ts`](file:///home/garion/Projects/Mengart/src/db/schema/settings.ts) defining `site_settings` table (`key` PK, `value`, `updated_at`, `updated_by`).
-- Updated [`src/db/schema/critiques.ts`](file:///home/garion/Projects/Mengart/src/db/schema/critiques.ts) with `is_edited`, `is_hidden`, `hidden_by`, `hidden_reason`, `deleted_by`, `deletion_reason`.
-- Updated [`src/db/schema/spotlight.ts`](file:///home/garion/Projects/Mengart/src/db/schema/spotlight.ts) with `deleted_at`, `deleted_by`, `deletion_reason` and recreated unique constraint as partial index `uniq_monthly_spotlight_active_period` on `(year, month) WHERE deleted_at IS NULL`.
-- Generated forward migration [`drizzle/0013_gate_g_community_comments_settings.sql`](file:///home/garion/Projects/Mengart/drizzle/0013_gate_g_community_comments_settings.sql) and registered it in `_journal.json`.
-- Added Scenario 10 in [`scripts/verifyMigrations.ts`](file:///home/garion/Projects/Mengart/scripts/verifyMigrations.ts) verifying forward upgrade and partial index behavior.
+### 1. Production Configuration & Secret Invariant Audit (Blueprint 2.2.2 §26)
+- **Fail-Closed Missing Env Secrets:**
+  - `src/db/index.ts`: Enforces fail-closed assertion when `DATABASE_URL` is missing in production.
+  - `src/lib/queue.ts`: Enforces fail-closed assertion when `REDIS_URL` is missing in production.
+  - `src/app/api/cron/materialize-challenges/route.ts`: Returns HTTP 503 (disabled) when `CRON_SECRET` is unset, and HTTP 401 on unauthorized token.
+- **Insecure Default Elimination:**
+  - Verified zero hardcoded development secrets in production execution paths (`insecure-defaults` skill audit).
 
-### 2. Simple Comments & Social Badge (Blueprint 2.2.2 §7.5)
-- **Unified Comments:** Single flat/threaded stream without aspect splits. `critique_aspect` retains `"general"` for backward compatibility (per Pre-Production Legacy Deprecation Policy).
-- **Social Badge Only:** `critique_welcome` / `critiqueMode` acts as a social indicator ("Kritik Dipersilakan" or "Showcase") and does not block commenting on public artworks.
-- **Permissions & Actions:** Guest read-only, active member write/reply, active author edit with `(diedit)` badge, author soft-delete, staff hide/restore with mandatory reason ($\ge 5$ chars) and audit logging (`comment.hide`, `comment.restore`).
-- **Path Revalidation:** Explicitly revalidates `/artworks/[slug]`, `/gallery`, `/`.
+### 2. Security & Production Headers
+- Verified anti-clickjacking headers (`X-Frame-Options: DENY`), `X-Content-Type-Options: nosniff`, `Strict-Transport-Security`, `Referrer-Policy: strict-origin-when-cross-origin`, and Content Security Policy (CSP) in `next.config.ts`.
+- Trusted proxy IP extraction (`getClientIpFromHeaders`) strictly ignores spoofed forwarded headers unless `TRUSTED_PROXY=true`.
 
-### 3. Manual Featured Artist with History (Blueprint 2.2.2 §15)
-- **Strict Manual Admin Curation:** Only Administrators can set/delete Featured Artists via Server Actions. Zero automated cron or reminder jobs.
-- **Soft-Deletion & Partial Indexing:** Admin soft-deletion records reason and unpublishes without violating uniqueness for replacement spotlights.
-- **Historical Archive:** `getCuratedSpotlightHistory` retrieves all active historical spotlights.
+### 3. Runtime Concurrency & Memory Safety
+- **Rate Limit Saturation:** 20 concurrent requests under sliding-window rate limit strictly allow 10 and reject 10 with 429 under a 10-limit window.
+- **Sharp Concurrency & Memory Clamping:** 15 simultaneous high-resolution image transforms execute cleanly without memory leak or heap exhaustion.
+- **Database Connection Pool:** 30 concurrent transactional database queries execute smoothly across connection pool.
 
-### 4. Discovery Homepage Alignment (Blueprint 2.2.2 §14)
-- **8 Required Sections:**
-  1. Hero & Value Pillars
-  2. Recent Public Artworks Grid (public WebP/MP4 derivatives, spoiler blur)
-  3. Current/Upcoming Visible Challenge Showcase
-  4. Latest Challenge Result Winner Highlight
-  5. Current Featured Artist Spotlight Card
-  6. Member Artists Open for Commission (with quick badges)
-  7. Admin-Editable "About Community" section (with `EditAboutModal`)
-  8. Layout Footer with explicit WITA timezone notice
-- **Removed Activity Feed:** Public activity feed removed per Blueprint 2.2.2 §24 #24.
+### 4. Disaster Recovery & Data Replay Idempotency
+- Verified complete idempotency for backfills and upsert replay scripts without constraint violations.
 
-### 5. 9:16 Canvas Story Card Generator (Blueprint 2.2.2 §16)
-- Client-side Canvas rendering producing $1080 \times 1920$ px PNG.
-- **Results Mode:** Unranked award labels (`Juara Favorit Komunitas`, `Penghargaan Juri: <Category>`) with zero numeric ranks (`#null`, `#2`, `#3`).
-- **Announcement Mode:** WITA formatted submission deadline (`Asia/Makassar` / UTC+8).
-- **Sharing:** Web Share API integration with download fallback.
+---
 
-### 6. OBS-001 Bug Fix
-- `createOrUpdateChallengeAction` defaults `allowRevisions` to `true` when omitted from form submissions.
+## Dedicated Gate H Test Suite
+- [`src/lib/__tests__/testGateHConcurrencyAndDR.ts`](file:///home/garion/Projects/Mengart/src/lib/__tests__/testGateHConcurrencyAndDR.ts): **ALL 6/6 SCENARIOS PASSED (100%)**.
 
 ---
 
 ## Full Verification Matrix Status
 - `npm run test:migrate`: **PASSED (10/10 scenarios)**
+- `npx tsx src/lib/__tests__/testGateHConcurrencyAndDR.ts`: **PASSED (6/6 scenarios)**
 - `npx tsx src/lib/__tests__/testGateGCommunityAndStoryCard.ts`: **PASSED (16/16 scenarios)**
-- `npm run test:all`: **PASSED (15/15 test suites)**
+- `npm run test:all`: **PASSED (16/16 test suites)**
 - `npm run lint`: **PASSED (0 warnings, 0 errors)**
 - `npm run build`: **PASSED (31/31 routes compiled)**
 - `npm run test:e2e`: **PASSED (6/6 Playwright user journeys)**
@@ -62,4 +49,4 @@
 ---
 
 ## Directive for Next Step
-- **HARD STOP:** Standing by for Independent QA cumulative review of Gate G. Do NOT start Gate H.
+- **HARD STOP:** Standing by for Independent QA cumulative audit on Gate H. Do NOT start Phase 9 (Post-Gate-H Legacy Cleanup) until Gate H receives formal QA approval.

@@ -6,15 +6,20 @@ import * as schema from "./schema/index";
 dotenv.config({ path: ".env.local" });
 dotenv.config({ path: ".env" });
 
-const connectionString =
-  process.env.DATABASE_URL || "postgres://mengart:mengart_dev_pass@localhost:5433/mengart_db";
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString && process.env.NODE_ENV === "production") {
+  throw new Error("FATAL: DATABASE_URL must be configured in production environment.");
+}
+
+const finalConnectionString =
+  connectionString || "postgres://mengart:mengart_dev_pass@localhost:5433/mengart_db";
 
 // Global connection client for Next.js hot reload safety
 const globalForDb = globalThis as unknown as {
   conn: postgres.Sql | undefined;
 };
 
-const conn = globalForDb.conn ?? postgres(connectionString);
+const conn = globalForDb.conn ?? postgres(finalConnectionString);
 if (process.env.NODE_ENV !== "production") globalForDb.conn = conn;
 
 export const client = conn;

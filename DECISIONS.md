@@ -454,6 +454,17 @@
 **Business Rule:** Challenge creation/edit forms default `allowRevisions` to `true` unless explicitly unchecked.
 **Reason:** Prevents accidental disabling of challenge revisions when the field is omitted from form submissions.
 
+### Gate H: Disaster Recovery, Runtime Concurrency & Production Rehearsal
+**Decision:** Implemented and verified production-readiness, disaster recovery, and concurrency resilience under Blueprint 2.2.2 §26:
+1. **Production Configuration & Secret Invariant:** All critical environment secrets (`DATABASE_URL`, `REDIS_URL`, `AUTH_SECRET`, `CRON_SECRET`) fail closed without insecure default fallbacks in production. Missing `CRON_SECRET` returns 503 (disabled), and unauthorized cron requests return 401.
+2. **Security & Production Headers:** Enforced `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Strict-Transport-Security`, `Referrer-Policy: strict-origin-when-cross-origin`, and Content Security Policy (CSP).
+3. **Anti-Spoofing Trusted Proxy IP Protection:** Client IP extraction ignores forwarded headers (`CF-Connecting-IP`, `X-Forwarded-For`) unless `TRUSTED_PROXY=true` is set.
+4. **Runtime Concurrency & Memory Clamping:** Verified that 20 simultaneous write requests under sliding-window rate limit are strictly clamped (10 accepted, 10 rejected with 429), Sharp image transforms under high concurrency maintain clamped memory without leak or OOM, and database pool connection handles high concurrent transactional queries.
+5. **DR & Replay Idempotency:** Verified that data backfills and upsert replay scripts execute with complete idempotency and zero constraint violations.
+**Business Rule:** Zero insecure default fallbacks in production; fail closed on missing critical configuration.
+**Reason:** Blueprint 2.2.2 §26 production rehearsal and operational hardening.
+
+
 
 
 
