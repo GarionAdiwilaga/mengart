@@ -1,39 +1,22 @@
-# Handoff Context — Gate F: Media Pipeline & Comprehensive Rate Limiting (Watermark Removal Amendment v1.1)
+# Handoff Context — Independent QA Audit: Gate E & Gate F (Watermark Removal Amendment v1.1)
 
-**Date:** 2026-09-02  
-**Approved Baseline SHA (Gate E Closed):** `f6b4d547789478e51588e1150e0f9db38181c810`  
-**Current Phase:** Gate F (Media Pipeline & Comprehensive Rate Limiting) — **AMENDMENT IMPLEMENTED & 100% VERIFIED / AWAITING INDEPENDENT QA**  
-**Overall Status:** **NO-GO** (Until Gates F–H pass independent QA. Hard stop after Gate F).
+**Date:** 2026-09-04  
+**Approved Baseline SHA (Gates E & F Closed):** `368b427ec7fef39ff844ff9efd019ba2a19f39aa`  
+**Current Phase:** Independent QA Review Completed — **GATE E & GATE F OFFICIALLY PASSED**  
+**Next Phase:** Gate G (Community UX, Story Cards, A11y & Playwright E2E) — **UNLOCKED**  
+**Overall Status:** **NO-GO** (Until Gates G–H pass independent QA).
 
-## Session Summary
-- **Gate F Media Pipeline, Rate Limiting & Watermark Removal Amendment Implemented & Verified:**
-  1. **Single Authoritative Media Validation Engine:**
-     - Created `src/lib/services/mediaValidation.ts` for magic byte content sniffing, deep Sharp decoding (50M pixel cap), SHA-256 checksums, `ffprobe` container/codec validation, and derivative generation (`generateMediaDerivatives`).
-     - Enforces JPEG/PNG/WebP ($\le 25$MB) and MP4 H.264/AAC or silent ($\le 50$MB, no duration limit).
-     - Explicit fail-closed rejections for GIF, WebM, SVG/XML, DOS/PE executables, and shell scripts.
-  2. **Watermark Removal Amendment (`Gate_F_Revision_Plan_Remove_Watermark_v1.1.md`):**
-     - Removed SVG watermark overlay generation from the public media derivative pipeline (`generateMediaDerivatives`).
-     - Public derivatives remain separate from master files, resolution-limited ($\le 1920$px WebP for images, H.264 MP4 for videos), optimized, and access-controlled via ACLs. Clean master media protection and ACL rules remain unchanged.
-  3. **Strict MP4-Only Video Container Policy:**
-     - Deep `ffprobe` inspection enforces MP4 container (`isom`, `iso2`, `mp41`, `mp42`, `avc1`, `dash`, `m4v`), video codec `h264`, and audio codec `aac` or silent.
-     - Explicitly rejects QuickTime `.mov` (`qt  ` brand), `.webm`, `.mkv`, and `.avi`.
-  4. **Tiered Sliding-Window Rate Limiting:**
-     - Wired rate limits across all 14 Server Action write mutations with fail-closed security-critical tier and fail-open with logging low-risk tier.
-     - Extracted client IP respecting `TRUSTED_PROXY === "true"` to prevent proxy header spoofing.
-  5. **Worker Idempotency & Validation Parity:**
-     - Background BullMQ worker consumes `mediaValidation.ts` identically to synchronous uploads.
-     - Duplicate delivery idempotency and synchronous vs worker validation parity verified.
-  6. **Full Verification Matrix:**
-     - `npx tsx src/lib/__tests__/testGateFMediaAndRateLimiting.ts`: 28/28 scenarios passed (100% success).
-     - `npx tsx src/lib/__tests__/testGateESubmissionAndPortfolio.ts`: 62/62 scenarios passed.
-     - `npx tsx src/lib/__tests__/testPhase4AuthAndInvites.ts`: 22/22 scenarios passed.
-     - `npx tsx src/lib/__tests__/testPhase2VotingAndTiebreak.ts`: 20/20 scenarios passed.
-     - `npx tsx src/lib/__tests__/testPhase3SimplifiedJury.ts`: 63/63 scenarios passed.
-     - `npm run test:migrate`: 9/9 scenarios passed.
-     - `npm run test:all`: 15/15 test suites passed cleanly.
-     - `npm run lint`: 0 errors (clean).
-     - `npm run build`: Next.js production build and worker bundle compiled cleanly.
+## QA Audit Summary
+- **Protocol Verification (Agent Report ≠ Independent PASS):**
+  1. Patch application verified: `gate_f.patch` applied cleanly on baseline `f6b4d547789478e51588e1150e0f9db38181c810` with zero merge conflicts or rejects, yielding a tree 100% identical to HEAD (`368b427ec7fef39ff844ff9efd019ba2a19f39aa`).
+  2. Cumulative source inspection: Inspected all media processing, video transcoding, rate limiting, portfolio/submission lifecycles, and authorization layers against Blueprint 2.2.2 and Gate F Revision Plan v1.1.
+  3. Single authoritative validation engine: `src/lib/services/mediaValidation.ts` correctly validates magic bytes, enforces format/size restrictions, and generates non-empty WebP/MP4 derivatives without watermarking.
+  4. Video streaming & container standardization: MP4 only, H.264/AAC or silent, `execFile` (`shell: false`), no duration cap, HTTP 206 Partial Content range support.
+  5. Master media protection: Strictly requires live active membership and Gate A ACL; returns 403 for suspended users and unauthorized requests.
+  6. Rate limiting: Sliding-window rate limiting wired across all 14 Server Action write entry points with fail-closed security-critical tier, fail-open operational tier, and trusted proxy header protection.
+  7. Verification execution: 100% pass across all test suites, migrations (9/9), linter (0 errors), and production Next.js/worker compilation.
 
-## Deliverable
-- Commit Gate F amendment changes, record `NEW_GATE_F_SHA`, and export format-patch `gate_f.patch` against `f6b4d547789478e51588e1150e0f9db38181c810`.
-- Hard stop after Gate F amendment. Await independent QA review. Do NOT begin Gate G.
+## Deliverable & Next Steps
+- Gate E and Gate F are certified **PASSED** and officially closed.
+- Gate G is unlocked for implementation.
+- Overall deployment status remains **NO-GO** until Gates G and H complete and receive independent QA certification.

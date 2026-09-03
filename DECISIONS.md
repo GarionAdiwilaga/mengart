@@ -411,6 +411,14 @@
 **Business Rule:** Mengart is an invite-only community platform. Public derivatives are resolution-limited and access-controlled without watermark overlays.
 **Reason:** Controlled Gate F amendment under Blueprint 2.2.2 as specified in `Gate_F_Revision_Plan_Remove_Watermark_v1.1.md`.
 
+## 2026-09-04
+
+### Independent QA Certification: Gate E & Gate F (Watermark Removal Amendment v1.1)
+**Decision:** Grant formal independent QA PASS to Gate E (Submission & Portfolio Simplification) and Gate F (Media Pipeline, MP4 Video Container, Watermark Removal Amendment v1.1, and Comprehensive Rate Limiting) under Blueprint 2.2.2.
+**Business Rule:** Production deployment status remains NO-GO until Gates G and H complete and pass independent QA. Gate G is now unlocked for implementation.
+**Reason:** Strict verification of patch application against baseline `f6b4d547789478e51588e1150e0f9db38181c810`, exhaustive cumulative source inspection, 100% test pass rate across all 9 migration scenarios, 28 Gate F scenarios, 62 Gate E scenarios, 22 Gate D scenarios, 63 Gate C scenarios, 20 Gate B scenarios, clean ESLint (0 errors), and successful production Next.js/worker build.
+
+
 
 
 

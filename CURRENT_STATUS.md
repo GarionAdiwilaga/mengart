@@ -126,7 +126,7 @@
   - Test Suite (`src/lib/__tests__/testPhase4AuthAndInvites.ts`):
     - Verified all 22 Gate D security and invariant test scenarios under Blueprint 2.2.2.
 - **Phase 4: Release Gate D (Authentication, Invitations, Membership & Roles — Blueprint 2.2.2):** **COMPLETED & VERIFIED (Gate D Baseline: `46ccdca661de9240ff364ee63d9f5ccb5ca242bc`)**
-- **Phase 5: Release Gate E (Submission & Portfolio Simplification + Additive Spoiler):** **IMPLEMENTED & 100% VERIFIED / PENDING INDEPENDENT QA**
+- **Phase 5: Release Gate E (Submission & Portfolio Simplification + Additive Spoiler):** **INDEPENDENT QA PASS & OFFICIALLY CLOSED**
   - Pre-Production Database Reset Policy:
     - Disposable development/QA database rows; preserved migration/source history.
     - Forward Migration 0012 (`drizzle/0012_gate_e_submission_portfolio_spoiler.sql`) asserts `challenge_submissions` row count = 0 and fails closed on unreset databases.
@@ -161,7 +161,7 @@
     - `npm run test:all`: 15/15 test suites passed cleanly.
     - `npm run lint`: 0 errors.
     - `npm run build`: Next.js production build and worker bundle compiled cleanly.
-- **Phase 6: Release Gate F (Media Pipeline & Comprehensive Rate Limiting — Blueprint 2.2.2):** **COMPLETED & 100% VERIFIED / READY FOR INDEPENDENT QA REVIEW**
+- **Phase 6: Release Gate F (Media Pipeline & Comprehensive Rate Limiting — Blueprint 2.2.2):** **INDEPENDENT QA PASS & OFFICIALLY CLOSED**
   - Single Authoritative Media Validation & Sniffing Engine (`src/lib/services/mediaValidation.ts`):
     - Sniffs initial magic bytes to strictly identify JPEG (`ffd8ff`), PNG (`89504e470d0a1a0a`), WebP (`52494646...WEBP`), and MP4 (`ftyp` at bytes 4-8).
     - Fail-closed explicit rejections: DOS/PE executables (`4d5a`), shell scripts (`#!/`), SVG/XML text (`<svg`, `<?xml`), GIF (`47494638`), and WebM/MKV (`1a45dfa3`).
@@ -188,10 +188,10 @@
     - Parity regression verified: synchronous staging and asynchronous worker produce identical validation errors on invalid payloads.
   - Dedicated Gate F Test Suite (`src/lib/__tests__/testGateFMediaAndRateLimiting.ts`):
     - 28/28 scenarios passed (100% success).
-- **Phase 7: Release Gate G (Community UX, Story Cards, A11y & Playwright E2E):** PENDING REVIEW
+- **Phase 7: Release Gate G (Community UX, Story Cards, A11y & Playwright E2E):** UNLOCKED / READY FOR IMPLEMENTATION
 - **Phase 8: Release Gate H (Disaster Recovery & Runtime Concurrency):** PENDING REVIEW
 
-## Addressed QA IDs in Phase 1, Phase 2, Phase 3, Phase 4, Phase 5 & Phase 6 (Gate A–E Closed; Gate F Implementation Ready for QA)
+## Addressed QA IDs in Phase 1, Phase 2, Phase 3, Phase 4, Phase 5 & Phase 6 (Gates A–F Fully Closed & Verified)
 - **QA-P0-001** (Database migration reproducibility & authoritative production backfill): RESOLVED & VERIFIED
 - **QA-P0-002** (Per-round ballot uniqueness & multi-round tiebreak support): RESOLVED & VERIFIED
 - **QA-P0-003** (Google-only authentication, invitation-gated onboarding & PENDING_INVITE separation): RESOLVED & VERIFIED
@@ -212,13 +212,14 @@
 - **QA-P1-008** (RESULTS_REVOKED status, notice banner, snapshot audit & flow): RESOLVED & VERIFIED
 
 ## Current Branch
-`main` (Base Candidate SHA: `f6b4d547789478e51588e1150e0f9db38181c810`)
+`main` (Base Approved SHA: `368b427ec7fef39ff844ff9efd019ba2a19f39aa`)
 
 ## Current Focus
-- Gate F media pipeline and rate limiting (with Watermark Removal Amendment v1.1) complete and 100% verified across 28 dedicated test scenarios, full repository test suite matrix (`npm run test:all`), linter (`npm run lint`), and production build (`npm run build`). Ready for independent QA review.
+- Gate E and Gate F (with Watermark Removal Amendment v1.1) formally PASSED by Independent QA.
+- Gate G (Community UX, Story Cards, A11y & Playwright E2E) is unlocked and ready for implementation.
 
 ## Overall Status
-- **NO-GO** (Until Gates F–H pass independent QA. Hard stop after Gate F; do NOT start Gate G).
+- **NO-GO** (Until Gates G–H pass independent QA).
 
 
 
