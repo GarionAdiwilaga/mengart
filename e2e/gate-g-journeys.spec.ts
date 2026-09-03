@@ -14,7 +14,7 @@ test.describe("Gate G: End-to-End User Journey Tests", () => {
     // Verify 8 Discovery Sections
     // Section 1: Hero & Value Pillars
     await expect(page.locator("h1").first()).toContainText(/Kolektif Kreator Digital/i);
-    await expect(page.locator("text=KOMUNITAS DIGITAL ART & ATELIER PRIVAT")).toBeVisible();
+    await expect(page.getByText("KOMUNITAS DIGITAL ART & ATELIER PRIVAT").first()).toBeVisible();
     await expect(page.getByRole("heading", { name: "Portofolio Terkurasi" })).toBeVisible();
 
     // Section 2: Recent Public Artworks Header
