@@ -221,7 +221,7 @@
     - `npm run lint`: 0 errors.
     - `npm run build`: Production Next.js build and worker bundle compiled cleanly.
     - `npm run test:e2e`: 6/6 Playwright user journeys passed cleanly.
-- **Phase 8: Release Gate H (Disaster Recovery & Runtime Concurrency):** **COMPLETED, FULLY INTEGRATED & 100% VERIFIED**
+- **Phase 8: Release Gate H (Disaster Recovery & Runtime Concurrency):** **INDEPENDENT QA PASS & OFFICIALLY CLOSED**
   - Production Configuration & Insecure Default Remediation:
     - Enforced fail-closed checks on all critical environment variables (`DATABASE_URL`, `REDIS_URL`, `AUTH_SECRET`, `CRON_SECRET`) in production.
     - Zero fallback secrets in production code paths.
@@ -236,7 +236,8 @@
     - Verified complete idempotency for backfills and upsert replay scripts.
   - Dedicated Gate H Test Suite (`src/lib/__tests__/testGateHConcurrencyAndDR.ts`):
     - 6/6 scenarios passed (100% success).
-- **Phase 9: Post-Gate-H Comprehensive Legacy Cleanup & Final Production Hardening:** SCHEDULED (After Gates G & H pass QA; systematically prune all deprecated schema columns/tables, legacy aliases, and transitional branches for a 100% legacy-free production launch)
+- **Phase 9: Post-Gate-H Comprehensive Legacy Cleanup & Final Production Hardening:** **UNLOCKED / READY FOR IMPLEMENTATION**
+  - Systematically prune all deprecated schema columns/tables (`quorum_requirement`, `allow_revisions`, `challenge_winner_slots`, `challenge_jury_slot_assignments`, `challenge_jury_scores`, `critique_aspect`), legacy aliases, and transitional branches for a 100% legacy-free production launch.
 
 ## Addressed QA IDs in Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7 & Phase 8 (Gates A–H Fully Closed & Verified)
 - **QA-P0-001** (Database migration reproducibility & authoritative production backfill): RESOLVED & VERIFIED
@@ -261,15 +262,14 @@
 - **QA-P1-008** (RESULTS_REVOKED status, notice banner, snapshot audit & flow): RESOLVED & VERIFIED
 
 ## Current Branch
-`main` (Base Approved Gate G SHA: `cbe56b08a47526c924a5fc7fc6b9f3e44246c87d`)
+`main` (Base Approved Gate H SHA: `2c40f51c378f8e0f47a28535d814ab79c8dcc74b`)
 
 ## Current Focus
-- Gate G (Community UX, Simple Comments, Story Cards, Accessibility & E2E Testing) formally PASSED and CLOSED by Independent QA.
-- Gate H (Disaster Recovery, Runtime Concurrency & Production Rehearsal) is fully implemented and tested.
-- **HARD STOP:** Standing by for Independent QA cumulative audit on Gate H. Do NOT start Phase 9 (Post-Gate-H Legacy Cleanup) until Gate H receives formal QA approval.
+- Gate H (Disaster Recovery, Runtime Concurrency & Production Rehearsal) formally PASSED and CLOSED by Independent QA.
+- Phase 9 (Post-Gate-H Comprehensive Legacy Cleanup & Final Production Hardening) is unlocked and ready for implementation.
 
 ## Overall Status
-- **NO-GO** (Until Gate H and Phase 9 Post-Gate-H Legacy Cleanup pass independent QA).
+- **NO-GO** (Until Phase 9 Post-Gate-H Legacy Cleanup passes independent QA for final production release).
 
 
 
