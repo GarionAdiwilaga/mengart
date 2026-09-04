@@ -488,6 +488,15 @@
 **Business Rule:** Overall production deployment status is updated from NO-GO to GO. All 8 release gates (Gates A through H) and Phase 9 (Comprehensive Legacy Cleanup) have achieved 100% verification with zero legacy debt, zero lint errors, 18/18 passing test suites, 11/11 passing migration scenarios, 6/6 passing Playwright E2E user journeys, and clean production builds.
 **Reason:** Strict verification against Blueprint 2.2.2 and the Pre-Production Legacy Deprecation Policy.
 
+### Repository Cleanup: Deprecated Files, Historical Patches, and Leftover Temp Folders Removal
+**Decision:** Removed all deprecated files, historical git patches, unreferenced legacy hooks, and leftover migration test folders:
+1. **Historical Gate Patches:** Removed 11 legacy patch files (`gate_e*.patch`, `gate_f*.patch`, `gated*.patch`, ~1.5 MB).
+2. **Obsolete Agent Prompts & Planning Files:** Removed 11 historical prompt/remediation files from early design phases (`GateD_*.md`, `GateE_*.md`, `Gate_F_*.md`, `Phase2_*.md`, `implementation_plan_gate_d.md`, `Mengart_Blueprint_*.md`, `mengart_QA_deploy_readiness_report.md`).
+3. **Unused Code & Test Hook:** Removed unreferenced legacy hook `src/hooks/useCritiques.ts` (superseded by server actions in `CritiqueSection.tsx`).
+4. **Temporary Folders & Test Ignore:** Removed `.tmp_drizzle_*` leftover folders, removed tracked `test-results/.last-run.json`, and updated `.gitignore` to explicitly ignore `/test-results/` and `/playwright-report/`.
+**Business Rule:** Production repository root must remain pristine, containing only canonical blueprints, documentation, and active codebase configuration.
+**Reason:** Clean workspace hygiene and elimination of untracked/redundant artifacts.
+
 
 
 
