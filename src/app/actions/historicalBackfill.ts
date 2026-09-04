@@ -22,7 +22,7 @@ export interface HistoricalEntryInput {
   artworkTitle: string;
   artworkDescription?: string;
   softwareUsed?: string;
-  mediaType: "image" | "gif" | "video";
+  mediaType: "image" | "video";
   masterStorageKey: string;
   publicStorageKey: string;
   thumbnailStorageKey?: string;

@@ -488,14 +488,29 @@
 **Business Rule:** Overall production deployment status is updated from NO-GO to GO. All 8 release gates (Gates A through H) and Phase 9 (Comprehensive Legacy Cleanup) have achieved 100% verification with zero legacy debt, zero lint errors, 18/18 passing test suites, 11/11 passing migration scenarios, 6/6 passing Playwright E2E user journeys, and clean production builds.
 **Reason:** Strict verification against Blueprint 2.2.2 and the Pre-Production Legacy Deprecation Policy.
 
-### Repository Cleanup: Deprecated Files, Historical Patches, and Leftover Temp Folders Removal
-**Decision:** Removed all deprecated files, historical git patches, unreferenced legacy hooks, and leftover migration test folders:
-1. **Historical Gate Patches:** Removed 11 legacy patch files (`gate_e*.patch`, `gate_f*.patch`, `gated*.patch`, ~1.5 MB).
-2. **Obsolete Agent Prompts & Planning Files:** Removed 11 historical prompt/remediation files from early design phases (`GateD_*.md`, `GateE_*.md`, `Gate_F_*.md`, `Phase2_*.md`, `implementation_plan_gate_d.md`, `Mengart_Blueprint_*.md`, `mengart_QA_deploy_readiness_report.md`).
-3. **Unused Code & Test Hook:** Removed unreferenced legacy hook `src/hooks/useCritiques.ts` (superseded by server actions in `CritiqueSection.tsx`).
-4. **Temporary Folders & Test Ignore:** Removed `.tmp_drizzle_*` leftover folders, removed tracked `test-results/.last-run.json`, and updated `.gitignore` to explicitly ignore `/test-results/` and `/playwright-report/`.
-**Business Rule:** Production repository root must remain pristine, containing only canonical blueprints, documentation, and active codebase configuration.
-**Reason:** Clean workspace hygiene and elimination of untracked/redundant artifacts.
+### Pruning GIF & WebM from PostgreSQL Enum, Frontend Pickers & Gallery Filters
+**Decision:** Forward migration `0015_prune_gif_media_type.sql` alters the PostgreSQL enum `media_type` to strictly `['image', 'video']`, dropping `'gif'`. All frontend file upload pickers (`QuickUploadModal.tsx`, `ChallengeSubmissionModal.tsx`, `UploadArtworkModal.tsx`) strictly accept `image/png,image/jpeg,image/webp,video/mp4` and update user-facing labels to PNG, JPG, WebP (≤ 25MB) and Video MP4 (≤ 50MB). The gallery filter `{ key: "gif", label: "GIF" }` and all TypeScript `"gif"` union members are completely eliminated.
+**Business Rule:** Mengart strictly accepts only static images (JPEG, PNG, WebP ≤ 25MB) and MP4 video (H.264/AAC or silent ≤ 50MB). GIF, WebM, SVG, and other containers/codecs are rejected fail-closed.
+**Reason:** Strict adherence to Blueprint 2.2.2 §6.1 and §24 Items 20 & 21.
+
+### Purging Watermark Residual Comments and Policies
+**Decision:** All legacy comments in database schema (`artworks.ts`), policy engines (`policy.ts`), and test suites referencing "watermarked" are aligned to "clean public derivative" and "original master media".
+**Business Rule:** Public derivatives are resolution-limited WebP/MP4 files with zero watermark overlays. Master media access remains governed by Gate A/Gate D ACLs.
+**Reason:** Fulfills the Watermark Removal Amendment v1.1 under Blueprint 2.2.2 without semantic drift.
+
+### Artwork Spoiler Viewing Experience Completion
+**Decision:** Completed the viewing experience for `is_spoiler` in `ArtworkCard.tsx` and `ArtworkLightbox.tsx`:
+1. `ArtworkCard`: Unrevealed spoiler artworks render with a heavy blur filter (`blur-xl`), generic unrevealed alt text ("Konten spoiler tersembunyi"), a spoiler overlay badge, and an explicit "Buka Konten / Reveal" button. Clicking reveal reveals the thumbnail for the active session without navigating. A top "SPOILER" badge indicates flagged content.
+2. `ArtworkLightbox`: Unrevealed spoiler artworks render with a heavy blur filter (`blur-2xl`), a spoiler warning card, and a "Tampilkan Karya (Buka Spoiler)" button.
+3. `/artworks/[slug]/page.tsx`: Passes `isSpoiler={artwork.isSpoiler}` to `ArtworkLightbox`.
+**Business Rule:** An artwork's spoiler state initially obscures visual presentation until the viewer intentionally reveals it. The spoiler flag does not alter audience, publication status, media ACL, voting eligibility, or Star tallies.
+**Reason:** Completes the Gate G viewing experience mandate from `GateE_Additive_Decision_Spoiler.md`.
+
+### Affirmation of Discord-Style Bearer Invites
+**Decision:** Confirmed 100% adherence to Blueprint 2.2.2 §4.4: 8-character CSPRNG alphanumeric default codes (`[A-Za-z0-9]`), lowercase custom vanity codes ≤ 25 characters (`[a-z0-9-]`), direct unique bearer code storage, ACTIVE Admin-only management with real code visibility and one-click copy, deterministic exact-first lookup, two-phase locking redemption, and clean cookie continuation.
+**Business Rule:** Invitations are direct bearer credentials administered strictly by active Admins and redeemed atomically.
+**Reason:** Authoritative product invariant under Blueprint 2.2.2 §4.4.
+
 
 
 

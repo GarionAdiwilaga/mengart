@@ -139,7 +139,7 @@ async function runModernizedArchitectureTests() {
   if (!useLightboxStore.getState().isMasterQuality) throw new Error("❌ Master quality toggle failed to enable.");
   lightbox.toggleMasterQuality();
   if (useLightboxStore.getState().isMasterQuality) throw new Error("❌ Master quality toggle failed to disable.");
-  console.log("  ✓ Master quality vs watermarked toggle verified.");
+  console.log("  ✓ Master quality vs public derivative toggle verified.");
 
   lightbox.closeLightbox();
   if (useLightboxStore.getState().isOpen) throw new Error("❌ Lightbox close failed.");
@@ -272,7 +272,7 @@ async function runModernizedArchitectureTests() {
   if (!fetchedArt || fetchedArt.masterKey !== `master_${timestamp}.png` || fetchedArt.audience !== "members_only") {
     throw new Error("❌ Artwork dual-variant storage and audience constraint check failed.");
   }
-  console.log("  ✓ Dual storage keys verified: Master Clean ('master_...') vs Public Watermarked ('public_...').");
+  console.log("  ✓ Dual storage keys verified: Master Clean ('master_...') vs Public Derivative ('public_...').");
   console.log("  ✓ Audience constraint ('members_only') properly persisted.");
 
   console.log("\n=================================================================");

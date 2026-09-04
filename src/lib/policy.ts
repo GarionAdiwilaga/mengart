@@ -81,7 +81,7 @@ export function canViewArtwork(
 }
 
 /**
- * Validates whether a viewer can access the clean, unwatermarked master media variant.
+ * Validates whether a viewer can access the original master media variant.
  * Exact ACL Matrix:
  * - Owner: Allowed
  * - Platform Admin: Allowed

@@ -150,7 +150,7 @@ export function ChallengeSubmissionModal({
                   <label className="border-2 border-dashed border-white/15 hover:border-amber-500/50 rounded-2xl p-6 flex flex-col items-center justify-center gap-3 cursor-pointer bg-white/[0.02] transition-colors relative overflow-hidden">
                     <input
                       type="file"
-                      accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm"
+                      accept="image/png,image/jpeg,image/webp,video/mp4"
                       onChange={handleFileChange}
                       className="hidden"
                     />
@@ -172,7 +172,7 @@ export function ChallengeSubmissionModal({
                             Pilih file atau seret & lepas di sini
                           </span>
                           <span className="text-[11px] text-zinc-500 font-mono mt-0.5 block">
-                            PNG, JPG, WebP, GIF, MP4 (Maks. 25MB - 50MB)
+                            PNG, JPG, WebP (maks. 25MB) atau Video MP4 (maks. 50MB)
                           </span>
                         </div>
                       </>

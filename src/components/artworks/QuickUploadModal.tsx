@@ -140,7 +140,7 @@ export function QuickUploadModal() {
               ref={fileInputRef}
               id="artwork-file-input"
               type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif,video/mp4"
+              accept="image/png,image/jpeg,image/webp,video/mp4"
               onChange={handleFileChange}
               className="hidden"
             />
@@ -167,7 +167,7 @@ export function QuickUploadModal() {
                   <ImageIcon className="h-6 w-6" />
                 </div>
                 <span className="font-display font-semibold text-sm text-[#f6f2e9]">
-                  Pilih atau Seret File Karya (PNG, JPG, WEBP, GIF, MP4)
+                  Pilih atau Seret File Karya (PNG, JPG, WebP maks. 25MB atau Video MP4 maks. 50MB)
                 </span>
                 <span className="text-xs font-mono text-zinc-500">
                   Resolusi master asli dilindungi tanpa kompresi kasar

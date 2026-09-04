@@ -54,6 +54,7 @@ async function runMigrationVerification() {
   const upgradeDbName0011 = `mengart_test_upgrade_0011_${Date.now()}`;
   const upgradeDbName0012 = `mengart_test_upgrade_0012_${Date.now()}`;
   const upgradeDbName0013 = `mengart_test_upgrade_0013_${Date.now()}`;
+  const upgradeDbName0014 = `mengart_test_upgrade_0014_${Date.now()}`;
   const failDbName0012Dirty = `mengart_test_fail_0012_dirty_${Date.now()}`;
   const failDbNameEmailCollision = `mengart_test_fail_email_${Date.now()}`;
   const failDbName1 = `mengart_test_fail1_${Date.now()}`;
@@ -67,6 +68,7 @@ async function runMigrationVerification() {
   const temp0011Dir = path.resolve("./.tmp_drizzle_0011");
   const temp0012Dir = path.resolve("./.tmp_drizzle_0012");
   const temp0013Dir = path.resolve("./.tmp_drizzle_0013");
+  const temp0014Dir = path.resolve("./.tmp_drizzle_0014");
 
   // Pre-generate historical migration subsets
   await createMigrationSubsetDir(temp0006Dir, 6);
@@ -77,6 +79,7 @@ async function runMigrationVerification() {
   await createMigrationSubsetDir(temp0011Dir, 11);
   await createMigrationSubsetDir(temp0012Dir, 12);
   await createMigrationSubsetDir(temp0013Dir, 13);
+  await createMigrationSubsetDir(temp0014Dir, 14);
 
   try {
     // --------------------------------------------------------------------------
@@ -1788,8 +1791,80 @@ async function runMigrationVerification() {
     await upgradeClient0013.end();
     console.log("🎉 SCENARIO 11 (0013 -> 0014 FORWARD MIGRATION & PHASE 9 CLEANUP) PASSED!\n");
 
+    // --------------------------------------------------------------------------
+    // SCENARIO 12: FORWARD MIGRATION 0014 -> 0015 (MEDIA_TYPE ENUM GIF PRUNING)
+    // --------------------------------------------------------------------------
+    console.log(`[Scenario 12] Testing forward migration 0014 -> 0015 (pruning 'gif' from media_type enum)...`);
+    await adminClient.unsafe(`CREATE DATABASE "${upgradeDbName0014}";`);
+
+    const upgradeDbUrl0014 = `${urlObj.protocol}//${urlObj.username}:${urlObj.password}@${urlObj.host}/${upgradeDbName0014}`;
+    const upgradeClient0014 = postgres(upgradeDbUrl0014, { max: 1 });
+    const upgradeDrizzle0014 = drizzle(upgradeClient0014, { schema });
+
+    // 1. Apply baseline 0000 -> 0014
+    console.log("-> Applying baseline migrations 0000 -> 0014 on test database...");
+    await migrate(upgradeDrizzle0014, { migrationsFolder: temp0014Dir });
+    console.log("✓ Pre-0015 baseline (0000 -> 0014) applied cleanly.");
+
+    // 2. Insert test records with legacy/pre-0015 media_type
+    const [p10User] = await upgradeClient0014`
+      INSERT INTO users (email, role, membership_status)
+      VALUES ('p10_user@mengart.local', 'member', 'active')
+      RETURNING id;
+    `;
+    const [p10Prof] = await upgradeClient0014`
+      INSERT INTO profiles (user_id, display_name, slug)
+      VALUES (${p10User.id}, 'P10 Artist', 'p10-artist')
+      RETURNING id;
+    `;
+
+    const [p10ArtImg] = await upgradeClient0014`
+      INSERT INTO artworks (user_id, slug, title, media_type, audience, critique_mode, publication_status)
+      VALUES (${p10User.id}, 'p10-img', 'P10 Image', 'image', 'public', 'showcase_only', 'published')
+      RETURNING id;
+    `;
+
+    const [p10ArtVid] = await upgradeClient0014`
+      INSERT INTO artworks (user_id, slug, title, media_type, audience, critique_mode, publication_status)
+      VALUES (${p10User.id}, 'p10-vid', 'P10 Video', 'video', 'public', 'showcase_only', 'published')
+      RETURNING id;
+    `;
+
+    console.log("✓ Pre-0015 sample artwork records inserted.");
+
+    // 3. Execute forward migration 0014 -> 0015
+    console.log("-> Running forward migration 0014 -> 0015 (Prune GIF) via Drizzle migrator...");
+    await migrate(upgradeDrizzle0014, { migrationsFolder: "./drizzle" });
+    console.log("✓ Migration 0014 -> 0015 succeeded cleanly!");
+
+    // 4. Assert media_type enum range is strictly ('image', 'video')
+    const [enumRes] = await upgradeClient0014`SELECT enum_range(NULL::media_type)::text as enum_range;`;
+    if (!enumRes || enumRes.enum_range !== "{image,video}") {
+      throw new Error(`Scenario 12 Failed: Expected media_type enum {image,video}, got: ${JSON.stringify(enumRes)}`);
+    }
+    console.log("✓ Verified PostgreSQL media_type enum range is strictly {image,video} without 'gif'.");
+
+    // 5. Assert existing data integrity preserved
+    const [persistedImg] = await upgradeClient0014`
+      SELECT id, title, media_type FROM artworks WHERE id = ${p10ArtImg.id};
+    `;
+    if (!persistedImg || persistedImg.media_type !== "image") {
+      throw new Error("Artwork image record corrupted during migration 0015!");
+    }
+
+    const [persistedVid] = await upgradeClient0014`
+      SELECT id, title, media_type FROM artworks WHERE id = ${p10ArtVid.id};
+    `;
+    if (!persistedVid || persistedVid.media_type !== "video") {
+      throw new Error("Artwork video record corrupted during migration 0015!");
+    }
+    console.log("✓ Verified existing artwork records (image and video) preserved intact.");
+
+    await upgradeClient0014.end();
+    console.log("🎉 SCENARIO 12 (0014 -> 0015 FORWARD MIGRATION & GIF ENUM PRUNING) PASSED!\n");
+
     console.log("=================================================================");
-    console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A, B, C, D, E, F, G, PHASE 9)");
+    console.log("✅ ALL MIGRATION AND SCHEMA REPRODUCIBILITY TESTS PASSED (GATE A, B, C, D, E, F, G, PHASE 9, BASELINE REVISIONS)");
     console.log("=================================================================\n");
     process.exit(0);
   } finally {
@@ -1803,6 +1878,7 @@ async function runMigrationVerification() {
       await fs.rm(temp0011Dir, { recursive: true, force: true });
       await fs.rm(temp0012Dir, { recursive: true, force: true });
       await fs.rm(temp0013Dir, { recursive: true, force: true });
+      await fs.rm(temp0014Dir, { recursive: true, force: true });
     } catch (_e) {
       // Ignored cleanup error
     }
@@ -1816,6 +1892,7 @@ async function runMigrationVerification() {
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0011}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0012}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0013}";`);
+      await adminClient.unsafe(`DROP DATABASE IF EXISTS "${upgradeDbName0014}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName0012Dirty}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbNameEmailCollision}";`);
       await adminClient.unsafe(`DROP DATABASE IF EXISTS "${failDbName1}";`);

@@ -1,8 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { MessageSquare, Sparkles, Tag, Eye } from "lucide-react";
+import { MessageSquare, Sparkles, Tag, Eye, EyeOff } from "lucide-react";
 import { ArtworkAdminMenu } from "./ArtworkAdminMenu";
 import type { ArtworkListItem } from "@/hooks/useArtworks";
 
@@ -12,8 +13,9 @@ interface ArtworkCardProps {
 }
 
 export function ArtworkCard({ artwork, currentUserRole }: ArtworkCardProps) {
+  const [isRevealed, setIsRevealed] = useState(false);
   const isVideo = artwork.mediaType === "video";
-  const isGif = artwork.mediaType === "gif";
+  const isObscured = Boolean(artwork.isSpoiler && !isRevealed);
 
   return (
     <motion.div
@@ -27,9 +29,13 @@ export function ArtworkCard({ artwork, currentUserRole }: ArtworkCardProps) {
         {artwork.thumbnailStorageKey ? (
           <img
             src={`/api/media/public/${artwork.thumbnailStorageKey}`}
-            alt={artwork.title}
+            alt={isObscured ? "Konten spoiler tersembunyi" : artwork.title}
             loading="lazy"
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+            className={`w-full h-full object-cover transition-all duration-500 ease-out ${
+              isObscured
+                ? "blur-xl scale-105 select-none pointer-events-none"
+                : "group-hover:scale-105"
+            }`}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-white/5 text-zinc-600 font-mono text-xs">
@@ -37,10 +43,45 @@ export function ArtworkCard({ artwork, currentUserRole }: ArtworkCardProps) {
           </div>
         )}
 
-        {/* Top Floating Badges: Media Type & Admin Menu */}
-        <div className="absolute top-3 inset-x-3 flex items-center justify-between pointer-events-none">
+        {/* Obscured Spoiler Overlay */}
+        {isObscured && (
+          <div className="absolute inset-0 bg-black/75 backdrop-blur-md flex flex-col items-center justify-center p-4 text-center z-10 gap-2.5">
+            <div className="h-9 w-9 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
+              <EyeOff className="h-4 w-4" />
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-xs font-mono font-bold text-amber-300 uppercase tracking-wider">
+                Konten Spoiler
+              </span>
+              <span className="text-[11px] text-zinc-400 font-sans">
+                Karya ditandai spoiler oleh artist
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsRevealed(true);
+              }}
+              className="mt-1 px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold font-mono transition-all duration-200 shadow-md shadow-amber-500/20 cursor-pointer pointer-events-auto"
+            >
+              Buka Konten
+            </button>
+          </div>
+        )}
+
+        {/* Top Floating Badges: Media Type, Spoiler & Admin Menu */}
+        <div className="absolute top-3 inset-x-3 flex items-center justify-between pointer-events-none z-20">
           <div className="flex items-center gap-1.5 pointer-events-auto">
-            {isVideo || isGif ? (
+            {artwork.isSpoiler ? (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                <EyeOff className="h-3 w-3" />
+                <span>SPOILER</span>
+              </span>
+            ) : null}
+
+            {isVideo ? (
               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-black/70 backdrop-blur-md text-amber-400 border border-white/15 uppercase">
                 {artwork.mediaType}
               </span>

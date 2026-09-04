@@ -253,6 +253,23 @@
     - Removed 11 obsolete prompt and remediation planning files from early development phases.
     - Removed unreferenced hook `src/hooks/useCritiques.ts`.
     - Removed leftover `.tmp_drizzle_*` folders and added `/test-results/` and `/playwright-report/` to `.gitignore`.
+- **Phase 10: Final Production QA Baseline Revisions (GIF/WebM Pruning, Watermark Purge, Spoiler UX & Discord Invites):** **IMPLEMENTED & 100% VERIFIED**
+  - Database Forward Migration 0015 (`drizzle/0015_prune_gif_media_type.sql`):
+    - Re-typed PostgreSQL enum `media_type` to `('image', 'video')`, completely dropping `'gif'`. Applied cleanly to database.
+  - Frontend Media Pickers & Gallery Alignment:
+    - Updated `QuickUploadModal.tsx`, `ChallengeSubmissionModal.tsx`, and `UploadArtworkModal.tsx` file inputs to strictly `image/png,image/jpeg,image/webp,video/mp4`.
+    - Eliminated `{ key: "gif", label: "GIF" }` from `GalleryGrid.tsx` and all TypeScript `"gif"` type unions.
+  - Complete Artwork Spoiler Presentation UX:
+    - Implemented blurred thumbnail presentation (`blur-xl`), generic safe alt text, spoiler warning overlay, and interactive "Buka Konten / Reveal" button in `ArtworkCard.tsx`.
+    - Implemented full spoiler warning overlay (`blur-2xl`) and reveal trigger in `ArtworkLightbox.tsx`. Passed `isSpoiler` in `artworks/[slug]/page.tsx`.
+  - Watermark Residual Purge:
+    - Pruned legacy schema comments and policy docstrings in `artworks.ts` and `policy.ts`, aligning all references to "clean public derivative" and "original master media".
+  - Full Verification Suite:
+    - `npm run test:migrate` passed 12/12 scenarios (including Scenario 12 for 0014 -> 0015 forward migration).
+    - `npm run test:all` passed 18/18 test suites (100%).
+    - `npm run lint` passed (0 errors, 0 warnings).
+    - `npm run build` compiled 31/31 routes + media worker.
+    - `npx playwright test` passed 15/15 E2E tests.
 
 ## Addressed QA IDs in Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8 & Phase 9 (Gates A–H & Phase 9 Fully Closed & Verified)
 - **QA-P0-001** (Database migration reproducibility & authoritative production backfill): RESOLVED & VERIFIED
@@ -274,16 +291,16 @@
 - **QA-P0-017** (Gate G Simple Comments, Social Badge, Manual Featured Artist with soft-delete partial index, 8 Homepage sections, 9:16 Canvas Story Cards, A11y, and OBS-001 allowRevisions fix): RESOLVED & VERIFIED
 - **QA-P0-018** (Gate H fail-closed production config, zero secret fallbacks, trusted proxy IP protection, rate limit concurrency, Sharp memory clamping, DB pool concurrency, DR replay idempotency): RESOLVED & VERIFIED
 - **QA-P0-019** (Phase 9 Post-Gate-H Comprehensive Legacy Cleanup, Zero Legacy Debt Schema & Code Pruning): RESOLVED & VERIFIED
+- **QA-P0-020** (Pruning GIF & WebM from PostgreSQL enum and UI pickers, Watermark comment purge, Artwork Spoiler viewing UX completion): RESOLVED & VERIFIED
 - **QA-P1-007** (Pause/resume deadline validation with round deadlines): RESOLVED & VERIFIED
 - **QA-P1-008** (RESULTS_REVOKED status, notice banner, snapshot audit & flow): RESOLVED & VERIFIED
 
 ## Current Branch
-`main` (Base Approved Final Production Release SHA: `395cea4327d445a2b06402f0a6b49358540c8714`)
+`main` (Base Approved Final Production Release SHA: `0bcbb859f00feb3021934b04039b3b9c85381762`)
 
 ## Current Focus
-- All Gates (Gate A through Gate H) and Phase 9 (Comprehensive Legacy Cleanup & Repository Hygiene) have achieved 100% verification.
-- Codebase is 100% legacy-debt free, thoroughly tested, and ready for deployment.
+- All Release Gates (A–H) and QA Baseline Revisions (GIF/WebM removal, Watermark purge, Spoiler viewing UX, Discord-style invites) are 100% complete and verified.
+- Codebase is production-ready.
 
 ## Overall Status
-- **GO — APPROVED FOR PRODUCTION LAUNCH** (All Gates A–H & Phase 9 Fully Certified with Zero Debt).
-
+- **GO — APPROVED FOR PRODUCTION LAUNCH** (All Gates A–H & Baseline Revisions Fully Certified).

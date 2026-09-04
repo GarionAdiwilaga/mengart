@@ -1,66 +1,37 @@
-# Handoff Context — Final Independent QA Certification: All Gates & Phase 9 Passed (Production Sign-Off)
+# Handoff Context — Phase 10: Final Production QA Baseline Revisions (COMPLETED & VERIFIED)
 
 **Date:** 2026-09-04  
-**Authoritative Final Release SHA:** `395cea4327d445a2b06402f0a6b49358540c8714`  
-**Current State:** All Release Gates (A–H) & Phase 9 Comprehensive Legacy Cleanup — **INDEPENDENT QA PASS & OFFICIALLY CLOSED**  
-**Production Readiness:** 100% Zero-Debt Clean Architecture  
-**Overall Status:** **GO — OFFICIALLY APPROVED FOR PUBLIC PRODUCTION LAUNCH**
+**Current State:** Phase 10 QA Baseline Revisions (GIF/WebM Pruning, Watermark Text Purge, Artwork Spoiler UX & Discord-Style Invites) — **100% IMPLEMENTED & VERIFIED**  
+**Overall Status:** **GO — APPROVED FOR PRODUCTION LAUNCH**
 
 ---
 
-## Phase 9 Deliverables Implemented & Verified
+## Deliverables Completed & Verified
 
-### 1. Database Forward Migration & Schema Pruning
-- **Migration 0014 ([`drizzle/0014_phase_9_legacy_cleanup.sql`](file:///home/garion/Projects/Mengart/drizzle/0014_phase_9_legacy_cleanup.sql)):**
-  - Dropped deprecated columns: `challenges.quorum_requirement`, `challenges.allow_revisions`, `challenge_voting_rounds.round_sequence`, `critique_comments.critique_aspect`, `challenge_results.winner_slot_id`.
-  - Dropped deprecated enum types: `critique_aspect`, `slot_type`.
-  - Dropped deprecated tables: `challenge_jury_scores` CASCADE, `challenge_jury_slot_assignments` CASCADE, `challenge_winner_slots` CASCADE.
-- **Drizzle Schema Pruning:**
-  - [`src/db/schema/challenges.ts`](file:///home/garion/Projects/Mengart/src/db/schema/challenges.ts): Removed `slotTypeEnum`, `quorumRequirement`, `allowRevisions`, `roundSequence`, `challengeWinnerSlots`, `challengeJurySlotAssignments`.
-  - [`src/db/schema/critiques.ts`](file:///home/garion/Projects/Mengart/src/db/schema/critiques.ts): Removed `critiqueAspectEnum` and `critiqueAspect`.
-  - [`src/db/schema/ballots.ts`](file:///home/garion/Projects/Mengart/src/db/schema/ballots.ts): Removed `challengeJuryScores` and `winnerSlotId`.
+1. **Database Forward Migration 0015 (`0015_prune_gif_media_type.sql`):**
+   - Altered PostgreSQL enum `media_type` to `('image', 'video')`, completely dropping `'gif'`.
+   - Migration registered in `drizzle/meta/_journal.json` (`idx: 15`) and applied cleanly to active database.
 
-### 2. Backend Actions & Services Pruning
-- [`src/app/actions/challenges.ts`](file:///home/garion/Projects/Mengart/src/app/actions/challenges.ts): Removed `allowRevisions` from validation and mutations.
-- [`src/app/actions/critiques.ts`](file:///home/garion/Projects/Mengart/src/app/actions/critiques.ts): Removed `critiqueAspect` from comment creation.
-- [`src/lib/services/mediaValidation.ts`](file:///home/garion/Projects/Mengart/src/lib/services/mediaValidation.ts): Removed legacy `generateWatermarkedDerivatives` alias in favor of canonical `generateMediaDerivatives`.
-- [`src/app/api/media/public/[key]/route.ts`](file:///home/garion/Projects/Mengart/src/app/api/media/public/[key]/route.ts): Removed `.gif` and `.webm` fallback mappings.
-- [`src/lib/services/challengeService.ts`](file:///home/garion/Projects/Mengart/src/lib/services/challengeService.ts): Removed `challengeWinnerSlots`, `challengeJurySlotAssignments`, and `roundSequence` references.
-- [`src/lib/services/votingService.ts`](file:///home/garion/Projects/Mengart/src/lib/services/votingService.ts): Removed `roundSequence` ordering and mutations.
-- [`src/app/challenges/[slug]/page.tsx`](file:///home/garion/Projects/Mengart/src/app/challenges/[slug]/page.tsx): Updated awards panel to display dynamic awards based on `awardMode` without `winnerSlots`.
-- [`src/components/jury/JuryEvaluationForm.tsx`](file:///home/garion/Projects/Mengart/src/components/jury/JuryEvaluationForm.tsx): Deleted unused legacy component.
+2. **Pruned GIF & WebM from UI & Shared Types:**
+   - Updated `src/db/schema/artworks.ts` (`mediaTypeEnum = pgEnum("media_type", ["image", "video"])`).
+   - Cleaned file pickers in `QuickUploadModal.tsx`, `ChallengeSubmissionModal.tsx`, `UploadArtworkModal.tsx` (`accept="image/png,image/jpeg,image/webp,video/mp4"`).
+   - Removed `{ key: "gif", label: "GIF" }` filter tab from `GalleryGrid.tsx`.
+   - Pruned `"gif"` from TypeScript unions in `useArtworks.ts`, `useGalleryFilterStore.ts`, `historicalBackfill.ts`, `page.tsx`, and `ArtworkLightbox.tsx`.
 
-### 3. Test Suites Modernization & Dedicated Phase 9 Suite
-- **Dedicated Test Suite ([`src/lib/__tests__/testPhase9LegacyCleanup.ts`](file:///home/garion/Projects/Mengart/src/lib/__tests__/testPhase9LegacyCleanup.ts)):**
-  - Scenario 1: Schema cleanliness verification (zero deprecated columns/tables/types).
-  - Scenario 2: Challenge creation and updating without `allowRevisions`.
-  - Scenario 3: Star voting and tiebreak round creation without `roundSequence`.
-  - Scenario 4: Dynamic jury award assignment without `challenge_winner_slots`.
-  - Scenario 5: Unified comment creation without `critique_aspect`.
-  - Scenario 6: Media pipeline execution with canonical `generateMediaDerivatives`.
-  - **Result: 6/6 Scenarios Passed (100%)**.
-- **Upgraded Migration Test Suite ([`scripts/verifyMigrations.ts`](file:///home/garion/Projects/Mengart/scripts/verifyMigrations.ts)):**
-  - Added **Scenario 11** verifying forward migration 0013 -> 0014 and asserting dropped columns/tables/types while verifying data preservation.
-  - **Result: 11/11 Scenarios Passed (100%)**.
+3. **Completed Artwork Spoiler Viewing UX (`GateE_Additive_Decision_Spoiler.md`):**
+   - `ArtworkCard.tsx`: Applied `blur-xl` filter to unrevealed spoiler artworks, rendered safe unrevealed alt text, displayed spoiler badge overlay, and provided an interactive "Buka Konten / Reveal" button.
+   - `ArtworkLightbox.tsx`: Displayed spoiler warning card overlay and "Tampilkan Karya (Buka Spoiler)" button when `isSpoiler && !isSpoilerRevealed`.
+   - `/artworks/[slug]/page.tsx`: Passed `isSpoiler={artwork.isSpoiler}` to `ArtworkLightbox`.
 
-### 4. Repository Cleanliness & Deprecated Files Removal
-- **Historical Patches Removed:** 11 git patch files (`gate_e*.patch`, `gate_f*.patch`, `gated*.patch`) removed.
-- **Obsolete Prompts/Plans Removed:** 11 early development markdown files (`GateD_*.md`, `GateE_*.md`, `Gate_F_*.md`, `Phase2_*.md`, `implementation_plan_gate_d.md`, `Mengart_Blueprint_*.md`, `mengart_QA_deploy_readiness_report.md`) removed.
-- **Unused Hook Removed:** `src/hooks/useCritiques.ts` deleted.
-- **Leftover Temp Folders Removed:** `.tmp_drizzle_*` deleted and `.gitignore` updated with `/test-results/` and `/playwright-report/`.
+4. **Purged Residual Watermark Text & Policies:**
+   - Cleaned schema comments in `artworks.ts` and policy docstrings in `policy.ts`.
+   - Updated test suite logs in `testModernizedArchitecture.ts` and `testPhase2Pipeline.ts`.
 
----
-
-## Full Verification Matrix Status
-- `npm run db:migrate`: **PASSED (Migration 0014 applied)**
-- `npm run test:migrate`: **PASSED (11/11 scenarios)**
-- `npx tsx src/lib/__tests__/testPhase9LegacyCleanup.ts`: **PASSED (6/6 scenarios)**
-- `npm run test:all`: **PASSED (18/18 test suites)**
-- `npm run lint`: **PASSED (0 errors, 0 warnings)**
-- `npm run build`: **PASSED (31/31 routes + media worker compiled cleanly)**
-- `npm run test:e2e`: **PASSED (15/15 Playwright E2E tests)**
-
----
-
-## Directive for Next Step
-- Repository is clean, tested, and fully approved for public launch and production deployment.
+5. **Test Matrix & Verification (100% Pass):**
+   - `npm run db:migrate`: Applied migration 0015 cleanly.
+   - `npm run test:migrate`: 12/12 scenarios passed (including Scenario 12 for 0014 -> 0015 migration and enum assertion).
+   - `npx tsx src/lib/__tests__/testPhase9LegacyCleanup.ts`: 6/6 scenarios passed.
+   - `npm run test:all`: 18/18 test suites passed.
+   - `npm run lint`: 0 errors, 0 warnings.
+   - `npm run build`: 31/31 routes + media worker compiled cleanly.
+   - `npx playwright test`: 15/15 E2E user journeys passed.

@@ -3,14 +3,14 @@ import { create } from "zustand";
 interface GalleryFilterState {
   searchQuery: string;
   selectedTag: string | null;
-  mediaType: "all" | "image" | "gif" | "video";
+  mediaType: "all" | "image" | "video";
   critiqueMode: "all" | "open_for_critique";
   sortBy: "latest" | "oldest";
 
   // Actions
   setSearchQuery: (query: string) => void;
   setSelectedTag: (tag: string | null) => void;
-  setMediaType: (mediaType: "all" | "image" | "gif" | "video") => void;
+  setMediaType: (mediaType: "all" | "image" | "video") => void;
   setCritiqueMode: (mode: "all" | "open_for_critique") => void;
   setSortBy: (sortBy: "latest" | "oldest") => void;
   resetFilters: () => void;

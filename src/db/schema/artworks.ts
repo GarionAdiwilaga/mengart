@@ -14,7 +14,7 @@ import {
 import { users } from "./users";
 import { profiles } from "./profiles";
 
-export const mediaTypeEnum = pgEnum("media_type", ["image", "gif", "video"]);
+export const mediaTypeEnum = pgEnum("media_type", ["image", "video"]);
 export const critiqueModeEnum = pgEnum("critique_mode", ["showcase_only", "open_for_critique"]);
 export const audienceEnum = pgEnum("audience", ["public", "members_only", "unlisted", "private"]);
 export const publicationStatusEnum = pgEnum("publication_status", [
@@ -76,9 +76,9 @@ export const artworkVersions = pgTable(
     
     // Storage keys
     masterStorageKey: text("master_storage_key").notNull(), // Protected clean version
-    publicStorageKey: text("public_storage_key"), // Public watermarked derivative
+    publicStorageKey: text("public_storage_key"), // Resolution-limited public WebP/MP4 derivative (no watermark)
     thumbnailStorageKey: text("thumbnail_storage_key"), // Grid thumbnail
-    posterStorageKey: text("poster_storage_key"), // Video/GIF poster frame
+    posterStorageKey: text("poster_storage_key"), // Video poster frame
     
     // File metadata
     mimeType: text("mime_type").notNull(),

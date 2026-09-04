@@ -67,6 +67,15 @@ async function runPhase9Tests() {
     throw new Error(`Scenario 1 Failed: Found deprecated enums: ${JSON.stringify(deprecatedEnums)}`);
   }
 
+  // Assert media_type enum only contains 'image' and 'video'
+  const mediaTypeEnumRes = await db.execute<{ enum_range: string }>(sql`
+    SELECT enum_range(NULL::media_type)::text as enum_range;
+  `);
+  if (!mediaTypeEnumRes[0] || mediaTypeEnumRes[0].enum_range !== "{image,video}") {
+    throw new Error(`Scenario 1 Failed: media_type enum range is not {image,video}. Got: ${JSON.stringify(mediaTypeEnumRes)}`);
+  }
+  console.log("✓ media_type enum verified as strictly {image,video} without gif.");
+
   console.log("✓ Scenario 1 Passed: Database schema is 100% clean with zero deprecated columns, tables, or types.");
 
   // Scenario 2: Challenge creation and updating without allowRevisions

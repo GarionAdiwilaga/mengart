@@ -135,7 +135,7 @@ export default async function PortfolioManagerPage() {
 
                   {/* Badges on Thumbnail */}
                   <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
-                    {art.mediaType === "video" || art.mediaType === "gif" ? (
+                    {art.mediaType === "video" ? (
                       <span className="px-2 py-0.5 rounded-md bg-black/70 backdrop-blur-md text-[10px] font-mono uppercase text-amber-300 border border-white/10 flex items-center gap-1">
                         <Film className="h-3 w-3" />
                         {art.mediaType}

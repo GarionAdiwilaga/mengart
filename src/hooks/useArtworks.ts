@@ -9,7 +9,7 @@ export interface ArtworkListItem {
   title: string;
   slug: string;
   description: string | null;
-  mediaType: "image" | "gif" | "video";
+  mediaType: "image" | "video";
   audience: "public" | "members_only" | "unlisted" | "private";
   critiqueMode: "showcase_only" | "open_for_critique";
   isSpoiler?: boolean;

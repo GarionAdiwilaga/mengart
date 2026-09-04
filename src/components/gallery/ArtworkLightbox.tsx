@@ -10,6 +10,8 @@ import {
   ShieldCheck,
   Maximize2,
   Minimize2,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 
 interface ArtworkLightboxProps {
@@ -17,9 +19,10 @@ interface ArtworkLightboxProps {
   masterMediaUrl?: string | null;
   isMember: boolean;
   title: string;
-  mediaType: "image" | "gif" | "video";
+  mediaType: "image" | "video";
   width?: number | null;
   height?: number | null;
+  isSpoiler?: boolean;
 }
 
 export function ArtworkLightbox({
@@ -28,10 +31,12 @@ export function ArtworkLightbox({
   isMember,
   title,
   mediaType,
+  isSpoiler = false,
 }: ArtworkLightboxProps) {
   const [zoomLevel, setZoomLevel] = useState(1);
   const [useMasterQuality, setUseMasterQuality] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isSpoilerRevealed, setIsSpoilerRevealed] = useState(!isSpoiler);
 
   const activeMediaUrl = useMasterQuality && masterMediaUrl ? masterMediaUrl : publicMediaUrl;
 
@@ -62,6 +67,8 @@ export function ArtworkLightbox({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isFullscreen]);
 
+  const isObscured = isSpoiler && !isSpoilerRevealed;
+
   return (
     <div
       className={`flex flex-col gap-3 transition-all ${
@@ -73,26 +80,57 @@ export function ArtworkLightbox({
         {mediaType === "video" ? (
           <video
             src={activeMediaUrl}
-            controls
+            controls={!isObscured}
             autoPlay
             muted
             loop
             playsInline
             aria-label={`Pemutar video karya: ${title}`}
-            className="max-h-[72vh] w-auto max-w-full rounded-2xl object-contain"
+            className={`max-h-[72vh] w-auto max-w-full rounded-2xl object-contain transition-all duration-500 ${
+              isObscured ? "blur-2xl select-none pointer-events-none" : ""
+            }`}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center p-4 overflow-hidden cursor-grab active:cursor-grabbing">
             <motion.img
               src={activeMediaUrl}
-              alt={title}
-              drag={zoomLevel > 1}
+              alt={isObscured ? "Konten spoiler tersembunyi" : title}
+              drag={!isObscured && zoomLevel > 1}
               dragConstraints={{ left: -300, right: 300, top: -200, bottom: 200 }}
               animate={{ scale: zoomLevel }}
               transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="max-h-[72vh] w-auto max-w-full object-contain rounded-xl shadow-2xl pointer-events-auto"
+              className={`max-h-[72vh] w-auto max-w-full object-contain rounded-xl shadow-2xl transition-all duration-500 ${
+                isObscured
+                  ? "blur-2xl select-none pointer-events-none"
+                  : "pointer-events-auto"
+              }`}
               draggable={false}
             />
+          </div>
+        )}
+
+        {/* Spoiler Warning Overlay Card */}
+        {isObscured && (
+          <div className="absolute inset-0 z-20 bg-black/85 backdrop-blur-xl flex flex-col items-center justify-center p-6 text-center gap-4">
+            <div className="h-12 w-12 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-lg shadow-amber-500/10">
+              <EyeOff className="h-6 w-6" />
+            </div>
+            <div className="max-w-md flex flex-col gap-1.5">
+              <h3 className="font-display font-bold text-lg text-[#f6f2e9]">
+                Peringatan Spoiler
+              </h3>
+              <p className="text-xs text-zinc-400 font-sans leading-relaxed">
+                Karya ini ditandai mengandung spoiler oleh artist. Klik tombol di bawah untuk menampilkan karya.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsSpoilerRevealed(true)}
+              className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all duration-200 shadow-lg shadow-amber-500/20 flex items-center gap-2 cursor-pointer"
+            >
+              <Eye className="h-4 w-4" />
+              <span>Tampilkan Karya (Buka Spoiler)</span>
+            </button>
           </div>
         )}
 
@@ -136,7 +174,7 @@ export function ArtworkLightbox({
         </div>
 
         {/* Pan/Zoom & Fullscreen Controls (Bottom-Right) */}
-        {mediaType === "image" ? (
+        {mediaType === "image" && !isObscured ? (
           <div className="absolute bottom-3 right-3 sm:bottom-4 sm:right-4 z-10 flex items-center gap-1 p-1 rounded-2xl bg-black/80 backdrop-blur-md border border-white/15 text-xs">
             <button
               type="button"

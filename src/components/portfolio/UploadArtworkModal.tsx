@@ -132,7 +132,7 @@ export function UploadArtworkModal() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm"
+                  accept="image/jpeg,image/png,image/webp,video/mp4"
                   onChange={handleFileChange}
                   className="hidden"
                 />
@@ -160,7 +160,7 @@ export function UploadArtworkModal() {
                       Pilih file karya atau seret ke sini
                     </span>
                     <span className="text-xs text-zinc-500">
-                      Mendukung JPG, PNG, WebP (maks 25MB), GIF & Video MP4/WebM (maks 50MB)
+                      Mendukung JPG, PNG, WebP (maks. 25MB) & Video MP4 (maks. 50MB)
                     </span>
                   </div>
                 )}

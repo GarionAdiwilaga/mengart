@@ -61,7 +61,6 @@ export function GalleryGrid({ currentUserRole }: GalleryGridProps) {
             {[
               { key: "all", label: "Semua" },
               { key: "image", label: "Gambar" },
-              { key: "gif", label: "GIF" },
               { key: "video", label: "Video" },
             ].map((tab) => (
               <button

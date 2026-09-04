@@ -236,6 +236,7 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
             mediaType={artwork.mediaType as any}
             width={artwork.width}
             height={artwork.height}
+            isSpoiler={artwork.isSpoiler}
           />
 
           {/* Artwork Description & Process Notes */}

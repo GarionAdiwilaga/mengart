@@ -91,7 +91,7 @@ async function runPhase2Tests() {
 
   console.log(`✓ Created Commission Service: "${service.title}" (ID=${service.id}) with Do/Don't rules`);
 
-  // Test 3: Media Processing Pipeline Test (Sharp Image Watermarking & Metadata Stripping)
+  // Test 3: Media Processing Pipeline Test (Sharp Image Processing & Metadata Stripping)
   console.log("\n[Test 3] Testing Media Upload Pipeline with Sharp...");
   const tempFilename = `test_upload_${Date.now()}.png`;
   const tempPath = resolveStoragePath("temp", tempFilename);
@@ -155,7 +155,7 @@ async function runPhase2Tests() {
   console.log(`✓ Media Processing Status: ${updatedVersion.processingStatus}`);
   console.log(`  - Dimensions: ${updatedVersion.width}x${updatedVersion.height} px`);
   console.log(`  - Master Storage Key: ${updatedVersion.masterStorageKey}`);
-  console.log(`  - Public Watermarked Key: ${updatedVersion.publicStorageKey}`);
+  console.log(`  - Public Derivative Key: ${updatedVersion.publicStorageKey}`);
   console.log(`  - Thumbnail Key: ${updatedVersion.thumbnailStorageKey}`);
   console.log(`  - Checksum SHA-256: ${updatedVersion.checksumSha256?.substring(0, 16)}...`);
 
@@ -171,7 +171,7 @@ async function runPhase2Tests() {
   await fs.access(masterPath);
   await fs.access(publicPath);
   await fs.access(thumbPath);
-  console.log("✓ Physical master, watermarked derivative, and thumbnail files verified on disk");
+  console.log("✓ Physical master, public derivative, and thumbnail files verified on disk");
 
   // Test 4: In-App Notification Core
   console.log("\n[Test 4] Testing In-App Notification Engine...");
