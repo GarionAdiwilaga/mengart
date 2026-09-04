@@ -37,12 +37,9 @@ NEXTAUTH_URL=https://mengart.yourdomain.com
 GOOGLE_CLIENT_ID=<YOUR_GOOGLE_CLIENT_ID>
 GOOGLE_CLIENT_SECRET=<YOUR_GOOGLE_CLIENT_SECRET>
 
-# Email / SMTP Delivery
-SMTP_HOST=smtp.resend.com
-SMTP_PORT=465
-SMTP_USER=resend
-SMTP_PASSWORD=<YOUR_API_KEY>
-EMAIL_FROM="Mengart Atelier <noreply@mengart.yourdomain.com>"
+# Scheduled Transitions Cron Secret (Blueprint 2.2.2 §26)
+CRON_SECRET=<GENERATE_WITH_OPENSSL_RAND_BASE64_32>
+TRUSTED_PROXY=true
 
 # Storage Path (Persistent volume mounted)
 STORAGE_ROOT_DIR=/app/storage
