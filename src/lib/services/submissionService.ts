@@ -160,9 +160,9 @@ export async function createArtworkWithUniqueSlug(
     userId: string;
     title: string;
     description?: string | null;
-    mediaType: "image" | "gif" | "video";
+    mediaType: "image" | "video";
     audience: "public" | "members_only" | "unlisted" | "private";
-    critiqueMode?: "showcase_only" | "open_for_critique" | "general" | "detailed";
+    critiqueMode?: "showcase_only" | "open_for_critique";
     isSpoiler: boolean;
     forceCollisionSlug?: string; // For testing collision retry
   }

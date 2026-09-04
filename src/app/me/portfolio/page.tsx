@@ -1,7 +1,7 @@
 import { requireAuth } from "@/lib/rbac";
 import { db } from "@/db";
 import { artworks, artworkVersions, profiles, portfolioEntries } from "@/db/schema";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, isNull } from "drizzle-orm";
 import Link from "next/link";
 import { ArrowLeft, Image as ImageIcon, Sparkles, Film, Clock, ExternalLink } from "lucide-react";
 import { UploadArtworkModal } from "@/components/portfolio/UploadArtworkModal";
@@ -55,7 +55,7 @@ export default async function PortfolioManagerPage() {
       )
     )
     .leftJoin(artworkVersions, eq(artworkVersions.id, artworks.currentVersionId))
-    .where(eq(artworks.userId, user.id))
+    .where(and(eq(artworks.userId, user.id), isNull(artworks.deletedAt)))
     .orderBy(desc(artworks.createdAt));
 
   return (

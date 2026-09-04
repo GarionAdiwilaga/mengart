@@ -153,7 +153,11 @@ export default async function PublicCommissionsPage({ searchParams }: Commission
             const waNumber = service.artistWhatsappNumber?.replace(/\D/g, "");
             let orderLink = `/artists/${service.artistSlug}`;
 
-            if (service.orderDestination === "whatsapp" && waNumber) {
+            if (
+              service.orderDestination === "whatsapp" &&
+              waNumber &&
+              service.artistWhatsappEnabled
+            ) {
               const msg = encodeURIComponent(
                 `Halo ${service.artistName}, saya tertarik memesan layanan komisi: "${service.title}" via Mengart Atelier.`
               );

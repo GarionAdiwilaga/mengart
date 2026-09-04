@@ -448,11 +448,20 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
                     {thumbUrl ? (
                       <img
                         src={thumbUrl}
-                        alt={sub.title}
-                        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                        alt={sub.isSpoiler ? "Konten spoiler tersembunyi" : sub.title}
+                        className={`w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 ${
+                          sub.isSpoiler ? "blur-xl" : ""
+                        }`}
                       />
                     ) : (
                       <ImageIcon className="h-8 w-8 text-zinc-700" />
+                    )}
+                    {sub.isSpoiler && (
+                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center pointer-events-none">
+                        <span className="px-2 py-0.5 rounded bg-black/70 border border-amber-500/40 text-amber-300 font-mono text-[10px] tracking-wider uppercase font-bold">
+                          SPOILER
+                        </span>
+                      </div>
                     )}
                   </div>
 

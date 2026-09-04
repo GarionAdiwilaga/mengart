@@ -22,6 +22,7 @@ import {
   challengeResults,
   challengeSubmissions,
   users,
+  portfolioEntries,
 } from "@/db/schema";
 import { eq, and, isNull, inArray, desc } from "drizzle-orm";
 import { getCurrentMonthlySpotlight } from "@/lib/activity";
@@ -64,11 +65,21 @@ export default async function HomePage() {
     })
     .from(artworks)
     .innerJoin(profiles, eq(profiles.userId, artworks.userId))
+    .innerJoin(users, eq(users.id, artworks.userId))
+    .innerJoin(
+      portfolioEntries,
+      and(
+        eq(portfolioEntries.artworkId, artworks.id),
+        eq(portfolioEntries.profileId, profiles.id)
+      )
+    )
     .innerJoin(artworkVersions, eq(artworkVersions.id, artworks.currentVersionId))
     .where(
       and(
         eq(artworks.audience, "public"),
         isNull(artworks.deletedAt),
+        eq(users.membershipStatus, "active"),
+        eq(portfolioEntries.isVisible, true),
         inArray(artworks.publicationStatus, ["published", "ready"])
       )
     )
@@ -304,7 +315,7 @@ export default async function HomePage() {
                   critiqueMode: item.critiqueMode as any,
                   publicStorageKey: item.publicStorageKey,
                   thumbnailStorageKey: item.thumbnailStorageKey,
-                  masterStorageKey: item.masterStorageKey,
+                  masterStorageKey: null,
                   width: item.width,
                   height: item.height,
                   createdAt: item.createdAt.toISOString(),

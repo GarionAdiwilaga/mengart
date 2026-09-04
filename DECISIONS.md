@@ -521,6 +521,18 @@
 **Business Rule:** Historical challenges must maintain exact parity with live finished challenges across winner uniqueness, jury models, voting round structures, and portfolio auto-promotion.
 **Reason:** Resolves schema and runtime constraint violations between historical import action and Blueprint 2.2.2.
 
+### System-Wide Feature Hardening & Polish Reconciliations
+**Decision:** Applied 6 hardening and polish remediations across platform domains:
+1. **Homepage Public Artwork Query Hardening (`src/app/page.tsx`):** Joined `users` and `portfolioEntries` with `users.membershipStatus = 'active'` and `portfolioEntries.isVisible = true` to prevent leaking unpromoted challenge submissions or suspended user artworks into the homepage grid.
+2. **Creator Vault Soft-Deletion Filter (`src/app/me/portfolio/page.tsx`):** Added `isNull(artworks.deletedAt)` to the portfolio manager query so soft-deleted artworks are not rendered in the artist's active management view.
+3. **Challenges Directory State Completeness (`src/app/challenges/page.tsx`):** Added `tie_pending` and `paused` to the "active" tab, and `results_revoked` to the "completed" tab so challenges never disappear from the public directory.
+4. **WhatsApp Referral Privacy Consent Guard (`src/app/commissions/page.tsx`):** Added `service.artistWhatsappEnabled` guard before rendering direct WhatsApp order referral links, honoring `profiles.waConsentGiven`.
+5. **Challenge Detail Candidate Spoiler Presentation (`src/app/challenges/[slug]/page.tsx`):** Enforced `blur-xl` and centered `SPOILER` badge overlay on candidate thumbnails when `sub.isSpoiler === true`.
+6. **Residual Type Pruning:** Completely removed residual `"gif"` union members and normalized legacy `"general" | "detailed"` critique mode remnants to `"showcase_only" | "open_for_critique"`.
+**Business Rule:** Public artwork showcases require visible portfolio entries and active membership. Creator vaults exclude soft-deleted items. Directory tabs capture all operational lifecycle states. WhatsApp links strictly require explicit artist consent. Spoiler artworks must visually obscure content until deliberately revealed.
+**Reason:** Eliminates query leakage, preserves artist privacy, avoids UI 404 dead-ends, and achieves 100% type purity across the repository.
+
+
 
 
 

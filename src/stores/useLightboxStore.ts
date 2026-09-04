@@ -5,7 +5,7 @@ export interface LightboxArtwork {
   title: string;
   slug: string;
   description?: string | null;
-  mediaType: "image" | "gif" | "video";
+  mediaType: "image" | "video";
   width?: number | null;
   height?: number | null;
   publicUrl: string;

@@ -41,15 +41,21 @@ export default async function ChallengesDirectoryPage({ searchParams }: Challeng
       return ch.effectiveStatus === "scheduled" || ch.effectiveStatus === "draft";
     }
     if (tab === "completed") {
-      return ch.effectiveStatus === "finished" || ch.effectiveStatus === "review";
+      return (
+        ch.effectiveStatus === "finished" ||
+        ch.effectiveStatus === "review" ||
+        ch.effectiveStatus === "results_revoked"
+      );
     }
-    // "active" includes submission_open, submission_locked, voting_open, tiebreak_open, jury_selection_open
+    // "active" includes submission_open, submission_locked, voting_open, tiebreak_open, jury_selection_open, tie_pending, paused
     return (
       ch.effectiveStatus === "submission_open" ||
       ch.effectiveStatus === "submission_locked" ||
       ch.effectiveStatus === "voting_open" ||
       ch.effectiveStatus === "tiebreak_open" ||
-      ch.effectiveStatus === "jury_selection_open"
+      ch.effectiveStatus === "jury_selection_open" ||
+      ch.effectiveStatus === "tie_pending" ||
+      ch.effectiveStatus === "paused"
     );
   });
 

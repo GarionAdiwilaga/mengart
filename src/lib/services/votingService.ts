@@ -61,7 +61,7 @@ export interface CandidateRoundData {
   publicStorageKey: string | null;
   width: number | null;
   height: number | null;
-  mediaType: "image" | "gif" | "video";
+  mediaType: "image" | "video";
   totalStars: number;
   userAllocatedStars: number;
   isSelfSubmission: boolean;
