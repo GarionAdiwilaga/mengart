@@ -296,11 +296,11 @@
 - **QA-P1-008** (RESULTS_REVOKED status, notice banner, snapshot audit & flow): RESOLVED & VERIFIED
 
 ## Current Branch
-`main` (Base Approved Final Production Release SHA: `0bcbb859f00feb3021934b04039b3b9c85381762`)
+`main` (Authoritative Production Launch SHA: `15591d1844b20a3da66ca7693ec2557fc9a58406`)
 
 ## Current Focus
-- All Release Gates (A–H) and QA Baseline Revisions (GIF/WebM removal, Watermark purge, Spoiler viewing UX, Discord-style invites) are 100% complete and verified.
-- Codebase is production-ready.
+- Comprehensive production `README.md` created, lint and production builds verified, and all commits pushed to GitHub `origin/main`.
+- Repository is 100% production-ready, clean, and officially launched.
 
 ## Overall Status
-- **GO — APPROVED FOR PRODUCTION LAUNCH** (All Gates A–H & Baseline Revisions Fully Certified).
+- **GO — PRODUCTION LAUNCH COMPLETE** (All Release Gates A–H, Phase 9 Legacy Cleanup, Baseline Revisions, and Production Documentation Pushed to Origin).
