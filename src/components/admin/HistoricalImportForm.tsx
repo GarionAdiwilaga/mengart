@@ -12,6 +12,8 @@ import {
   Calendar,
   Save,
   CheckCircle2,
+  Award,
+  Users,
 } from "lucide-react";
 import { importHistoricalChallengeAction, type HistoricalEntryInput } from "@/app/actions/historicalBackfill";
 import { toast } from "sonner";
@@ -41,6 +43,8 @@ export function HistoricalImportForm({ artists }: HistoricalImportFormProps) {
   const [promptRules, setPromptRules] = useState(
     "Format 2D/3D orisinal. Menampilkan pencahayaan neon malam hari dan elemen budaya kepulauan."
   );
+  const [awardMode, setAwardMode] = useState<"vote_and_jury" | "vote_only" | "jury_only" | "showcase_only">("vote_and_jury");
+  const [starsPerMember, setStarsPerMember] = useState(1);
 
   // Dates (WITA)
   const [submissionStartsAt, setSubmissionStartsAt] = useState("2025-11-01T00:00");
@@ -65,9 +69,8 @@ export function HistoricalImportForm({ artists }: HistoricalImportFormProps) {
       thumbnailStorageKey: "thumb_sample_batavia.webp",
       finalRank: 1,
       totalCommunityStars: 28,
-      juryScore: 96.5,
-      winnerSlotType: "community_vote",
-      slotTitle: "Juara 1 Favorit Komunitas",
+      winnerSlotType: "community_vote_winner",
+      categoryLabel: "Juara Favorit Komunitas",
     },
     {
       userId: defaultUser2,
@@ -78,11 +81,10 @@ export function HistoricalImportForm({ artists }: HistoricalImportFormProps) {
       masterStorageKey: "master_sample_garuda.png",
       publicStorageKey: "public_sample_garuda.webp",
       thumbnailStorageKey: "thumb_sample_garuda.webp",
-      finalRank: 2,
+      finalRank: null,
       totalCommunityStars: 21,
-      juryScore: 92.0,
-      winnerSlotType: "community_vote",
-      slotTitle: "Juara 2 Favorit Komunitas",
+      winnerSlotType: "jury_award",
+      categoryLabel: "Penghargaan Komposisi Visual",
     },
     {
       userId: defaultUser3,
@@ -93,11 +95,9 @@ export function HistoricalImportForm({ artists }: HistoricalImportFormProps) {
       masterStorageKey: "master_sample_lantern.png",
       publicStorageKey: "public_sample_lantern.webp",
       thumbnailStorageKey: "thumb_sample_lantern.webp",
-      finalRank: 3,
+      finalRank: null,
       totalCommunityStars: 17,
-      juryScore: 94.0,
-      winnerSlotType: "jury_award",
-      slotTitle: "Pilihan Dewan Juri Atelier",
+      winnerSlotType: "none",
     },
   ]);
 
@@ -119,8 +119,8 @@ export function HistoricalImportForm({ artists }: HistoricalImportFormProps) {
         masterStorageKey: `master_sample_${prev.length + 1}.png`,
         publicStorageKey: `public_sample_${prev.length + 1}.webp`,
         thumbnailStorageKey: `thumb_sample_${prev.length + 1}.webp`,
-        finalRank: prev.length + 1,
-        totalCommunityStars: Math.max(15 - prev.length * 2, 1),
+        finalRank: null,
+        totalCommunityStars: 0,
         winnerSlotType: "none",
       },
     ]);
@@ -147,6 +147,8 @@ export function HistoricalImportForm({ artists }: HistoricalImportFormProps) {
         submissionDeadline,
         votingStartsAt,
         votingDeadline,
+        awardMode,
+        starsPerMember,
         entries,
       });
 
@@ -194,15 +196,31 @@ export function HistoricalImportForm({ artists }: HistoricalImportFormProps) {
           </div>
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-mono text-zinc-300">TEMA EVENT</label>
-          <input
-            type="text"
-            value={theme}
-            onChange={(e) => setTheme(e.target.value)}
-            required
-            className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-white/5 border border-white/10 text-white text-base sm:text-sm font-sans focus:outline-none focus:border-amber-500/60"
-          />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-mono text-zinc-300">TEMA EVENT</label>
+            <input
+              type="text"
+              value={theme}
+              onChange={(e) => setTheme(e.target.value)}
+              required
+              className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-white/5 border border-white/10 text-white text-base sm:text-sm font-sans focus:outline-none focus:border-amber-500/60"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-mono text-zinc-300">MODE PENGHARGAAN (AWARD MODE)</label>
+            <select
+              value={awardMode}
+              onChange={(e) => setAwardMode(e.target.value as any)}
+              className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-[#191c23] border border-white/10 text-amber-300 text-base sm:text-xs font-mono focus:outline-none focus:border-amber-500/60"
+            >
+              <option value="vote_and_jury">Voting Komunitas & Penghargaan Juri (Standar)</option>
+              <option value="vote_only">Hanya Voting Komunitas</option>
+              <option value="jury_only">Hanya Penghargaan Juri</option>
+              <option value="showcase_only">Hanya Showcase (Tanpa Pemenang)</option>
+            </select>
+          </div>
         </div>
 
         <div className="flex flex-col gap-1.5">
@@ -262,7 +280,7 @@ export function HistoricalImportForm({ artists }: HistoricalImportFormProps) {
           <div className="flex items-center gap-2">
             <Crown className="h-5 w-5 text-amber-400" />
             <h2 className="font-display font-bold text-lg text-[#f6f2e9]">
-              2. Daftar Karya & Peringkat Podium ({entries.length} Karya)
+              2. Daftar Karya & Pemenang ({entries.length} Karya)
             </h2>
           </div>
 
@@ -277,99 +295,133 @@ export function HistoricalImportForm({ artists }: HistoricalImportFormProps) {
         </div>
 
         <div className="flex flex-col gap-6">
-          {entries.map((entry, idx) => (
-            <div
-              key={idx}
-              className="p-5 rounded-2xl bg-white/[0.02] border border-white/10 flex flex-col gap-4 relative"
-            >
-              <div className="flex items-center justify-between">
-                <span className="px-3 py-1 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 font-mono text-xs font-bold uppercase">
-                  Peringkat #{entry.finalRank}
-                </span>
+          {entries.map((entry, idx) => {
+            const isCommunityWinner =
+              entry.winnerSlotType === "community_vote_winner" || entry.winnerSlotType === "community_vote";
+            const isJuryAward = entry.winnerSlotType === "jury_award";
 
-                {entries.length > 1 ? (
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveEntry(idx)}
-                    className="p-1.5 rounded-lg text-zinc-500 hover:text-red-400 hover:bg-white/5 transition-colors"
-                    title="Hapus Baris"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                ) : null}
+            return (
+              <div
+                key={idx}
+                className="p-5 rounded-2xl bg-white/[0.02] border border-white/10 flex flex-col gap-4 relative"
+              >
+                <div className="flex items-center justify-between">
+                  {isCommunityWinner ? (
+                    <span className="px-3 py-1 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 font-mono text-xs font-bold uppercase flex items-center gap-1.5">
+                      <Crown className="h-3.5 w-3.5" />
+                      <span>JUARA 1 KOMUNITAS</span>
+                    </span>
+                  ) : isJuryAward ? (
+                    <span className="px-3 py-1 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-400 font-mono text-xs font-bold uppercase flex items-center gap-1.5">
+                      <Award className="h-3.5 w-3.5" />
+                      <span>PILIHAN JURI</span>
+                    </span>
+                  ) : (
+                    <span className="px-3 py-1 rounded-xl bg-zinc-500/10 border border-zinc-500/30 text-zinc-400 font-mono text-xs font-medium uppercase flex items-center gap-1.5">
+                      <Users className="h-3.5 w-3.5" />
+                      <span>PARTISIPAN REGULER</span>
+                    </span>
+                  )}
+
+                  {entries.length > 1 ? (
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveEntry(idx)}
+                      className="p-1.5 rounded-lg text-zinc-500 hover:text-red-400 hover:bg-white/5 transition-colors cursor-pointer"
+                      title="Hapus Baris"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {/* Artist User Select */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-mono text-zinc-400">ARTIST MEMBER</label>
+                    <select
+                      value={entry.userId}
+                      onChange={(e) => handleEntryChange(idx, "userId", e.target.value)}
+                      className="w-full px-3 py-2 min-h-[44px] rounded-xl bg-[#191c23] border border-white/10 text-white text-xs font-mono focus:outline-none"
+                    >
+                      {artists.map((a) => (
+                        <option key={a.userId} value={a.userId}>
+                          {a.displayName} (@{a.slug})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Artwork Title */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-mono text-zinc-400">JUDUL KARYA</label>
+                    <input
+                      type="text"
+                      value={entry.artworkTitle}
+                      onChange={(e) => handleEntryChange(idx, "artworkTitle", e.target.value)}
+                      required
+                      className="w-full px-3 py-2 min-h-[44px] rounded-xl bg-white/5 border border-white/10 text-white text-base sm:text-xs font-sans focus:outline-none"
+                    />
+                  </div>
+
+                  {/* Stars Count */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-mono text-zinc-400">TOTAL SUARA STARS</label>
+                    <input
+                      type="number"
+                      value={entry.totalCommunityStars || 0}
+                      onChange={(e) => handleEntryChange(idx, "totalCommunityStars", parseInt(e.target.value) || 0)}
+                      min={0}
+                      className="w-full px-3 py-2 min-h-[44px] rounded-xl bg-white/5 border border-white/10 text-amber-300 font-mono text-base sm:text-xs focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Slot Type */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-mono text-zinc-400">KATEGORI PENGHARGAAN</label>
+                    <select
+                      value={entry.winnerSlotType}
+                      onChange={(e) => handleEntryChange(idx, "winnerSlotType", e.target.value)}
+                      className="w-full px-3 py-2 min-h-[44px] rounded-xl bg-[#191c23] border border-white/10 text-white text-xs font-mono focus:outline-none"
+                    >
+                      <option value="community_vote_winner">Juara Favorit Komunitas (Maksimal 1)</option>
+                      <option value="jury_award">Penghargaan Khusus Juri</option>
+                      <option value="none">Partisipan Submisi Reguler</option>
+                    </select>
+                  </div>
+
+                  {/* Software Used */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-mono text-zinc-400">SOFTWARE DIGUNAKAN</label>
+                    <input
+                      type="text"
+                      value={entry.softwareUsed || ""}
+                      onChange={(e) => handleEntryChange(idx, "softwareUsed", e.target.value)}
+                      placeholder="Photoshop, Blender, Clip Studio..."
+                      className="w-full px-3 py-2 min-h-[44px] rounded-xl bg-white/5 border border-white/10 text-white text-base sm:text-xs font-sans focus:outline-none"
+                    />
+                  </div>
+
+                  {/* Dynamic Category Label for Jury Award */}
+                  {isJuryAward ? (
+                    <div className="flex flex-col gap-1 sm:col-span-2">
+                      <label className="text-xs font-mono text-purple-300">NAMA KATEGORI PENGHARGAAN JURI</label>
+                      <input
+                        type="text"
+                        value={entry.categoryLabel || ""}
+                        onChange={(e) => handleEntryChange(idx, "categoryLabel", e.target.value)}
+                        placeholder="Misal: Penghargaan Komposisi Visual, Konsep Karakter Terbaik..."
+                        required
+                        className="w-full px-3 py-2 min-h-[44px] rounded-xl bg-purple-950/20 border border-purple-500/30 text-white text-base sm:text-xs font-sans focus:outline-none focus:border-purple-400"
+                      />
+                    </div>
+                  ) : null}
+                </div>
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Artist User Select */}
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-mono text-zinc-400">ARTIST MEMBER</label>
-                  <select
-                    value={entry.userId}
-                    onChange={(e) => handleEntryChange(idx, "userId", e.target.value)}
-                    className="w-full px-3 py-2 min-h-[44px] rounded-xl bg-[#191c23] border border-white/10 text-white text-xs font-mono focus:outline-none"
-                  >
-                    {artists.map((a) => (
-                      <option key={a.userId} value={a.userId}>
-                        {a.displayName} (@{a.slug})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Artwork Title */}
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-mono text-zinc-400">JUDUL KARYA</label>
-                  <input
-                    type="text"
-                    value={entry.artworkTitle}
-                    onChange={(e) => handleEntryChange(idx, "artworkTitle", e.target.value)}
-                    required
-                    className="w-full px-3 py-2 min-h-[44px] rounded-xl bg-white/5 border border-white/10 text-white text-base sm:text-xs font-sans focus:outline-none"
-                  />
-                </div>
-
-                {/* Stars Count */}
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-mono text-zinc-400">TOTAL SUARA STARS</label>
-                  <input
-                    type="number"
-                    value={entry.totalCommunityStars}
-                    onChange={(e) => handleEntryChange(idx, "totalCommunityStars", parseInt(e.target.value) || 0)}
-                    min={0}
-                    className="w-full px-3 py-2 min-h-[44px] rounded-xl bg-white/5 border border-white/10 text-amber-300 font-mono text-base sm:text-xs focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Slot Type */}
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-mono text-zinc-400">KATEGORI PENGHARGAAN</label>
-                  <select
-                    value={entry.winnerSlotType}
-                    onChange={(e) => handleEntryChange(idx, "winnerSlotType", e.target.value)}
-                    className="w-full px-3 py-2 min-h-[44px] rounded-xl bg-[#191c23] border border-white/10 text-white text-xs font-mono focus:outline-none"
-                  >
-                    <option value="community_vote">Podium Favorit Komunitas (Juara 1, 2, 3)</option>
-                    <option value="jury_award">Penghargaan Khusus Juri</option>
-                    <option value="none">Partisipan Submisi Reguler</option>
-                  </select>
-                </div>
-
-                {/* Software Used */}
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-mono text-zinc-400">SOFTWARE DIGUNAKAN</label>
-                  <input
-                    type="text"
-                    value={entry.softwareUsed || ""}
-                    onChange={(e) => handleEntryChange(idx, "softwareUsed", e.target.value)}
-                    placeholder="Photoshop, Blender, Clip Studio..."
-                    className="w-full px-3 py-2 min-h-[44px] rounded-xl bg-white/5 border border-white/10 text-white text-base sm:text-xs font-sans focus:outline-none"
-                  />
-                </div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
@@ -378,7 +430,7 @@ export function HistoricalImportForm({ artists }: HistoricalImportFormProps) {
         <button
           type="button"
           onClick={() => router.push("/admin/challenges")}
-          className="px-5 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white text-xs font-mono transition-colors"
+          className="px-5 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white text-xs font-mono transition-colors cursor-pointer"
         >
           Batal
         </button>

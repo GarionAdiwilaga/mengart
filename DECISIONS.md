@@ -511,6 +511,17 @@
 **Business Rule:** Invitations are direct bearer credentials administered strictly by active Admins and redeemed atomically.
 **Reason:** Authoritative product invariant under Blueprint 2.2.2 §4.4.
 
+### Historical Challenge Backfill Reconciliation with Blueprint 2.2.2
+**Decision:** Reconcile `importHistoricalChallengeAction` and `HistoricalImportForm.tsx` with canonical Blueprint 2.2.2 database schema invariants:
+1. **Single Community Winner:** At most one entry can have `winnerSlotType === "community_vote_winner"`, matching partial unique index `uniq_challenge_community_winner`. Multiple entries throw a pre-flight validation error.
+2. **Exclusion of Non-Winners from Results:** Regular participant submissions (`winnerSlotType === "none"`) are saved to `challenge_submissions` but strictly omitted from `challenge_results`.
+3. **Dynamic Unranked Jury Awards:** Jury awards are strictly unranked (`finalRank = null`), populated into `challenge_jury_awards`, and linked to `challenge_results.juryAwardId` and `recordedByUserId`. Obsolete numeric 1-100 jury scores are removed.
+4. **Portfolio Auto-Promotion:** Invocations of `importHistoricalChallengeAction` trigger `autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id)` so historical submissions are automatically reflected in artist portfolios with canonical captions.
+5. **Archived Voting Rounds:** Voting-enabled historical challenges automatically create an archived closed main round in `challenge_voting_rounds` and freeze candidates in `challenge_voting_round_candidates`.
+**Business Rule:** Historical challenges must maintain exact parity with live finished challenges across winner uniqueness, jury models, voting round structures, and portfolio auto-promotion.
+**Reason:** Resolves schema and runtime constraint violations between historical import action and Blueprint 2.2.2.
+
+
 
 
 

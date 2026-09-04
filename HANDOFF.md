@@ -1,39 +1,38 @@
-# Handoff Context — Production Launch Complete
+# Handoff Context — Historical Challenge Backfill Reconciliation
 
 **Date:** 2026-09-04  
-**Authoritative Production Launch SHA:** `15591d1844b20a3da66ca7693ec2557fc9a58406`  
-**Current State:** All Release Gates (A–H), Phase 9 Legacy Cleanup, Baseline Revisions, and Production Documentation — **100% VERIFIED & PUSHED TO REMOTE**  
-**Production Readiness:** 100% Zero-Debt Clean Architecture  
-**Overall Status:** **GO — PUBLIC PRODUCTION LAUNCH COMPLETE**
+**Current State:** Implementation, Schema Alignment & Invariant Verification 100% Complete.  
+**Overall Status:** **PRODUCTION READY (GO)**
 
 ---
 
-## Deliverables Completed & Verified
+## 1. Reconciled Invariants & Implemented Features
 
-1. **Database Forward Migration 0015 (`0015_prune_gif_media_type.sql`):**
-   - Altered PostgreSQL enum `media_type` to `('image', 'video')`, completely dropping `'gif'`.
-   - Migration registered in `drizzle/meta/_journal.json` (`idx: 15`) and applied cleanly to active database.
+1. **Single Community Winner Invariant:**
+   - Validated at most 1 Community Winner (`uniq_challenge_community_winner`) in `importHistoricalChallengeAction`.
+   - Regular participants (`winnerSlotType === "none"`) are saved to `challenge_submissions` but excluded from `challenge_results`.
 
-2. **Pruned GIF & WebM from UI & Shared Types:**
-   - Updated `src/db/schema/artworks.ts` (`mediaTypeEnum = pgEnum("media_type", ["image", "video"])`).
-   - Cleaned file pickers in `QuickUploadModal.tsx`, `ChallengeSubmissionModal.tsx`, `UploadArtworkModal.tsx` (`accept="image/png,image/jpeg,image/webp,video/mp4"`).
-   - Removed `{ key: "gif", label: "GIF" }` filter tab from `GalleryGrid.tsx`.
-   - Pruned `"gif"` from TypeScript unions in `useArtworks.ts`, `useGalleryFilterStore.ts`, `historicalBackfill.ts`, `page.tsx`, and `ArtworkLightbox.tsx`.
+2. **Dynamic Unranked Jury Awards:**
+   - Inserted into `challenge_jury_awards` with `recordedByUserId = actor.id`.
+   - Materialized into `challenge_results` with `awardType = 'jury_award'`, `categoryLabel`, `juryAwardId`, and unranked `finalRank = null`.
+   - Removed legacy `juryScore` (1–100) state and UI inputs.
 
-3. **Completed Artwork Spoiler Viewing UX (`GateE_Additive_Decision_Spoiler.md`):**
-   - `ArtworkCard.tsx`: Applied `blur-xl` filter to unrevealed spoiler artworks, rendered safe unrevealed alt text, displayed spoiler badge overlay, and provided an interactive "Buka Konten / Reveal" button.
-   - `ArtworkLightbox.tsx`: Displayed spoiler warning card overlay and "Tampilkan Karya (Buka Spoiler)" button when `isSpoiler && !isSpoilerRevealed`.
-   - `/artworks/[slug]/page.tsx`: Passed `isSpoiler={artwork.isSpoiler}` to `ArtworkLightbox`.
+3. **Portfolio Auto-Promotion:**
+   - Invoked `autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id)` inside the transaction.
+   - All historical challenge entries are auto-promoted to artist portfolios with deterministic system captions.
 
-4. **Purged Residual Watermark Text & Policies:**
-   - Cleaned schema comments in `artworks.ts` and policy docstrings in `policy.ts`.
-   - Updated test suite logs in `testModernizedArchitecture.ts` and `testPhase2Pipeline.ts`.
+4. **Archived Voting Rounds & Candidate Freeze:**
+   - Inserted closed main voting round into `challenge_voting_rounds` and snapshot candidate records in `challenge_voting_round_candidates` for voting-enabled modes.
 
-5. **Test Matrix & Verification (100% Pass):**
-   - `npm run db:migrate`: Applied migration 0015 cleanly.
-   - `npm run test:migrate`: 12/12 scenarios passed (including Scenario 12 for 0014 -> 0015 migration and enum assertion).
-   - `npx tsx src/lib/__tests__/testPhase9LegacyCleanup.ts`: 6/6 scenarios passed.
-   - `npm run test:all`: 18/18 test suites passed.
-   - `npm run lint`: 0 errors, 0 warnings.
-   - `npm run build`: 31/31 routes + media worker compiled cleanly.
-   - `npx playwright test`: 15/15 E2E user journeys passed.
+5. **UI Updates (`HistoricalImportForm.tsx`):**
+   - Added `awardMode` selector (`vote_and_jury`, `vote_only`, `jury_only`, `showcase_only`).
+   - Default entries configured with 1 Community Winner, 1 Jury Award (with dynamic category input), and 1 Regular Participant.
+
+6. **Full Verification Matrix:**
+   - `npx tsx src/lib/__tests__/testPhase6HistoricalAndMedia.ts`: PASSED (8/8 scenarios).
+   - `npm run test:migrate`: PASSED (12/12 scenarios).
+   - `npm run test:all`: PASSED (18/18 test suites).
+   - `npm run lint`: PASSED (0 errors, 0 warnings).
+   - `npm run build`: PASSED (31/31 routes + media worker compiled cleanly).
+
+

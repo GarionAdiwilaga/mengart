@@ -1,6 +1,5 @@
 "use server";
 
-import { auth } from "@/auth";
 import { requireModerator } from "@/lib/rbac";
 import { db } from "@/db";
 import {
@@ -9,13 +8,17 @@ import {
   artworks,
   artworkVersions,
   challengeResults,
+  challengeJuryAwards,
+  challengeVotingRounds,
+  challengeVotingRoundCandidates,
   auditLogs,
   activityLogs,
   users,
   profiles,
 } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { autoAddChallengeSubmissionsToPortfolioService } from "@/lib/services/portfolioService";
 
 export interface HistoricalEntryInput {
   userId: string;
@@ -26,11 +29,11 @@ export interface HistoricalEntryInput {
   masterStorageKey: string;
   publicStorageKey: string;
   thumbnailStorageKey?: string;
-  finalRank: number;
-  totalCommunityStars: number;
-  juryScore?: number;
-  winnerSlotType?: "community_vote" | "jury_award" | "none";
-  slotTitle?: string;
+  finalRank?: number | null;
+  totalCommunityStars?: number;
+  winnerSlotType?: "community_vote_winner" | "community_vote" | "jury_award" | "none";
+  categoryLabel?: string;
+  slotTitle?: string; // Backwards compatibility with existing form state
 }
 
 export interface HistoricalChallengeInput {
@@ -43,11 +46,16 @@ export interface HistoricalChallengeInput {
   submissionDeadline: string;
   votingStartsAt: string;
   votingDeadline: string;
+  awardMode?: "vote_and_jury" | "vote_only" | "jury_only" | "showcase_only";
+  starsPerMember?: number;
   entries: HistoricalEntryInput[];
 }
 
-export async function importHistoricalChallengeAction(data: HistoricalChallengeInput) {
-  const actor = await requireModerator();
+export async function importHistoricalChallengeAction(
+  data: HistoricalChallengeInput,
+  actorOverride?: { id: string; role: "admin" | "moderator" }
+) {
+  const actor = actorOverride || (await requireModerator());
 
   if (!data.title.trim() || !data.slug.trim() || !data.theme.trim()) {
     throw new Error("Judul, slug, dan tema challenge wajib diisi.");
@@ -64,6 +72,22 @@ export async function importHistoricalChallengeAction(data: HistoricalChallengeI
     throw new Error(`Challenge dengan slug "${data.slug}" sudah terdaftar.`);
   }
 
+  // Validate single community winner constraint
+  const communityWinners = data.entries.filter(
+    (e) => e.winnerSlotType === "community_vote_winner" || e.winnerSlotType === "community_vote"
+  );
+  if (communityWinners.length > 1) {
+    throw new Error("Hanya boleh ada maksimal satu (1) Juara Favorit Komunitas per challenge.");
+  }
+
+  const awardMode = data.awardMode || "vote_and_jury";
+  if (awardMode === "jury_only" && communityWinners.length > 0) {
+    throw new Error("Challenge mode 'jury_only' tidak memperbolehkan pemenang voting komunitas.");
+  }
+  if (awardMode === "showcase_only" && data.entries.some((e) => e.winnerSlotType && e.winnerSlotType !== "none")) {
+    throw new Error("Challenge mode 'showcase_only' tidak memperbolehkan pemenang atau award.");
+  }
+
   return await db.transaction(async (tx) => {
     // 1. Create Challenge Entity
     const [challenge] = await tx
@@ -75,8 +99,8 @@ export async function importHistoricalChallengeAction(data: HistoricalChallengeI
         description: data.description.trim(),
         promptRules: data.promptRules.trim() || "Ketentuan karya orisinal atelier.",
         status: "finished", // Authoritatively marked as finished
-        awardMode: "vote_and_jury",
-        starsPerMember: 3,
+        awardMode,
+        starsPerMember: data.starsPerMember ?? 1,
         isVisible: true,
         submissionStartsAt: new Date(data.submissionStartsAt),
         submissionDeadline: new Date(data.submissionDeadline),
@@ -86,7 +110,25 @@ export async function importHistoricalChallengeAction(data: HistoricalChallengeI
       })
       .returning();
 
-    // 2. Process Each Participant Entry
+    // 2. Archived Voting Round Creation (for voting-enabled modes)
+    let mainRound: any = null;
+    if (awardMode === "vote_and_jury" || awardMode === "vote_only") {
+      const [round] = await tx
+        .insert(challengeVotingRounds)
+        .values({
+          challengeId: challenge.id,
+          roundType: "main",
+          status: "closed",
+          startsAt: new Date(data.votingStartsAt),
+          deadline: new Date(data.votingDeadline),
+          starsPerMember: data.starsPerMember ?? 1,
+          finalizedAt: new Date(data.votingDeadline),
+        })
+        .returning();
+      mainRound = round;
+    }
+
+    // 3. Process Each Participant Entry
     for (let i = 0; i < data.entries.length; i++) {
       const entry = data.entries[i];
 
@@ -101,7 +143,7 @@ export async function importHistoricalChallengeAction(data: HistoricalChallengeI
         throw new Error(`Profil pengguna untuk user ID ${entry.userId} tidak ditemukan.`);
       }
 
-      const artworkSlug = `${data.slug}-${profile.slug || "artist"}-${Date.now().toString(36)}-${i + 1}`;
+      const artworkSlug = `${challenge.slug}-${profile.slug || "artist"}-${Date.now().toString(36)}-${i + 1}`;
 
       // Create Artwork
       const [art] = await tx
@@ -153,23 +195,63 @@ export async function importHistoricalChallengeAction(data: HistoricalChallengeI
         })
         .returning();
 
-      const awardType = entry.winnerSlotType === "jury_award" ? "jury_award" : "community_vote_winner";
-      const categoryLabel = entry.slotTitle || (entry.winnerSlotType === "jury_award" ? "Pilihan Dewan Juri Atelier" : "Juara Favorit Komunitas");
+      // Freeze Candidate in main voting round if active
+      if (mainRound) {
+        await tx.insert(challengeVotingRoundCandidates).values({
+          votingRoundId: mainRound.id,
+          submissionId: sub.id,
+        });
+      }
 
-      // Create Challenge Result Entry
-      await tx.insert(challengeResults).values({
-        challengeId: challenge.id,
-        submissionId: sub.id,
-        finalRank: entry.finalRank,
-        awardType,
-        categoryLabel,
-        totalCommunityStars: entry.totalCommunityStars || 0,
-        juryScore: entry.juryScore ? entry.juryScore.toString() : null,
-        isPublished: true,
-      });
+      // Awards Processing (Only winners enter challengeResults)
+      const isCommunityWinner =
+        entry.winnerSlotType === "community_vote_winner" || entry.winnerSlotType === "community_vote";
+      const isJuryAward = entry.winnerSlotType === "jury_award";
+
+      if (isCommunityWinner) {
+        const categoryLabel = entry.categoryLabel || entry.slotTitle || "Juara Favorit Komunitas";
+        await tx.insert(challengeResults).values({
+          challengeId: challenge.id,
+          submissionId: sub.id,
+          finalRank: 1,
+          awardType: "community_vote_winner",
+          categoryLabel,
+          totalCommunityStars: entry.totalCommunityStars || 0,
+          sourceVotingRoundId: mainRound?.id || null,
+          resolutionMethod: "historical_import",
+          isPublished: true,
+        });
+      } else if (isJuryAward) {
+        const categoryLabel = entry.categoryLabel || entry.slotTitle || "Penghargaan Khusus Juri";
+        const [juryAward] = await tx
+          .insert(challengeJuryAwards)
+          .values({
+            challengeId: challenge.id,
+            submissionId: sub.id,
+            categoryLabel,
+            recordedByUserId: actor.id,
+          })
+          .returning();
+
+        await tx.insert(challengeResults).values({
+          challengeId: challenge.id,
+          submissionId: sub.id,
+          finalRank: null, // Strictly UNRANKED per Gate C / Blueprint 2.2.2
+          awardType: "jury_award",
+          categoryLabel,
+          juryAwardId: juryAward.id,
+          recordedByUserId: actor.id,
+          totalCommunityStars: entry.totalCommunityStars || 0,
+          isPublished: true,
+        });
+      }
+      // Note: if winnerSlotType === "none" or undefined, do NOT insert into challengeResults.
     }
 
-    // 3. Audit Log & Activity Log
+    // 4. Auto-promote all challenge submissions to portfolio_entries with resolved captions
+    await autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id);
+
+    // 5. Audit Log & Activity Log
     await tx.insert(auditLogs).values({
       actorId: actor.id,
       action: "historical_challenge_imported",
@@ -195,10 +277,17 @@ export async function importHistoricalChallengeAction(data: HistoricalChallengeI
       },
     });
 
-    revalidatePath("/challenges");
-    revalidatePath(`/challenges/${challenge.slug}`);
-    revalidatePath(`/challenges/${challenge.slug}/results`);
-    revalidatePath("/admin/historical-backfill");
+    try {
+      revalidatePath("/challenges");
+      revalidatePath(`/challenges/${challenge.slug}`);
+      revalidatePath(`/challenges/${challenge.slug}/results`);
+      revalidatePath("/admin/challenges");
+      revalidatePath("/admin/challenges/import");
+      revalidatePath("/me/portfolio");
+      revalidatePath("/gallery");
+    } catch (_e) {
+      // Ignored outside Next.js request context (e.g. tests)
+    }
 
     return {
       success: true,
