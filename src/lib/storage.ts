@@ -7,9 +7,8 @@ const STORAGE_ROOT = process.env.STORAGE_ROOT || path.join(process.cwd(), "stora
 export const STORAGE_PATHS = {
   root: STORAGE_ROOT,
   master: path.join(STORAGE_ROOT, "master"), // Private clean full-resolution files
-  public: path.join(STORAGE_ROOT, "public"), // Public watermarked derivatives & thumbnails
+  public: path.join(STORAGE_ROOT, "public"), // Public resolution-capped derivatives & thumbnails
   temp: path.join(STORAGE_ROOT, "temp"), // Temporary upload staging
-  watermarks: path.join(STORAGE_ROOT, "watermarks"), // Community watermark assets
 };
 
 /**
