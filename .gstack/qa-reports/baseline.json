@@ -1,0 +1,15 @@
+{
+  "date": "2026-09-04",
+  "url": "http://127.0.0.1:3000",
+  "healthScore": 99,
+  "issues": [],
+  "categoryScores": {
+    "console": 100,
+    "links": 100,
+    "functional": 100,
+    "visual": 98,
+    "ux": 98,
+    "performance": 98,
+    "securityA11y": 100
+  }
+}
