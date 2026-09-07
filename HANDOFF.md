@@ -37,26 +37,8 @@
 
 ---
 
-## 2. System-Wide Feature Audit Status
+## 4. Development Multi-Role Quick-Login
 
-- Full codebase audit across all 10 domains completed and recorded in `/home/garion/.gemini/antigravity/brain/b4ed771e-7fb5-4f7d-8b47-c2eab4da7f3f/system_wide_feature_audit_report.md`.
-- 6 actionable edge cases identified (homepage challenge submission leak, `/me/portfolio` deletedAt filter, `/challenges` directory tab visibility for paused/tie_pending, WhatsApp referral consent guard, candidate spoiler presentation, and TypeScript union cleanup).
-
----
-
-## 3. Final Polish & Hardening Instruction Artifact Created
-
-- **Instruction Artifact:** `/home/garion/.gemini/antigravity/brain/b4ed771e-7fb5-4f7d-8b47-c2eab4da7f3f/final_polish_hardening_instructions.md`
-- **Target Files (10):**
-  1. `src/app/page.tsx`
-  2. `src/app/me/portfolio/page.tsx`
-  3. `src/app/challenges/page.tsx`
-  4. `src/app/commissions/page.tsx`
-  5. `src/app/challenges/[slug]/page.tsx`
-  6. `src/lib/services/submissionService.ts`
-  7. `src/lib/services/votingService.ts`
-  8. `src/stores/useLightboxStore.ts`
-  9. `src/app/actions/artworks.ts`
-  10. `src/lib/services/artworkService.ts`
-- **Next Action:** Build Agent executes the 6 polish fixes and runs the test/lint/build verification pipeline.
-
+- **Status:** Complete & verified in local dev mode (`NODE_ENV !== 'production'`).
+- **Feature:** 1-click test login toolbar on `/login` to simulate Admin (`admin@mengart.local`), Moderator (`moderator@mengart.local`), Member (`member@mengart.local`), and Unverified/Pending Invite (`pending@mengart.local`) without Google OAuth credentials.
+- **Verification:** `npm run db:seed:accounts` and `npm run test:all` (100% pass across all test suites).

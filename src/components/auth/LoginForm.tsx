@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { signIn } from "next-auth/react";
-import { Loader2, AlertCircle } from "lucide-react";
+import { Loader2, AlertCircle, ShieldCheck, ShieldAlert, Palette, UserPlus, Sparkles } from "lucide-react";
 
 interface LoginFormProps {
   initialError?: string;
@@ -10,6 +10,7 @@ interface LoginFormProps {
 
 export function LoginForm({ initialError }: LoginFormProps) {
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [activeDevLogin, setActiveDevLogin] = useState<string | null>(null);
 
   const initialErrorMessage = (() => {
     if (initialError === "InviteRequired") {
@@ -37,6 +38,20 @@ export function LoginForm({ initialError }: LoginFormProps) {
     }
   };
 
+  const handleDevLogin = async (email: string) => {
+    setActiveDevLogin(email);
+    try {
+      await signIn("credentials", {
+        email,
+        callbackUrl: "/api/auth/redeem-callback",
+      });
+    } catch (err: any) {
+      setActiveDevLogin(null);
+    }
+  };
+
+  const isDev = process.env.NODE_ENV !== "production";
+
   return (
     <div className="flex flex-col gap-5">
       {initialErrorMessage ? (
@@ -54,7 +69,7 @@ export function LoginForm({ initialError }: LoginFormProps) {
       <button
         type="button"
         onClick={handleGoogleLogin}
-        disabled={isGoogleLoading}
+        disabled={isGoogleLoading || !!activeDevLogin}
         className="w-full py-3.5 px-4 rounded-xl bg-white text-zinc-900 font-semibold text-sm hover:bg-zinc-100 transition-all duration-200 shadow-md flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50"
       >
         {isGoogleLoading ? (
@@ -81,6 +96,118 @@ export function LoginForm({ initialError }: LoginFormProps) {
         )}
         <span>Masuk dengan Google</span>
       </button>
+
+      {/* Development Quick Role Switcher */}
+      {isDev && (
+        <div className="mt-2 pt-4 border-t border-white/10 flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-[11px] font-mono text-amber-400 font-semibold tracking-wider">
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>TESTING / DEV QUICK LOGIN</span>
+            </div>
+            <span className="text-[10px] font-mono text-zinc-500 uppercase">Local Mode</span>
+          </div>
+
+          <p className="text-[11px] text-zinc-400 leading-tight">
+            Klik salah satu akun di bawah untuk simulasi login instan dengan berbagai role tanpa Google OAuth:
+          </p>
+
+          <div className="grid grid-cols-1 gap-2">
+            {/* Admin */}
+            <button
+              type="button"
+              onClick={() => handleDevLogin("admin@mengart.local")}
+              disabled={isGoogleLoading || !!activeDevLogin}
+              className="w-full py-2.5 px-3 rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-200 text-xs font-medium flex items-center justify-between transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="h-4 w-4 text-red-400" />
+                <div className="text-left">
+                  <div className="font-semibold text-white">Admin Atelier</div>
+                  <div className="text-[10px] text-zinc-400">admin@mengart.local</div>
+                </div>
+              </div>
+              {activeDevLogin === "admin@mengart.local" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-red-400" />
+              ) : (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-red-500/20 text-red-300 font-bold">
+                  ADMIN
+                </span>
+              )}
+            </button>
+
+            {/* Moderator */}
+            <button
+              type="button"
+              onClick={() => handleDevLogin("moderator@mengart.local")}
+              disabled={isGoogleLoading || !!activeDevLogin}
+              className="w-full py-2.5 px-3 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-200 text-xs font-medium flex items-center justify-between transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-blue-400" />
+                <div className="text-left">
+                  <div className="font-semibold text-white">Komorebi Moderator</div>
+                  <div className="text-[10px] text-zinc-400">moderator@mengart.local</div>
+                </div>
+              </div>
+              {activeDevLogin === "moderator@mengart.local" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />
+              ) : (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-bold">
+                  MODERATOR
+                </span>
+              )}
+            </button>
+
+            {/* Member */}
+            <button
+              type="button"
+              onClick={() => handleDevLogin("member@mengart.local")}
+              disabled={isGoogleLoading || !!activeDevLogin}
+              className="w-full py-2.5 px-3 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-200 text-xs font-medium flex items-center justify-between transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <div className="flex items-center gap-2">
+                <Palette className="h-4 w-4 text-amber-400" />
+                <div className="text-left">
+                  <div className="font-semibold text-white">Luna Valerius (Artist)</div>
+                  <div className="text-[10px] text-zinc-400">member@mengart.local</div>
+                </div>
+              </div>
+              {activeDevLogin === "member@mengart.local" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
+              ) : (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">
+                  MEMBER
+                </span>
+              )}
+            </button>
+
+            {/* Visitor / Pending Invite */}
+            <button
+              type="button"
+              onClick={() => handleDevLogin("pending@mengart.local")}
+              disabled={isGoogleLoading || !!activeDevLogin}
+              className="w-full py-2.5 px-3 rounded-lg bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 text-xs font-medium flex items-center justify-between transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <div className="flex items-center gap-2">
+                <UserPlus className="h-4 w-4 text-zinc-400" />
+                <div className="text-left">
+                  <div className="font-semibold text-white">Pengunjung Baru (Pending Invite)</div>
+                  <div className="text-[10px] text-zinc-400">pending@mengart.local</div>
+                </div>
+              </div>
+              {activeDevLogin === "pending@mengart.local" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />
+              ) : (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-700 text-zinc-300 font-bold">
+                  UNVERIFIED
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

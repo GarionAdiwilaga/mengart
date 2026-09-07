@@ -532,16 +532,9 @@
 **Business Rule:** Public artwork showcases require visible portfolio entries and active membership. Creator vaults exclude soft-deleted items. Directory tabs capture all operational lifecycle states. WhatsApp links strictly require explicit artist consent. Spoiler artworks must visually obscure content until deliberately revealed.
 **Reason:** Eliminates query leakage, preserves artist privacy, avoids UI 404 dead-ends, and achieves 100% type purity across the repository.
 
+## 2026-09-04
 
-
-
-
-
-
-
-
-
-
-
-
-
+### Development Multi-Role Impersonation & Quick-Login Provider
+**Decision:** Added a non-production `Credentials` provider and 1-click test login toolbar on `/login` to simulate Admin (`admin@mengart.local`), Moderator (`moderator@mengart.local`), Member (`member@mengart.local`), and Unverified/Pending Invite (`pending@mengart.local`) accounts without requiring Google OAuth credentials.
+**Business Rule:** Dev credentials authorization is strictly disabled in production (`process.env.NODE_ENV === 'production'`) and only operates on seeded development accounts.
+**Reason:** Enables fast manual QA and multi-role testing of admin tools, moderation queues, voting flows, and onboarding without needing external OAuth credentials.
