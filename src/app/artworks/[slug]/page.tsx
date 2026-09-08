@@ -29,13 +29,26 @@ import { FocusedTaskShell } from "@/components/layout/shells/FocusedTaskShell";
 import { TimestampWITA } from "@/components/ui/atoms/TimestampWITA";
 import { AtelierBadge } from "@/components/ui/atoms/AtelierBadge";
 import { canViewArtwork, canAccessMasterMedia, type PolicyUser } from "@/lib/policy";
+import { getSafeReturnUrl } from "@/lib/navigation/returnUrl";
 
 interface ArtworkDetailPageProps {
   params: Promise<{ slug: string }>;
+  searchParams?: Promise<{ from?: string }>;
 }
 
-export default async function ArtworkDetailPage({ params }: ArtworkDetailPageProps) {
+export default async function ArtworkDetailPage({ params, searchParams }: ArtworkDetailPageProps) {
   const { slug } = await params;
+  const { from } = (await searchParams) || {};
+  const backHref = getSafeReturnUrl(from, "/gallery");
+  const backLabel = backHref.startsWith("/challenges")
+    ? "Challenge"
+    : backHref === "/" || backHref === "/home"
+    ? "Beranda"
+    : backHref.startsWith("/artists")
+    ? "Profil"
+    : backHref.startsWith("/me") || backHref.startsWith("/dashboard")
+    ? "Studio"
+    : "Galeri";
   const session = await auth();
 
   let viewer: PolicyUser | null = null;
@@ -183,8 +196,8 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
 
   return (
     <FocusedTaskShell
-      backHref="/gallery"
-      backLabel="Galeri"
+      backHref={backHref}
+      backLabel={backLabel}
       title={artwork.title}
       rightAction={
         <div className="flex items-center gap-2">

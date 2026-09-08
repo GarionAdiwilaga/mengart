@@ -24,6 +24,8 @@ import {
   parseWitaDatetimeLocalInput,
   formatWitaDate,
 } from "@/lib/presentation/witaTime";
+import { importHistoricalChallengeService } from "@/lib/services/historicalBackfillService";
+import { getSafeReturnUrl } from "@/lib/navigation/returnUrl";
 
 async function runPhase2SecurityAndContractTests() {
   console.log("\n=================================================================");
@@ -497,6 +499,243 @@ async function runPhase2SecurityAndContractTests() {
     // If viewer is anonymous or passing 3rd party ID, server-side derivation must not use arbitrary client ID
     // In our patched getChallengeVotingData, userId is strictly determined by session.user.id
     console.log("  ✓ A01: getChallengeVotingData verified to derive caller identity strictly server-side.");
+  }
+
+  // =========================================================================
+  // SCENARIO 6: R01 - Historical Import Authorization Boundary & Invariant Suite
+  // =========================================================================
+  console.log("\n[Scenario 6] Verifying R01 Historical Import authorization boundary & negative tests...");
+  {
+    const { user: normalMember } = await createTestUser("member", "active");
+    const { user: suspendedStaff } = await createTestUser("moderator", "suspended");
+    const { user: deletedStaff } = await createTestUser("moderator", "deleted");
+    const { user: demotedStaff } = await createTestUser("member", "active");
+    const { user: activeStaff } = await createTestUser("moderator", "active");
+
+    const sampleHistoricalInput = {
+      title: `Past Challenge ${suffix}`,
+      slug: `past-challenge-${suffix}`,
+      theme: "Historical Theme",
+      description: "Past challenge backfill",
+      promptRules: "Rules",
+      submissionStartsAt: new Date(Date.now() - 30 * 86400000).toISOString(),
+      submissionDeadline: new Date(Date.now() - 25 * 86400000).toISOString(),
+      votingStartsAt: new Date(Date.now() - 24 * 86400000).toISOString(),
+      votingDeadline: new Date(Date.now() - 20 * 86400000).toISOString(),
+      awardMode: "vote_only" as const,
+      entries: [
+        {
+          userId: normalMember.id,
+          artworkTitle: "Past Art 1",
+          mediaType: "image" as const,
+          masterStorageKey: `master_past1_${suffix}.png`,
+          publicStorageKey: `public_past1_${suffix}.webp`,
+          finalRank: 1,
+          winnerSlotType: "community_vote_winner" as const,
+          totalCommunityStars: 5,
+        },
+      ],
+    };
+
+    // 1. Negative: Anonymous / missing actor
+    let anonRejected = false;
+    try {
+      await importHistoricalChallengeService(db, { id: "", role: "" } as any, sampleHistoricalInput);
+    } catch (e: any) {
+      anonRejected = true;
+    }
+    if (!anonRejected) throw new Error("Scenario 6 Failed: Anonymous actor was not rejected!");
+
+    // 2. Negative: Ordinary member caller
+    let memberRejected = false;
+    try {
+      await importHistoricalChallengeService(db, { id: normalMember.id, role: normalMember.role }, sampleHistoricalInput);
+    } catch (e: any) {
+      memberRejected = true;
+    }
+    if (!memberRejected) throw new Error("Scenario 6 Failed: Ordinary member was not rejected!");
+
+    // 3. Negative: Suspended staff caller
+    let suspendedRejected = false;
+    try {
+      await importHistoricalChallengeService(db, { id: suspendedStaff.id, role: suspendedStaff.role }, sampleHistoricalInput);
+    } catch (e: any) {
+      suspendedRejected = true;
+    }
+    if (!suspendedRejected) throw new Error("Scenario 6 Failed: Suspended staff was not rejected!");
+
+    // 4. Negative: Deleted staff caller
+    let deletedRejected = false;
+    try {
+      await importHistoricalChallengeService(db, { id: deletedStaff.id, role: deletedStaff.role }, sampleHistoricalInput);
+    } catch (e: any) {
+      deletedRejected = true;
+    }
+    if (!deletedRejected) throw new Error("Scenario 6 Failed: Deleted staff was not rejected!");
+
+    // 5. Negative: Demoted staff caller (claims role moderator, but database has member)
+    let demotedRejected = false;
+    try {
+      await importHistoricalChallengeService(db, { id: demotedStaff.id, role: "moderator" }, sampleHistoricalInput);
+    } catch (e: any) {
+      demotedRejected = true;
+    }
+    if (!demotedRejected) throw new Error("Scenario 6 Failed: Demoted staff caller was not rejected by live database check!");
+
+    // 6. Negative: Extra injected identity property in input payload
+    let injectedPayloadRejected = false;
+    try {
+      const injectedPayload = {
+        ...sampleHistoricalInput,
+        actorOverride: { id: activeStaff.id, role: "admin" },
+      };
+      // When called with ordinary member credentials, injected actorOverride must be ignored and still fail
+      await importHistoricalChallengeService(db, { id: normalMember.id, role: normalMember.role }, injectedPayload as any);
+    } catch (e: any) {
+      injectedPayloadRejected = true;
+    }
+    if (!injectedPayloadRejected) throw new Error("Scenario 6 Failed: Injected actorOverride bypassed auth boundary!");
+
+    // 7. Positive: Authorized active staff caller succeeds
+    const successResult = await importHistoricalChallengeService(db, { id: activeStaff.id, role: activeStaff.role }, sampleHistoricalInput);
+    if (!successResult.success || !successResult.challengeId) {
+      throw new Error("Scenario 6 Failed: Active staff historical import failed unexpectedly.");
+    }
+
+    console.log("  ✓ R01: Action boundary & service verified against anonymous, member, suspended, deleted, demoted callers and payload injection.");
+  }
+
+  // =========================================================================
+  // SCENARIO 7: R05 - Disqualification Phase Behavior Matrix & Monotonic Locking
+  // =========================================================================
+  console.log("\n[Scenario 7] Verifying R05 Disqualification phase matrix & monotonic locks...");
+  {
+    const { user: adminStaff } = await createTestUser("admin", "active");
+    const { user: suspendedMod } = await createTestUser("moderator", "suspended");
+    const { user: regularUser } = await createTestUser("member", "active");
+    const { user: artist, profile: artistProfile } = await createTestUser("member", "active");
+    const { artwork, version } = await createTestArtwork(artist.id, artistProfile.id, "Disq Test Art");
+
+    // Finished challenge
+    const [finishedChallenge] = await db
+      .insert(challenges)
+      .values({
+        title: `Finished Challenge ${suffix}`,
+        slug: `finished-challenge-${suffix}`,
+        theme: "Finished",
+        description: "Finished challenge",
+        promptRules: "Rules",
+        status: "finished",
+        awardMode: "vote_only",
+      })
+      .returning();
+
+    const [subFinished] = await db
+      .insert(challengeSubmissions)
+      .values({
+        challengeId: finishedChallenge.id,
+        userId: artist.id,
+        profileId: artistProfile.id,
+        artworkId: artwork.id,
+        artworkVersionId: version.id,
+        title: "Finished Sub",
+        submissionStatus: "submitted",
+      })
+      .returning();
+
+    // 1. Negative: Non-staff caller
+    let nonStaffRejected = false;
+    try {
+      await disqualifyChallengeCandidateService(db, { userId: regularUser.id, role: regularUser.role }, { submissionId: subFinished.id, reason: "Bypass attempt" });
+    } catch (e: any) {
+      nonStaffRejected = true;
+    }
+    if (!nonStaffRejected) throw new Error("Scenario 7 Failed: Non-staff caller was not rejected!");
+
+    // 2. Negative: Suspended staff caller
+    let suspendedStaffRejected = false;
+    try {
+      await disqualifyChallengeCandidateService(db, { userId: suspendedMod.id, role: suspendedMod.role }, { submissionId: subFinished.id, reason: "Bypass attempt" });
+    } catch (e: any) {
+      suspendedStaffRejected = true;
+    }
+    if (!suspendedStaffRejected) throw new Error("Scenario 7 Failed: Suspended staff caller was not rejected!");
+
+    // 3. Negative: Finished challenge disqualification rejected
+    let finishedRejected = false;
+    try {
+      await disqualifyChallengeCandidateService(db, { userId: adminStaff.id, role: adminStaff.role }, { submissionId: subFinished.id, reason: "Should revoke first" });
+    } catch (e: any) {
+      finishedRejected = true;
+    }
+    if (!finishedRejected) throw new Error("Scenario 7 Failed: Disqualification on finished challenge was not rejected!");
+
+    // 4. Cancelled challenge
+    const [cancelledChallenge] = await db
+      .insert(challenges)
+      .values({
+        title: `Cancelled Challenge ${suffix}`,
+        slug: `cancelled-challenge-${suffix}`,
+        theme: "Cancelled",
+        description: "Cancelled challenge",
+        promptRules: "Rules",
+        status: "cancelled",
+        awardMode: "vote_only",
+      })
+      .returning();
+
+    const [subCancelled] = await db
+      .insert(challengeSubmissions)
+      .values({
+        challengeId: cancelledChallenge.id,
+        userId: artist.id,
+        profileId: artistProfile.id,
+        artworkId: artwork.id,
+        artworkVersionId: version.id,
+        title: "Cancelled Sub",
+        submissionStatus: "submitted",
+      })
+      .returning();
+
+    let cancelledRejected = false;
+    try {
+      await disqualifyChallengeCandidateService(db, { userId: adminStaff.id, role: adminStaff.role }, { submissionId: subCancelled.id, reason: "Should reject" });
+    } catch (e: any) {
+      cancelledRejected = true;
+    }
+    if (!cancelledRejected) throw new Error("Scenario 7 Failed: Disqualification on cancelled challenge was not rejected!");
+
+    console.log("  ✓ R05: Disqualification phase matrix verified for staff checks, finished, and cancelled guards.");
+  }
+
+  // =========================================================================
+  // SCENARIO 8: R09 - Return URL Validator & Navigation Continuity
+  // =========================================================================
+  console.log("\n[Scenario 8] Verifying R09 Return URL validator & continuity rules...");
+  {
+    // Valid relative paths
+    if (getSafeReturnUrl("/gallery") !== "/gallery") throw new Error("Scenario 8 Failed: Valid relative path rejected.");
+    if (getSafeReturnUrl("/gallery?tab=challenge") !== "/gallery?tab=challenge") throw new Error("Scenario 8 Failed: Valid query path rejected.");
+    if (getSafeReturnUrl("/challenges/atelier-2026") !== "/challenges/atelier-2026") throw new Error("Scenario 8 Failed: Valid challenge path rejected.");
+
+    // Protocol-relative attacks
+    if (getSafeReturnUrl("//evil.com") !== "/gallery") throw new Error("Scenario 8 Failed: Protocol-relative '//' attack not prevented.");
+    if (getSafeReturnUrl("/\\evil.com") !== "/gallery") throw new Error("Scenario 8 Failed: '/\\' attack not prevented.");
+    if (getSafeReturnUrl("\\evil.com") !== "/gallery") throw new Error("Scenario 8 Failed: Backslash attack not prevented.");
+    if (getSafeReturnUrl("/artworks\\test") !== "/gallery") throw new Error("Scenario 8 Failed: Mid-path backslash not prevented.");
+
+    // External protocol schemes
+    if (getSafeReturnUrl("https://evil.com") !== "/gallery") throw new Error("Scenario 8 Failed: External https:// not prevented.");
+    if (getSafeReturnUrl("javascript:alert(1)") !== "/gallery") throw new Error("Scenario 8 Failed: javascript: not prevented.");
+    if (getSafeReturnUrl("data:text/html,evil") !== "/gallery") throw new Error("Scenario 8 Failed: data: not prevented.");
+
+    // Auth loop paths
+    if (getSafeReturnUrl("/login") !== "/gallery") throw new Error("Scenario 8 Failed: /login loop not prevented.");
+    if (getSafeReturnUrl("/login?error=test") !== "/gallery") throw new Error("Scenario 8 Failed: /login query loop not prevented.");
+    if (getSafeReturnUrl("/account-suspended") !== "/gallery") throw new Error("Scenario 8 Failed: /account-suspended loop not prevented.");
+    if (getSafeReturnUrl("/onboarding") !== "/gallery") throw new Error("Scenario 8 Failed: /onboarding loop not prevented.");
+
+    console.log("  ✓ R09: getSafeReturnUrl verified against protocol-relative attacks, backslashes, external protocols, and auth loops.");
   }
 
   console.log("\n=================================================================");

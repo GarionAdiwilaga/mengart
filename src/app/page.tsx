@@ -24,7 +24,7 @@ import {
   users,
   portfolioEntries,
 } from "@/db/schema";
-import { eq, and, isNull, inArray, desc } from "drizzle-orm";
+import { eq, and, isNull, inArray, desc, sql } from "drizzle-orm";
 import { getCurrentMonthlySpotlight } from "@/lib/activity";
 import { getSiteSetting } from "@/app/actions/settings";
 import { auth } from "@/auth";
@@ -38,54 +38,10 @@ export default async function HomePage() {
   const spotlight = await getCurrentMonthlySpotlight();
   const aboutSetting = await getSiteSetting("about_community");
   const defaultAbout =
-    "Mengart Atelier adalah ruang berkarya dan kolektif seni visual digital privat. Kami mengedepankan kurasi karya autentik beresolusi tinggi, apresiasi konstruktif antar-kreator, sistem voting tantangan karya yang adil tanpa bias popularitas, serta transparansi layanan komisi profesional.";
+    "Mengart Atelier adalah ruang berkarya dan kolektif seni visual privat. Kami mengedepankan kurasi karya autentik beresolusi tinggi, apresiasi konstruktif antar-kreator, sistem voting tantangan karya yang adil tanpa bias popularitas, serta transparansi layanan komisi profesional.";
   const aboutContent = aboutSetting || defaultAbout;
 
-  // 1. Recent Public Artworks
-  const recentArtworks = await db
-    .select({
-      id: artworks.id,
-      title: artworks.title,
-      slug: artworks.slug,
-      description: artworks.description,
-      mediaType: artworks.mediaType,
-      audience: artworks.audience,
-      isSpoiler: artworks.isSpoiler,
-      critiqueMode: artworks.critiqueMode,
-      artistName: profiles.displayName,
-      artistSlug: profiles.slug,
-      artistAvatar: profiles.avatarUrl,
-      artistCommissionStatus: profiles.commissionStatus,
-      publicStorageKey: artworkVersions.publicStorageKey,
-      thumbnailStorageKey: artworkVersions.thumbnailStorageKey,
-      width: artworkVersions.width,
-      height: artworkVersions.height,
-      createdAt: artworks.createdAt,
-    })
-    .from(artworks)
-    .innerJoin(profiles, eq(profiles.userId, artworks.userId))
-    .innerJoin(users, eq(users.id, artworks.userId))
-    .innerJoin(
-      portfolioEntries,
-      and(
-        eq(portfolioEntries.artworkId, artworks.id),
-        eq(portfolioEntries.profileId, profiles.id)
-      )
-    )
-    .innerJoin(artworkVersions, eq(artworkVersions.id, artworks.currentVersionId))
-    .where(
-      and(
-        eq(artworks.audience, "public"),
-        isNull(artworks.deletedAt),
-        eq(users.membershipStatus, "active"),
-        eq(portfolioEntries.isVisible, true),
-        inArray(artworks.publicationStatus, ["published", "ready"])
-      )
-    )
-    .orderBy(desc(artworks.createdAt))
-    .limit(6);
-
-  // 2. Visible Active or Upcoming Challenge
+  // 1. Visible Active or Upcoming Challenge (Displayed first on mobile)
   const [activeChallenge] = await db
     .select()
     .from(challenges)
@@ -103,7 +59,7 @@ export default async function HomePage() {
     .orderBy(desc(challenges.createdAt))
     .limit(1);
 
-  // 3. Latest Published Challenge Result / Hall of Fame Highlight
+  // 2. Latest Published Challenge Result / Hall of Fame Highlight
   const [latestFinishedChallenge] = await db
     .select()
     .from(challenges)
@@ -172,6 +128,56 @@ export default async function HomePage() {
     }
   }
 
+  // 3. Recent Public Artworks (both Karya Bebas & Karya Challenge)
+  const recentArtworks = await db
+    .select({
+      id: artworks.id,
+      title: artworks.title,
+      slug: artworks.slug,
+      description: artworks.description,
+      mediaType: artworks.mediaType,
+      audience: artworks.audience,
+      isSpoiler: artworks.isSpoiler,
+      critiqueMode: artworks.critiqueMode,
+      artistName: profiles.displayName,
+      artistSlug: profiles.slug,
+      artistAvatar: profiles.avatarUrl,
+      artistCommissionStatus: profiles.commissionStatus,
+      publicStorageKey: artworkVersions.publicStorageKey,
+      thumbnailStorageKey: artworkVersions.thumbnailStorageKey,
+      width: artworkVersions.width,
+      height: artworkVersions.height,
+      createdAt: artworks.createdAt,
+      challengeSubmissionId: challengeSubmissions.id,
+      challengeTitle: challenges.title,
+      challengeSlug: challenges.slug,
+      effectiveCaption: sql<string | null>`COALESCE(${portfolioEntries.customCaption}, ${portfolioEntries.systemCaption})`,
+    })
+    .from(artworks)
+    .innerJoin(profiles, eq(profiles.userId, artworks.userId))
+    .innerJoin(users, eq(users.id, artworks.userId))
+    .innerJoin(
+      portfolioEntries,
+      and(
+        eq(portfolioEntries.artworkId, artworks.id),
+        eq(portfolioEntries.profileId, profiles.id)
+      )
+    )
+    .innerJoin(artworkVersions, eq(artworkVersions.id, artworks.currentVersionId))
+    .leftJoin(challengeSubmissions, eq(challengeSubmissions.artworkId, artworks.id))
+    .leftJoin(challenges, eq(challenges.id, challengeSubmissions.challengeId))
+    .where(
+      and(
+        eq(artworks.audience, "public"),
+        isNull(artworks.deletedAt),
+        eq(users.membershipStatus, "active"),
+        eq(portfolioEntries.isVisible, true),
+        inArray(artworks.publicationStatus, ["published", "ready"])
+      )
+    )
+    .orderBy(desc(artworks.createdAt))
+    .limit(6);
+
   // 4. Member Artists Open for Commission
   const openCommissionArtists = await db
     .select({
@@ -195,85 +201,166 @@ export default async function HomePage() {
     .limit(4);
 
   return (
-    <main className="p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-16 sm:gap-20 flex-1">
-      {/* SECTION 1: Hero / Atelier Community Identity */}
-      <section className="py-6 sm:py-10 flex flex-col items-start gap-8 border-b border-white/5 pb-14">
-        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-mono tracking-wide">
+    <main className="p-4 sm:p-8 lg:p-12 max-w-7xl mx-auto flex flex-col gap-12 sm:gap-16 flex-1">
+      {/* SECTION 1: Compact Atelier Header (Neutral copy & fast viewport entry) */}
+      <section className="pt-2 sm:pt-4 flex flex-col items-start gap-4 border-b border-white/5 pb-8">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-mono tracking-wide">
           <Sparkles className="h-3.5 w-3.5" />
-          <span>KOMUNITAS DIGITAL ART & ATELIER PRIVAT</span>
+          <span>KOMUNITAS SENI VISUAL & ATELIER PRIVAT</span>
         </div>
 
-        <h1 className="font-display text-4xl sm:text-6xl lg:text-7xl font-extrabold text-[#f6f2e9] tracking-tight leading-[1.1]">
-          Ruang Karya & <br />
-          <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-amber-200 to-amber-500">
-            Kolektif Kreator Digital.
-          </span>
-        </h1>
-
-        <p className="text-base sm:text-lg text-zinc-400 max-w-3xl font-sans leading-relaxed">
-          Atelier digital khusus kreator seni visual. Temukan portofolio terkurasi,
-          buka layanan komisi langsung via WhatsApp, dan ikuti community challenge
-          dengan sistem voting Stars yang adil tanpa bias algoritma.
-        </p>
-
-        <div className="flex flex-wrap items-center gap-4 pt-2">
-          <Link
-            href="/gallery"
-            className="px-6 py-3 min-h-[44px] rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-lg shadow-amber-500/20 flex items-center gap-2"
-          >
-            <Palette className="h-4 w-4" />
-            <span>Jelajahi Galeri Publik</span>
-          </Link>
-          <Link
-            href="/invite"
-            className="px-6 py-3 min-h-[44px] rounded-2xl bg-white/5 hover:bg-white/10 text-[#f6f2e9] text-xs font-mono border border-white/10 transition-colors flex items-center gap-2"
-          >
-            <span>Tukarkan Undangan Anggota</span>
-            <ArrowRight className="h-3.5 w-3.5 text-zinc-400" />
-          </Link>
-        </div>
-
-        {/* 3 Value Pillars */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 w-full mt-4">
-          <div className="glass-panel p-6 rounded-2xl flex flex-col gap-3">
-            <div className="h-10 w-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-              <Palette className="h-5 w-5" />
-            </div>
-            <h3 className="font-display font-semibold text-lg text-[#f6f2e9]">
-              Portofolio Terkurasi
-            </h3>
-            <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed font-sans">
-              Showcase publik teroptimasi beresolusi tinggi berdampingan dengan arsip master terlindungi bagi anggota atelier.
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 w-full">
+          <div className="flex flex-col gap-2 max-w-2xl">
+            <h1 className="font-display text-3xl sm:text-4xl lg:text-5xl font-extrabold text-[#f6f2e9] tracking-tight leading-[1.15]">
+              Ruang Berkarya & <br className="hidden sm:inline" />
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-amber-200 to-amber-500">
+                Kolektif Kreator Seni Visual.
+              </span>
+            </h1>
+            <p className="text-xs sm:text-sm text-zinc-400 font-sans leading-relaxed">
+              Atelier digital khusus kreator seni visual. Temukan portofolio terkurasi, ikuti tantangan karya dengan alokasi Star yang adil, dan akses layanan komisi kreator.
             </p>
           </div>
 
-          <div className="glass-panel p-6 rounded-2xl flex flex-col gap-3">
-            <div className="h-10 w-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-              <Trophy className="h-5 w-5" />
-            </div>
-            <h3 className="font-display font-semibold text-lg text-[#f6f2e9]">
-              Art Challenge & Stars
-            </h3>
-            <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed font-sans">
-              Voting suara anonim dengan alokasi Stars serta penilaian juri independen tanpa bias urutan scroll.
-            </p>
-          </div>
-
-          <div className="glass-panel p-6 rounded-2xl flex flex-col gap-3">
-            <div className="h-10 w-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-              <ShieldCheck className="h-5 w-5" />
-            </div>
-            <h3 className="font-display font-semibold text-lg text-[#f6f2e9]">
-              Pusat Layanan Komisi
-            </h3>
-            <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed font-sans">
-              Informasi ketersediaan slot, transparansi ketentuan do/don't, dan alur pemesanan langsung via WhatsApp.
-            </p>
+          <div className="flex flex-wrap items-center gap-3 shrink-0">
+            <Link
+              href="/gallery"
+              className="px-4 py-2.5 min-h-[44px] min-w-[44px] rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Palette className="h-4 w-4" />
+              <span>Lihat karya</span>
+            </Link>
+            <Link
+              href="/invite"
+              className="px-4 py-2.5 min-h-[44px] min-w-[44px] rounded-xl bg-white/5 hover:bg-white/10 text-[#f6f2e9] text-xs font-mono border border-white/10 transition-colors flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <span>Tukarkan Undangan</span>
+              <ArrowRight className="h-3.5 w-3.5 text-zinc-400" />
+            </Link>
           </div>
         </div>
       </section>
 
-      {/* SECTION 2: Recent Public Artworks Grid */}
+      {/* SECTION 2: Current / Upcoming Visible Challenge (1st Mobile Viewport Priority) */}
+      {activeChallenge ? (
+        <section
+          id="active-challenge"
+          aria-label="Challenge Aktif"
+          className="glass-panel p-6 sm:p-10 rounded-3xl border border-amber-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative overflow-hidden shadow-2xl"
+        >
+          <div className="flex flex-col gap-3 max-w-2xl">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 text-xs font-mono w-fit">
+              <Trophy className="h-3.5 w-3.5" />
+              <span>
+                {activeChallenge.status === "submission_open"
+                  ? "CHALLENGE AKTIF · SUBMISI DIBUKA"
+                  : activeChallenge.status === "voting_open"
+                  ? "CHALLENGE AKTIF · PEMUNGUTAN SUARA"
+                  : activeChallenge.status === "tiebreak_open"
+                  ? "CHALLENGE AKTIF · TIEBREAK BERLANGSUNG"
+                  : "CHALLENGE MENDATANG"}
+              </span>
+            </div>
+
+            <h2 className="font-display font-bold text-2xl sm:text-3xl text-[#f6f2e9]">
+              {activeChallenge.title}
+            </h2>
+
+            <p className="text-xs sm:text-sm text-zinc-400 font-sans leading-relaxed line-clamp-2">
+              {activeChallenge.description}
+            </p>
+
+            {activeChallenge.submissionDeadline ? (
+              <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 pt-1">
+                <Clock className="h-3.5 w-3.5 text-amber-400" />
+                <span>
+                  Batas Waktu:{" "}
+                  {new Intl.DateTimeFormat("id-ID", {
+                    timeZone: "Asia/Makassar",
+                    day: "numeric",
+                    month: "short",
+                    year: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  }).format(new Date(activeChallenge.submissionDeadline))}{" "}
+                  WITA
+                </span>
+              </div>
+            ) : null}
+          </div>
+
+          {activeChallenge.status === "voting_open" || activeChallenge.status === "tiebreak_open" ? (
+            <Link
+              href={`/challenges/${activeChallenge.slug}/voting`}
+              className="px-6 py-3 min-h-[44px] min-w-[44px] rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+            >
+              <span>Beri Star</span>
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          ) : (
+            <Link
+              href={`/challenges/${activeChallenge.slug}`}
+              className="px-6 py-3 min-h-[44px] min-w-[44px] rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+            >
+              <span>Lihat Ketentuan & Ikuti</span>
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          )}
+        </section>
+      ) : null}
+
+      {/* SECTION 3: Latest Published Challenge Result / Hall of Fame Highlight */}
+      {winnerHighlight ? (
+        <section className="glass-panel p-6 sm:p-10 rounded-3xl border border-white/10 flex flex-col md:flex-row items-center gap-8">
+          {winnerHighlight.thumbnailKey ? (
+            <div className="w-full md:w-64 aspect-square rounded-2xl overflow-hidden bg-black/40 border border-white/10 shrink-0">
+              <img
+                src={`/api/media/public/${winnerHighlight.thumbnailKey}`}
+                alt={winnerHighlight.artworkTitle}
+                className="w-full h-full object-cover"
+              />
+            </div>
+          ) : null}
+
+          <div className="flex flex-col gap-3 flex-1">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 text-xs font-mono w-fit">
+              <Award className="h-3.5 w-3.5" />
+              <span>{winnerHighlight.awardTitle.toUpperCase()}</span>
+            </div>
+
+            <h3 className="font-display font-bold text-2xl text-[#f6f2e9]">
+              "{winnerHighlight.artworkTitle}"
+            </h3>
+
+            <p className="text-xs sm:text-sm text-zinc-400 font-sans">
+              Karya terpilih pada challenge{" "}
+              <span className="text-zinc-200 font-semibold">
+                {winnerHighlight.challenge.title}
+              </span>{" "}
+              oleh{" "}
+              <Link
+                href={`/artists/${winnerHighlight.artistSlug}`}
+                className="text-amber-400 hover:underline font-semibold"
+              >
+                {winnerHighlight.artistName}
+              </Link>
+              .
+            </p>
+
+            <div className="pt-2">
+              <Link
+                href={`/challenges/${winnerHighlight.challenge.slug}/results`}
+                className="px-5 py-2.5 min-h-[44px] min-w-[44px] rounded-xl bg-white/5 hover:bg-white/10 text-xs font-mono text-zinc-300 hover:text-white border border-white/10 transition-colors inline-flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Trophy className="h-3.5 w-3.5 text-amber-400" />
+                <span>Lihat Hall of Fame Lengkap</span>
+              </Link>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {/* SECTION 4: Recent Public Artworks Grid (Karya Bebas & Karya Challenge) */}
       <section className="flex flex-col gap-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -291,9 +378,9 @@ export default async function HomePage() {
           </div>
           <Link
             href="/gallery"
-            className="text-xs font-mono text-amber-400 hover:text-amber-300 flex items-center gap-1 min-h-[44px] transition-colors"
+            className="text-xs font-mono text-amber-400 hover:text-amber-300 flex items-center gap-1 min-h-[44px] min-w-[44px] transition-colors cursor-pointer"
           >
-            <span>Semua Karya</span>
+            <span>Lihat karya</span>
             <ChevronRight className="h-3.5 w-3.5" />
           </Link>
         </div>
@@ -322,6 +409,11 @@ export default async function HomePage() {
                   artistSlug: item.artistSlug,
                   artistAvatar: item.artistAvatar,
                   artistCommissionStatus: (item.artistCommissionStatus as any) || "closed",
+                  challengeSubmissionId: item.challengeSubmissionId,
+                  challengeTitle: item.challengeTitle,
+                  challengeSlug: item.challengeSlug,
+                  effectiveCaption: item.effectiveCaption,
+                  origin: item.challengeSubmissionId ? "challenge" : "independent",
                 }}
               />
             ))}
@@ -332,111 +424,6 @@ export default async function HomePage() {
           </div>
         )}
       </section>
-
-      {/* SECTION 3: Current / Upcoming Visible Challenge Showcase */}
-      {activeChallenge ? (
-        <section className="glass-panel p-8 sm:p-10 rounded-3xl border border-amber-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative overflow-hidden shadow-2xl">
-          <div className="flex flex-col gap-3 max-w-2xl">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 text-xs font-mono w-fit">
-              <Trophy className="h-3.5 w-3.5" />
-              <span>
-                {activeChallenge.status === "submission_open"
-                  ? "CHALLENGE AKTIF · SUBMISI DIBUKA"
-                  : activeChallenge.status === "voting_open"
-                  ? "CHALLENGE AKTIF · VOTING DIBUKA"
-                  : activeChallenge.status === "tiebreak_open"
-                  ? "CHALLENGE AKTIF · TIEBREAK BERLANGSUNG"
-                  : "CHALLENGE MENDATANG"}
-              </span>
-            </div>
-
-            <h2 className="font-display font-bold text-2xl sm:text-3xl text-[#f6f2e9]">
-              {activeChallenge.title}
-            </h2>
-
-            <p className="text-xs sm:text-sm text-zinc-400 font-sans leading-relaxed line-clamp-2">
-              {activeChallenge.description}
-            </p>
-
-            {activeChallenge.submissionDeadline ? (
-              <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 pt-1">
-                <Clock className="h-3.5 w-3.5 text-amber-400" />
-                <span>
-                  Batas Submisi:{" "}
-                  {new Intl.DateTimeFormat("id-ID", {
-                    timeZone: "Asia/Makassar",
-                    day: "numeric",
-                    month: "short",
-                    year: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  }).format(new Date(activeChallenge.submissionDeadline))}{" "}
-                  WITA
-                </span>
-              </div>
-            ) : null}
-          </div>
-
-          <Link
-            href={`/challenges/${activeChallenge.slug}`}
-            className="px-6 py-3 min-h-[44px] rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-md shadow-amber-500/20 flex items-center gap-2 shrink-0"
-          >
-            <span>Lihat Ketentuan & Ikuti</span>
-            <ArrowRight className="h-4 w-4" />
-          </Link>
-        </section>
-      ) : null}
-
-      {/* SECTION 4: Latest Published Challenge Winner / Result Highlight */}
-      {winnerHighlight ? (
-        <section className="glass-panel p-8 sm:p-10 rounded-3xl border border-white/10 flex flex-col md:flex-row items-center gap-8">
-          {winnerHighlight.thumbnailKey ? (
-            <div className="w-full md:w-64 aspect-square rounded-2xl overflow-hidden bg-black/40 border border-white/10 shrink-0">
-              <img
-                src={`/api/media/public/${winnerHighlight.thumbnailKey}`}
-                alt={winnerHighlight.artworkTitle}
-                className="w-full h-full object-cover"
-              />
-            </div>
-          ) : null}
-
-          <div className="flex flex-col gap-3 flex-1">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 text-xs font-mono w-fit">
-              <Award className="h-3.5 w-3.5" />
-              <span>{winnerHighlight.awardTitle.toUpperCase()}</span>
-            </div>
-
-            <h3 className="font-display font-bold text-2xl text-[#f6f2e9]">
-              "{winnerHighlight.artworkTitle}"
-            </h3>
-
-            <p className="text-xs sm:text-sm text-zinc-400 font-sans">
-              Karya pemenang pada challenge{" "}
-              <span className="text-zinc-200 font-semibold">
-                {winnerHighlight.challenge.title}
-              </span>{" "}
-              oleh{" "}
-              <Link
-                href={`/artists/${winnerHighlight.artistSlug}`}
-                className="text-amber-400 hover:underline font-semibold"
-              >
-                {winnerHighlight.artistName}
-              </Link>
-              .
-            </p>
-
-            <div className="pt-2">
-              <Link
-                href={`/challenges/${winnerHighlight.challenge.slug}/results`}
-                className="px-5 py-2.5 min-h-[44px] rounded-xl bg-white/5 hover:bg-white/10 text-xs font-mono text-zinc-300 hover:text-white border border-white/10 transition-colors inline-flex items-center gap-2"
-              >
-                <Trophy className="h-3.5 w-3.5 text-amber-400" />
-                <span>Lihat Hall of Fame Lengkap</span>
-              </Link>
-            </div>
-          </div>
-        </section>
-      ) : null}
 
       {/* SECTION 5: Current Featured Artist Spotlight Card */}
       {spotlight ? (
@@ -458,7 +445,7 @@ export default async function HomePage() {
             <div className="flex flex-wrap items-center gap-3 pt-2">
               <Link
                 href={`/artists/${spotlight.artistSlug}`}
-                className="px-5 py-2.5 min-h-[44px] rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-md shadow-amber-500/20 flex items-center gap-1.5"
+                className="px-5 py-2.5 min-h-[44px] min-w-[44px] rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono transition-all shadow-md shadow-amber-500/20 flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <User className="h-3.5 w-3.5" />
                 <span>Kunjungi Profil Artist</span>
@@ -466,7 +453,7 @@ export default async function HomePage() {
               {spotlight.artworkSlug ? (
                 <Link
                   href={`/artworks/${spotlight.artworkSlug}`}
-                  className="px-5 py-2.5 min-h-[44px] rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-xs font-mono transition-colors"
+                  className="px-5 py-2.5 min-h-[44px] min-w-[44px] rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-xs font-mono transition-colors flex items-center justify-center cursor-pointer"
                 >
                   Lihat Karya Sorotan
                 </Link>
@@ -504,7 +491,7 @@ export default async function HomePage() {
           </div>
           <Link
             href="/commissions"
-            className="text-xs font-mono text-amber-400 hover:text-amber-300 flex items-center gap-1 min-h-[44px] transition-colors"
+            className="text-xs font-mono text-amber-400 hover:text-amber-300 flex items-center gap-1 min-h-[44px] min-w-[44px] transition-colors cursor-pointer"
           >
             <span>Semua Layanan</span>
             <ChevronRight className="h-3.5 w-3.5" />

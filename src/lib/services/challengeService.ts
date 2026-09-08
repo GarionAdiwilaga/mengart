@@ -12,7 +12,7 @@ import {
   auditLogs,
   users,
 } from "@/db/schema";
-import { eq, and, sql, desc, asc, lte, isNull } from "drizzle-orm";
+import { eq, and, sql, desc, asc, lte, isNull, inArray } from "drizzle-orm";
 import type { EffectiveChallengeStatus } from "@/lib/challenges";
 import { validateJuryPhaseReadinessService } from "./juryService";
 import { autoAddChallengeSubmissionsToPortfolioService } from "./portfolioService";
@@ -1010,17 +1010,110 @@ export async function disqualifyChallengeCandidateService(
     throw new Error("Alasan diskualifikasi wajib diisi minimal 5 karakter.");
   }
 
-  if (actor.role !== "admin" && actor.role !== "moderator") {
-    throw new Error("Hanya administrator atau moderator yang dapat mendiskualifikasi karya.");
-  }
-
   const run = async (tx: any) => {
-    // 1. Lock and fetch submission
+    // 1. Live Staff Authorization Check
+    if (!actor?.userId) {
+      throw new Error("Pengguna autentikasi tidak valid.");
+    }
+    const [staffUser] = await tx
+      .select({
+        id: users.id,
+        role: users.role,
+        membershipStatus: users.membershipStatus,
+        deletedAt: users.deletedAt,
+      })
+      .from(users)
+      .where(eq(users.id, actor.userId))
+      .limit(1);
+
+    if (
+      !staffUser ||
+      (staffUser.role !== "admin" && staffUser.role !== "moderator") ||
+      staffUser.membershipStatus !== "active" ||
+      staffUser.deletedAt
+    ) {
+      throw new Error("Hanya administrator atau moderator aktif yang dapat mendiskualifikasi karya.");
+    }
+
+    // 2. Preliminary Non-Locking Lookup to find challengeId
+    const [subLookup] = await tx
+      .select({
+        id: challengeSubmissions.id,
+        challengeId: challengeSubmissions.challengeId,
+        submissionStatus: challengeSubmissions.submissionStatus,
+      })
+      .from(challengeSubmissions)
+      .where(eq(challengeSubmissions.id, submissionId))
+      .limit(1);
+
+    if (!subLookup) {
+      throw new Error("Submisi tidak ditemukan.");
+    }
+
+    if (subLookup.submissionStatus === "disqualified") {
+      throw new Error("Submisi telah didiskualifikasi sebelumnya.");
+    }
+
+    // Check if an active round exists for this challenge
+    const [activeRoundLookup] = await tx
+      .select({
+        id: challengeVotingRounds.id,
+        roundType: challengeVotingRounds.roundType,
+        status: challengeVotingRounds.status,
+      })
+      .from(challengeVotingRounds)
+      .where(
+        and(
+          eq(challengeVotingRounds.challengeId, subLookup.challengeId),
+          eq(challengeVotingRounds.status, "open")
+        )
+      )
+      .limit(1);
+
+    // 3. Monotonic Row-Locking Hierarchy:
+    // challengeVotingRounds (1) -> challenges (2) -> challengeSubmissions (3) -> challengeBallots (4)
+
+    // (1) Lock active round FOR UPDATE if exists
+    let activeRound: any = null;
+    if (activeRoundLookup) {
+      const [lockedRound] = await tx
+        .select()
+        .from(challengeVotingRounds)
+        .where(eq(challengeVotingRounds.id, activeRoundLookup.id))
+        .for("update")
+        .limit(1);
+      activeRound = lockedRound;
+    }
+
+    // (2) Lock parent challenge row FOR UPDATE
+    const [challenge] = await tx
+      .select()
+      .from(challenges)
+      .where(eq(challenges.id, subLookup.challengeId))
+      .for("update")
+      .limit(1);
+
+    if (!challenge) {
+      throw new Error("Challenge tidak ditemukan.");
+    }
+
+    // Phase Behavior Matrix validation
+    if (challenge.status === "finished") {
+      throw new Error(
+        "Tidak dapat mendiskualifikasi karya pada challenge yang telah selesai. Batalkan hasil (revoke) terlebih dahulu."
+      );
+    }
+    if (challenge.status === "cancelled") {
+      throw new Error("Tidak dapat mendiskualifikasi karya pada challenge yang telah dibatalkan.");
+    }
+
+    // (3) Lock challenge submission FOR UPDATE
     const [submission] = await tx
       .select()
       .from(challengeSubmissions)
       .where(eq(challengeSubmissions.id, submissionId))
-      .for("update");
+      .for("update")
+      .limit(1);
 
     if (!submission) {
       throw new Error("Submisi tidak ditemukan.");
@@ -1030,26 +1123,43 @@ export async function disqualifyChallengeCandidateService(
       throw new Error("Submisi telah didiskualifikasi sebelumnya.");
     }
 
-    // 2. Lock and fetch parent challenge
-    const [challenge] = await tx
-      .select()
-      .from(challenges)
-      .where(eq(challenges.id, submission.challengeId))
-      .for("update");
+    // (4) Star refunds for open round:
+    // Only refund stars if there is an active round that is open (voting_open or tiebreak_open)
+    let votedStars: any[] = [];
+    if (
+      activeRound &&
+      (challenge.status === "voting_open" ||
+        challenge.status === "tiebreak_open" ||
+        challenge.status === "paused")
+    ) {
+      votedStars = await tx
+        .select({
+          id: challengeBallotStars.id,
+          ballotId: challengeBallotStars.ballotId,
+          starsCount: challengeBallotStars.starsCount,
+          userId: challengeBallots.userId,
+        })
+        .from(challengeBallotStars)
+        .innerJoin(challengeBallots, eq(challengeBallots.id, challengeBallotStars.ballotId))
+        .where(
+          and(
+            eq(challengeBallots.votingRoundId, activeRound.id),
+            eq(challengeBallotStars.submissionId, submission.id)
+          )
+        );
 
-    if (!challenge) {
-      throw new Error("Challenge tidak ditemukan.");
+      if (votedStars.length > 0) {
+        // Lock ballots FOR UPDATE in monotonic order (step 4)
+        const ballotIds = Array.from(new Set(votedStars.map((v: any) => v.ballotId)));
+        await tx
+          .select({ id: challengeBallots.id })
+          .from(challengeBallots)
+          .where(inArray(challengeBallots.id, ballotIds))
+          .for("update");
+      }
     }
 
-    if (challenge.status === "finished" || challenge.status === "cancelled") {
-      throw new Error(
-        `Tidak dapat mendiskualifikasi karya pada challenge yang telah ${
-          challenge.status === "finished" ? "selesai" : "dibatalkan"
-        }.`
-      );
-    }
-
-    // 3. Mark submission as disqualified
+    // 4. Update Submission Status to "disqualified"
     await tx
       .update(challengeSubmissions)
       .set({
@@ -1061,25 +1171,27 @@ export async function disqualifyChallengeCandidateService(
       })
       .where(eq(challengeSubmissions.id, submission.id));
 
-    // 4. Remove from candidate snapshots
-    await tx
-      .delete(challengeVotingRoundCandidates)
-      .where(eq(challengeVotingRoundCandidates.submissionId, submission.id));
+    // 5. Remove candidate snapshot from open round (if open)
+    // Note: Do NOT delete closed-round candidate snapshots (preserve history)!
+    if (activeRound) {
+      await tx
+        .delete(challengeVotingRoundCandidates)
+        .where(
+          and(
+            eq(challengeVotingRoundCandidates.votingRoundId, activeRound.id),
+            eq(challengeVotingRoundCandidates.submissionId, submission.id)
+          )
+        );
+    }
 
-    // 5. Star refund for any ballots that voted for this submission
-    const votedStars = await tx
-      .select({
-        id: challengeBallotStars.id,
-        ballotId: challengeBallotStars.ballotId,
-        starsCount: challengeBallotStars.starsCount,
-        userId: challengeBallots.userId,
-      })
-      .from(challengeBallotStars)
-      .innerJoin(challengeBallots, eq(challengeBallots.id, challengeBallotStars.ballotId))
-      .where(eq(challengeBallotStars.submissionId, submission.id));
+    // 6. Deduct and refund stars for open round ballots
+    const voidedAllocations = votedStars.map((vote: any) => ({
+      ballotId: vote.ballotId,
+      userId: vote.userId,
+      starsCount: vote.starsCount,
+    }));
 
     for (const vote of votedStars) {
-      // Deduct refunded stars from ballot's total allocated count
       await tx
         .update(challengeBallots)
         .set({
@@ -1088,7 +1200,6 @@ export async function disqualifyChallengeCandidateService(
         })
         .where(eq(challengeBallots.id, vote.ballotId));
 
-      // Notify voter about returned Star
       await tx.insert(notifications).values({
         userId: vote.userId,
         type: "star_returned",
@@ -1101,24 +1212,31 @@ export async function disqualifyChallengeCandidateService(
       });
     }
 
-    // Delete star votes for this submission
     if (votedStars.length > 0) {
       await tx
         .delete(challengeBallotStars)
-        .where(eq(challengeBallotStars.submissionId, submission.id));
+        .where(
+          and(
+            eq(challengeBallotStars.submissionId, submission.id),
+            inArray(
+              challengeBallotStars.ballotId,
+              votedStars.map((v: any) => v.ballotId)
+            )
+          )
+        );
     }
 
-    // 6. Remove any draft jury awards for this submission
+    // 7. Remove any draft jury awards for this submission
     await tx
       .delete(challengeJuryAwards)
       .where(eq(challengeJuryAwards.submissionId, submission.id));
 
-    // 7. Remove any draft results for this submission
+    // 8. Remove any draft results for this submission
     await tx
       .delete(challengeResults)
       .where(eq(challengeResults.submissionId, submission.id));
 
-    // 8. Notify candidate artist
+    // 9. Notify candidate artist
     await tx.insert(notifications).values({
       userId: submission.userId,
       type: "moderation",
@@ -1130,7 +1248,140 @@ export async function disqualifyChallengeCandidateService(
       priority: "high",
     });
 
-    // 9. Audit log
+    // 10. Check remaining valid submitted candidates
+    const [countResult] = await tx
+      .select({ count: sql<number>`count(*)::int` })
+      .from(challengeSubmissions)
+      .where(
+        and(
+          eq(challengeSubmissions.challengeId, challenge.id),
+          eq(challengeSubmissions.submissionStatus, "submitted")
+        )
+      );
+    const remainingCount = countResult?.count ?? 0;
+
+    const activeLifecycleStatuses = [
+      "submission_locked",
+      "voting_open",
+      "tie_pending",
+      "tiebreak_open",
+      "jury_selection_open",
+      "review",
+      "paused",
+    ];
+
+    if (activeLifecycleStatuses.includes(challenge.status)) {
+      if (remainingCount === 0) {
+        // Zero submissions remaining -> Cancel challenge
+        await tx
+          .update(challenges)
+          .set({
+            status: "cancelled",
+            cancellationReason: "Challenge dibatalkan karena seluruh submisi telah didiskualifikasi.",
+            updatedAt: new Date(),
+          })
+          .where(eq(challenges.id, challenge.id));
+
+        if (activeRound) {
+          await tx
+            .update(challengeVotingRounds)
+            .set({ status: "closed", updatedAt: new Date() })
+            .where(eq(challengeVotingRounds.id, activeRound.id));
+        }
+
+        await tx.insert(auditLogs).values({
+          actorId: actor.userId,
+          action: "challenge.cancelled_all_disqualified",
+          targetType: "challenge",
+          targetId: challenge.id,
+          reason: "Seluruh karya submisi telah didiskualifikasi sehingga challenge dibatalkan.",
+          metadata: { challengeId: challenge.id },
+        });
+      } else if (
+        remainingCount === 1 &&
+        (challenge.status === "voting_open" ||
+          challenge.status === "tiebreak_open" ||
+          challenge.status === "tie_pending")
+      ) {
+        // 1 submission remaining during voting / tiebreak / tie_pending -> single submission auto winner flow
+        const [singleSub] = await tx
+          .select({
+            id: challengeSubmissions.id,
+            userId: challengeSubmissions.userId,
+          })
+          .from(challengeSubmissions)
+          .where(
+            and(
+              eq(challengeSubmissions.challengeId, challenge.id),
+              eq(challengeSubmissions.submissionStatus, "submitted")
+            )
+          )
+          .limit(1);
+
+        if (singleSub) {
+          if (activeRound) {
+            await tx
+              .update(challengeVotingRounds)
+              .set({ status: "closed", updatedAt: new Date() })
+              .where(eq(challengeVotingRounds.id, activeRound.id));
+          }
+
+          if (challenge.awardMode === "vote_only") {
+            await tx
+              .delete(challengeResults)
+              .where(
+                and(
+                  eq(challengeResults.challengeId, challenge.id),
+                  eq(challengeResults.awardType, "community_vote_winner")
+                )
+              );
+
+            await tx.insert(challengeResults).values({
+              challengeId: challenge.id,
+              submissionId: singleSub.id,
+              finalRank: 1,
+              awardType: "community_vote_winner",
+              totalCommunityStars: 0,
+              resolutionMethod: "automatic_single_submission",
+              isPublished: true,
+            });
+
+            await tx
+              .update(challenges)
+              .set({ status: "finished", updatedAt: new Date() })
+              .where(eq(challenges.id, challenge.id));
+
+            await autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id);
+          } else if (challenge.awardMode === "vote_and_jury") {
+            await tx
+              .delete(challengeResults)
+              .where(
+                and(
+                  eq(challengeResults.challengeId, challenge.id),
+                  eq(challengeResults.awardType, "community_vote_winner")
+                )
+              );
+
+            await tx.insert(challengeResults).values({
+              challengeId: challenge.id,
+              submissionId: singleSub.id,
+              finalRank: 1,
+              awardType: "community_vote_winner",
+              totalCommunityStars: 0,
+              resolutionMethod: "automatic_single_submission",
+              isPublished: false,
+            });
+
+            await tx
+              .update(challenges)
+              .set({ status: "jury_selection_open", updatedAt: new Date() })
+              .where(eq(challenges.id, challenge.id));
+          }
+        }
+      }
+    }
+
+    // 11. Audit log with complete metadata
     await tx.insert(auditLogs).values({
       actorId: actor.userId,
       action: "challenge.disqualify_candidate",
@@ -1142,6 +1393,9 @@ export async function disqualifyChallengeCandidateService(
         candidateUserId: submission.userId,
         artworkId: submission.artworkId,
         refundedBallotsCount: votedStars.length,
+        voidedAllocations,
+        remainingCount,
+        challengeStatus: challenge.status,
       },
     });
 
@@ -1150,6 +1404,8 @@ export async function disqualifyChallengeCandidateService(
       submissionId: submission.id,
       challengeId: challenge.id,
       refundedBallotsCount: votedStars.length,
+      voidedAllocations,
+      remainingCount,
     };
   };
 

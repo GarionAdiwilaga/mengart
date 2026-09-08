@@ -3,14 +3,21 @@
 import { useState } from "react";
 import { signIn } from "next-auth/react";
 import { Loader2, AlertCircle, ShieldCheck, ShieldAlert, Palette, UserPlus, Sparkles } from "lucide-react";
+import { getSafeReturnUrl } from "@/lib/navigation/returnUrl";
 
 interface LoginFormProps {
   initialError?: string;
+  initialReturnTo?: string;
 }
 
-export function LoginForm({ initialError }: LoginFormProps) {
+export function LoginForm({ initialError, initialReturnTo }: LoginFormProps) {
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [activeDevLogin, setActiveDevLogin] = useState<string | null>(null);
+
+  const returnTo = initialReturnTo ? getSafeReturnUrl(initialReturnTo, "") : "";
+  const callbackUrl = returnTo
+    ? `/api/auth/redeem-callback?returnTo=${encodeURIComponent(returnTo)}`
+    : "/api/auth/redeem-callback";
 
   const initialErrorMessage = (() => {
     if (initialError === "InviteRequired") {
@@ -32,7 +39,7 @@ export function LoginForm({ initialError }: LoginFormProps) {
   const handleGoogleLogin = async () => {
     setIsGoogleLoading(true);
     try {
-      await signIn("google", { callbackUrl: "/api/auth/redeem-callback" });
+      await signIn("google", { callbackUrl });
     } catch (err: any) {
       setIsGoogleLoading(false);
     }
@@ -43,7 +50,7 @@ export function LoginForm({ initialError }: LoginFormProps) {
     try {
       await signIn("credentials", {
         email,
-        callbackUrl: "/api/auth/redeem-callback",
+        callbackUrl,
       });
     } catch (err: any) {
       setActiveDevLogin(null);

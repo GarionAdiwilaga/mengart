@@ -15,7 +15,7 @@ import {
 import { eq, and } from "drizzle-orm";
 import { getChallengeResultsData } from "@/lib/voting";
 import { getChallengeBySlug } from "@/lib/challenges";
-import { importHistoricalChallengeAction } from "@/app/actions/historicalBackfill";
+import { importHistoricalChallengeService } from "@/lib/services/historicalBackfillService";
 
 async function runPhase6Tests() {
   console.log("\n=================================================================");
@@ -110,7 +110,9 @@ async function runPhase6Tests() {
   const historicalSlug = `grand-cyber-nusantara-${uniqueSuffix}`;
   const challengeTitle = `Grand Cyber Nusantara Invitational ${uniqueSuffix}`;
 
-  const importResult = await importHistoricalChallengeAction(
+  const importResult = await importHistoricalChallengeService(
+    db,
+    { id: adminUser.id, role: "admin" },
     {
       title: challengeTitle,
       slug: historicalSlug,
@@ -180,8 +182,7 @@ async function runPhase6Tests() {
           winnerSlotType: "none",
         },
       ],
-    },
-    { id: adminUser.id, role: "admin" }
+    }
   );
 
   if (!importResult.success || !importResult.challengeId) {
@@ -331,7 +332,9 @@ async function runPhase6Tests() {
   console.log("\n[Test 8] Testing Defense against Multiple Community Winners...");
   let constraintViolationBlocked = false;
   try {
-    await importHistoricalChallengeAction(
+    await importHistoricalChallengeService(
+      db,
+      { id: adminUser.id, role: "admin" },
       {
         title: `Invalid Challenge ${uniqueSuffix}`,
         slug: `invalid-challenge-${uniqueSuffix}`,
@@ -360,8 +363,7 @@ async function runPhase6Tests() {
             winnerSlotType: "community_vote_winner", // ILLEGAL SECOND COMMUNITY WINNER
           },
         ],
-      },
-      { id: adminUser.id, role: "admin" }
+      }
     );
   } catch (err: any) {
     if (err.message.includes("Hanya boleh ada maksimal satu (1) Juara Favorit Komunitas")) {

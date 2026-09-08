@@ -104,6 +104,8 @@ export function ArtworkCard({ artwork, currentUserRole }: ArtworkCardProps) {
               artworkTitle={artwork.title}
               masterStorageKey={artwork.masterStorageKey}
               currentUserRole={currentUserRole}
+              challengeSubmissionId={artwork.challengeSubmissionId}
+              challengeTitle={artwork.challengeTitle}
             />
           </div>
         </div>
@@ -116,11 +118,13 @@ export function ArtworkCard({ artwork, currentUserRole }: ArtworkCardProps) {
       <div className="p-4 sm:p-5 flex flex-col justify-between gap-3 flex-1 bg-[#13161d]">
         <div className="flex flex-col gap-1.5">
           {/* Challenge Provenance Badge if applicable */}
-          {artwork.challengeTitle && (
+          {(artwork.origin === "challenge" || artwork.challengeTitle) && (
             <div className="flex items-center gap-1.5">
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-mono font-medium truncate max-w-full">
                 <Trophy className="h-2.5 w-2.5 shrink-0" />
-                <span className="truncate">Challenge: {artwork.challengeTitle}</span>
+                <span className="truncate">
+                  {artwork.challengeTitle ? `Challenge: ${artwork.challengeTitle}` : "Karya Challenge"}
+                </span>
               </span>
             </div>
           )}

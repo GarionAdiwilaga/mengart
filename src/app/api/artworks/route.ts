@@ -34,10 +34,30 @@ export async function handleGetArtworks(
     }
   }
 
+  // Live database check in production to prevent relying on stale session JWT claims
+  let liveUser: { id: string; role?: string; membershipStatus?: string | null; deletedAt?: Date | null } | null = null;
+  if (sessionUserOverride) {
+    liveUser = sessionUserOverride;
+  } else if (sessionUser?.id) {
+    const [u] = await db
+      .select({
+        id: users.id,
+        role: users.role,
+        membershipStatus: users.membershipStatus,
+        deletedAt: users.deletedAt,
+      })
+      .from(users)
+      .where(eq(users.id, sessionUser.id))
+      .limit(1);
+    if (u) liveUser = u;
+  }
+
   const isActiveMember =
-    !!sessionUser?.id && sessionUser.membershipStatus === "active";
+    !!liveUser && liveUser.membershipStatus === "active" && !liveUser.deletedAt;
+  const isActiveStaff =
+    isActiveMember && (liveUser?.role === "admin" || liveUser?.role === "moderator");
   const isActiveAdmin =
-    isActiveMember && sessionUser?.role === "admin";
+    isActiveMember && liveUser?.role === "admin";
 
   const conditions = [
     eq(artworks.publicationStatus, "published"),
@@ -93,9 +113,12 @@ export async function handleGetArtworks(
       masterStorageKey: artworkVersions.masterStorageKey,
       width: artworkVersions.width,
       height: artworkVersions.height,
+      challengeSubmissionId: challengeSubmissions.id,
       challengeId: challengeSubmissions.challengeId,
       challengeTitle: challenges.title,
       challengeSlug: challenges.slug,
+      challengeIsVisible: challenges.isVisible,
+      challengeDeletedAt: challenges.deletedAt,
     })
     .from(artworks)
     .innerJoin(profiles, eq(profiles.userId, artworks.userId))
@@ -114,12 +137,46 @@ export async function handleGetArtworks(
     .orderBy(orderByClause)
     .limit(limit);
 
-  // Sanitize masterStorageKey: Expose only to ACTIVE artwork owner or ACTIVE platform admin
+  // Sanitize masterStorageKey & challenge provenance
   const sanitizedItems = items.map((item) => {
-    const isOwner = isActiveMember && sessionUser?.id === item.userId;
+    const isOwner = isActiveMember && liveUser?.id === item.userId;
+    const isChallengeOrigin = Boolean(item.challengeSubmissionId);
+    const origin: "challenge" | "independent" = isChallengeOrigin ? "challenge" : "independent";
+
+    const isChallengeHiddenOrDeleted =
+      isChallengeOrigin && (item.challengeIsVisible === false || item.challengeDeletedAt !== null);
+
+    // Redact challengeTitle and challengeSlug to null for non-staff without reclassifying as independent
+    const shouldRedactChallenge = isChallengeHiddenOrDeleted && !isActiveStaff;
+
     return {
-      ...item,
+      id: item.id,
+      userId: item.userId,
+      title: item.title,
+      slug: item.slug,
+      description: item.description,
+      mediaType: item.mediaType,
+      audience: item.audience,
+      critiqueMode: item.critiqueMode,
+      isSpoiler: item.isSpoiler,
+      createdAt: item.createdAt,
+      systemCaption: item.systemCaption,
+      customCaption: item.customCaption,
+      effectiveCaption: item.effectiveCaption,
+      artistName: item.artistName,
+      artistSlug: item.artistSlug,
+      artistAvatar: item.artistAvatar,
+      artistCommissionStatus: item.artistCommissionStatus,
+      thumbnailStorageKey: item.thumbnailStorageKey,
+      publicStorageKey: item.publicStorageKey,
       masterStorageKey: isOwner || isActiveAdmin ? item.masterStorageKey : null,
+      width: item.width,
+      height: item.height,
+      origin,
+      challengeSubmissionId: item.challengeSubmissionId,
+      challengeId: shouldRedactChallenge ? null : item.challengeId,
+      challengeTitle: shouldRedactChallenge ? null : item.challengeTitle,
+      challengeSlug: shouldRedactChallenge ? null : item.challengeSlug,
     };
   });
 

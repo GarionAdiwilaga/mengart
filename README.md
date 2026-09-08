@@ -5,7 +5,7 @@
 [![React 19](https://img.shields.io/badge/React-19.0.0-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Tailwind CSS v4](https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
-[![Playwright E2E](https://img.shields.io/badge/Playwright_E2E-20%2F20_Passed-2EAD33?style=for-the-badge&logo=playwright&logoColor=white)](https://playwright.dev/)
+[![Playwright E2E](https://img.shields.io/badge/Playwright_E2E-50%2F50_Passed-2EAD33?style=for-the-badge&logo=playwright&logoColor=white)](https://playwright.dev/)
 [![Overhaul Status](https://img.shields.io/badge/Frontend_Overhaul-100%25_Verified-10B981?style=for-the-badge)](https://github.com/GarionAdiwilaga/mengart)
 
 This branch (`overhaul_frontend_atomic_design`) delivers a comprehensive, mobile-first frontend architecture and user experience redesign for **Mengart Atelier**, built strictly in accordance with **`studio-atelier-frontend-style-guide.md`** and **`Mengart frontend overhaul blueprint v0.3`**.
@@ -189,10 +189,10 @@ npm run lint
 # 2. Compile Next.js 16 App Router (32/32 routes) & Media Worker
 npm run build
 
-# 3. Run all 19 domain, security, contract, and migration test suites
+# 3. Run all 20 domain, security, contract, and migration test suites
 npm run test:all
 
-# 4. Run all 20 Playwright E2E test journeys (including mobile viewport tests)
+# 4. Run Playwright multi-device E2E tests (Desktop Chrome & Mobile Chrome Pixel 5)
 npx playwright test
 ```
 
@@ -201,9 +201,9 @@ npx playwright test
 | Test Suite | Command | Result | Details |
 |---|---|:---:|---|
 | **ESLint** | `npm run lint` | **PASS** | 0 errors, 0 warnings across all TypeScript & JSX files |
-| **Production Build** | `npm run build` | **PASS** | 32/32 Next.js App Router routes + worker bundle compiled |
-| **Backend & Invariant Suites** | `npm run test:all` | **PASS** | 19/19 test suites passed (Gates A–H + Contract Repairs A01–A08) |
-| **Playwright E2E** | `npx playwright test` | **PASS** | 20/20 user journey and mobile tests passed cleanly |
+| **Production Build** | `npm run build` | **PASS** | 32/32 Next.js App Router routes + worker bundle compiled cleanly |
+| **Backend & Invariant Suites** | `npm run test:all` | **PASS** | 20/20 test suites passed (Gates A–H, Contract Repairs A01–A08, Remediation R01–R12) |
+| **Playwright E2E** | `npx playwright test` | **PASS** | 50/50 tests passed across Desktop Chrome and Mobile Chrome Pixel 5 |
 
 ---
 

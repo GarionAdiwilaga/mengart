@@ -111,6 +111,25 @@ export async function castOrUpdateBallotAction(params: {
 }
 
 /**
+ * Reconcile Ballot Action
+ * Fetches the caller's authoritative saved ballot from the database
+ */
+export async function reconcileBallotAction(votingRoundId: string) {
+  const user = await requireAuth("/login");
+  const [round] = await db
+    .select({ challengeId: challengeVotingRounds.challengeId })
+    .from(challengeVotingRounds)
+    .where(eq(challengeVotingRounds.id, votingRoundId))
+    .limit(1);
+
+  if (!round) {
+    throw new Error("Babak pemungutan suara tidak ditemukan.");
+  }
+
+  return await getAuthoritativeVotingRoundData(round.challengeId, user.id);
+}
+
+/**
  * Reset Ballot Action
  * Operates authoritatively on votingRoundId
  */

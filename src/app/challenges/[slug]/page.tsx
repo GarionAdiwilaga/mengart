@@ -483,6 +483,7 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
                           <ChallengeSubmissionModal
                             challengeId={challenge.id}
                             challengeTitle={challenge.title}
+                            userId={session?.user?.id}
                             isRevision={true}
                             initialTitle={userSubmission.currentVersion.title}
                             initialDescription={userSubmission.currentVersion.description || ""}
@@ -503,6 +504,7 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
                           <ChallengeSubmissionModal
                             challengeId={challenge.id}
                             challengeTitle={challenge.title}
+                            userId={session?.user?.id}
                           />
                         )}
                       </div>

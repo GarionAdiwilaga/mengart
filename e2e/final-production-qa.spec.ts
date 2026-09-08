@@ -49,9 +49,9 @@ test.describe("Final Production QA & Health Audit Suite", () => {
     await expect(page).toHaveTitle(/Mengart/i);
 
     // Section 1: Hero & Value Pillars
-    await expect(page.locator("h1").first()).toContainText(/Kolektif Kreator Digital/i);
-    await expect(page.getByText("KOMUNITAS DIGITAL ART & ATELIER PRIVAT").first()).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Portofolio Terkurasi" })).toBeVisible();
+    await expect(page.locator("h1").first()).toContainText(/Kolektif Kreator (Digital|Seni Visual)|Ruang Berkarya/i);
+    await expect(page.getByText(/KOMUNITAS (DIGITAL ART|SENI VISUAL) & ATELIER PRIVAT/i).first()).toBeVisible();
+    await expect(page.getByText("Atelier digital khusus kreator seni visual").first()).toBeVisible();
 
     // Section 2: Recent Public Artworks Header
     await expect(page.locator("text=Karya Publik Terbaru")).toBeVisible();

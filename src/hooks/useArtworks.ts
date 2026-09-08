@@ -23,9 +23,11 @@ export interface ArtworkListItem {
   masterStorageKey: string | null;
   width: number | null;
   height: number | null;
+  challengeSubmissionId?: string | null;
   challengeId?: string | null;
   challengeTitle?: string | null;
   challengeSlug?: string | null;
+  origin?: "challenge" | "independent";
   effectiveCaption?: string | null;
 }
 

@@ -21,10 +21,17 @@ import { AtelierButton } from "@/components/ui/atoms/AtelierButton";
 import { AtelierInput } from "@/components/ui/atoms/AtelierInput";
 import { AtelierTextarea } from "@/components/ui/atoms/AtelierTextarea";
 import { SubmissionRecoveryBanner } from "@/components/ui/molecules/SubmissionRecoveryBanner";
+import {
+  saveSubmissionDraft,
+  loadSubmissionDraft,
+  clearSubmissionDraft,
+  purgeLegacyDrafts,
+} from "@/lib/utils/draftStorage";
 
 interface ChallengeSubmissionModalProps {
   challengeId: string;
   challengeTitle: string;
+  userId?: string;
   isRevision?: boolean;
   initialTitle?: string;
   initialDescription?: string;
@@ -35,6 +42,7 @@ interface ChallengeSubmissionModalProps {
 export function ChallengeSubmissionModal({
   challengeId,
   challengeTitle,
+  userId,
   isRevision = false,
   initialTitle = "",
   initialDescription = "",
@@ -55,63 +63,76 @@ export function ChallengeSubmissionModal({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  const draftKey = `mengart_sub_draft:${challengeId}`;
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Purge legacy unscoped drafts on mount
+  useEffect(() => {
+    purgeLegacyDrafts();
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, []);
+
+  // Handle identity change or form initialization
+  useEffect(() => {
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    setTitle(initialTitle);
+    setDescription(initialDescription);
+    setSoftwareUsed(initialSoftware);
+    setIsSpoiler(initialSpoiler);
+    setIsRecovered(false);
+    setFile(null);
+    setPreviewUrl(null);
+    setError(null);
+  }, [userId, initialTitle, initialDescription, initialSoftware, initialSpoiler]);
 
   // Restore draft from localStorage on modal open if not a revision
   useEffect(() => {
-    if (isOpen && !isRevision) {
-      try {
-        const savedDraft = localStorage.getItem(draftKey);
-        if (savedDraft) {
-          const parsed = JSON.parse(savedDraft);
-          if (parsed.title || parsed.description || parsed.softwareUsed) {
-            setTitle(parsed.title || "");
-            setDescription(parsed.description || "");
-            setSoftwareUsed(parsed.softwareUsed || "");
-            setIsSpoiler(Boolean(parsed.isSpoiler));
-            setIsRecovered(true);
-          }
+    if (isOpen && !isRevision && userId) {
+      const savedDraft = loadSubmissionDraft(userId, challengeId);
+      if (savedDraft) {
+        if (savedDraft.title || savedDraft.description || savedDraft.softwareUsed) {
+          setTitle(savedDraft.title || "");
+          setDescription(savedDraft.description || "");
+          setSoftwareUsed(savedDraft.softwareUsed || "");
+          setIsSpoiler(Boolean(savedDraft.isSpoiler));
+          setIsRecovered(true);
         }
-      } catch {
-        // Ignore local storage parse errors
       }
     }
-  }, [isOpen, isRevision, draftKey]);
+  }, [isOpen, isRevision, userId, challengeId]);
 
-  // Persist draft to localStorage as the user types
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const handleFieldChange = (
     field: "title" | "description" | "software" | "spoiler",
     value: any
   ) => {
+    const nextTitle = field === "title" ? value : title;
+    const nextDesc = field === "description" ? value : description;
+    const nextSoft = field === "software" ? value : softwareUsed;
+    const nextSpoiler = field === "spoiler" ? value : isSpoiler;
+
     if (field === "title") setTitle(value);
     if (field === "description") setDescription(value);
     if (field === "software") setSoftwareUsed(value);
     if (field === "spoiler") setIsSpoiler(value);
 
-    if (!isRevision) {
+    if (!isRevision && userId) {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
-        try {
-          const draftPayload = {
-            title: field === "title" ? value : title,
-            description: field === "description" ? value : description,
-            softwareUsed: field === "software" ? value : softwareUsed,
-            isSpoiler: field === "spoiler" ? value : isSpoiler,
-          };
-          localStorage.setItem(draftKey, JSON.stringify(draftPayload));
-        } catch {
-          // Ignore local storage save errors
-        }
+        saveSubmissionDraft(userId, challengeId, {
+          title: nextTitle,
+          description: nextDesc,
+          softwareUsed: nextSoft,
+          isSpoiler: nextSpoiler,
+        });
       }, 500);
     }
   };
 
   const handleDiscardDraft = () => {
-    try {
-      localStorage.removeItem(draftKey);
-    } catch {
-      // Ignore
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    if (userId) {
+      clearSubmissionDraft(userId, challengeId);
     }
     setTitle(initialTitle);
     setDescription(initialDescription);
@@ -156,10 +177,9 @@ export function ChallengeSubmissionModal({
       const res = await submitArtworkToChallengeAction(formData);
       if (res.success) {
         // Clear draft on successful submission
-        try {
-          localStorage.removeItem(draftKey);
-        } catch {
-          // Ignore
+        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+        if (userId) {
+          clearSubmissionDraft(userId, challengeId);
         }
         setSuccess(true);
         setTimeout(() => {

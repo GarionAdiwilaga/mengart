@@ -11,11 +11,12 @@ export const metadata: Metadata = {
 };
 
 interface LoginPageProps {
-  searchParams: Promise<{ error?: string; callbackUrl?: string }>;
+  searchParams: Promise<{ error?: string; callbackUrl?: string; returnTo?: string; from?: string }>;
 }
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
-  const { error } = await searchParams;
+  const { error, callbackUrl, returnTo, from } = await searchParams;
+  const safeReturn = returnTo || from || callbackUrl;
 
   return (
     <main className="min-h-screen flex flex-col justify-center items-center p-6 relative overflow-hidden">
@@ -50,7 +51,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         </div>
 
         {/* Dual Login Form */}
-        <LoginForm initialError={error} />
+        <LoginForm initialError={error} initialReturnTo={safeReturn} />
 
         {/* Invitation Link Section */}
         <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 flex flex-col gap-2">

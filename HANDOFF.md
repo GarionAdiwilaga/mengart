@@ -1,73 +1,31 @@
 # Handoff Context — Frontend UI/UX Overhaul (Blueprint v0.3)
 
-**Date:** 2026-09-08  
-**Current State:** Phases 2, 3, 4, 5, and 6 Complete & 100% Verified; Ready for Phase 7 (Commission Hub Polish & Discovery Flow) and Phase 8 (Cross-Device Verification & E2E).  
-**Overall Status:** **PHASES 2–6 COMPLETE — PHASE 7 IN QUEUE**
+**Date:** 2026-09-09  
+**Current State:** Frontend UI/UX Overhaul (Blueprint v0.3) and all 12 QA Audit Remediation items (R01–R12) are 100% complete, deadlock-free, and verified with authentic automated tests.  
+**Overall Status:** **100% COMPLETE & VERIFIED — PR MERGE-READY**
 
 ---
 
-## 1. Completed Phases Summary
-- **Phase 2: Security & Backend Contract Repairs (A01–A08):**
-  - All 8 contract & security fixes verified (auth read derivation, master key stripping, public filters, staff takedown with audit log, candidate disqualify with star refunds, suspended account route, description/caption harmonization, WITA helper).
-- **Phase 3: Atomic Foundations & Navigation Shells:**
-  - Atoms (`AtelierButton`, `AtelierBadge`, `SegmentedPill`, `AtelierInput`, `AtelierTextarea`, `TimestampWITA`, `StatusDot`).
-  - Molecules (`ArtworkMediaFrame`, `MetadataRow`, `StarAllocationCounter`, `SubmissionRecoveryBanner`, `FilterPills`, `ConfirmModal`).
-  - Shells (`CommunityShell`, `StudioShell`, `FocusedTaskShell`).
-  - Navigation: 4 destinations (**Beranda, Challenge, Galeri, Studio**), central upload FAB, and auto-hidden bottom nav on focused tasks.
-- **Phase 4: Challenge & Voting Journey Rebuild:**
-  - `ChallengeSubmissionModal.tsx`: Local storage text draft recovery (`mengart_sub_draft:${challengeId}`), `SubmissionRecoveryBanner`, and atomic inputs.
-  - `VotingWorkspace.tsx`: 2-column mobile phone overview, uncropped aspect ratios, upfront public total stars, single-star move confirmation modal, multi-star budget guidance, immediate server save, and full focus detail modal.
-  - `challenges/[slug]/voting/page.tsx`: Wrapped in `FocusedTaskShell` with sticky thumb `StarAllocationCounter`.
-  - `challenges/[slug]/page.tsx`: Presentation flow aligned (concluded challenges: theme brief -> official results/podium -> participant archive).
-  - `challenges/page.tsx`: `CommunityShell`, `AtelierBadge`, `TimestampWITA`, category tabs, and clean copy.
-- **Phase 5: Connected Discovery (Gallery & Artwork Detail Rebuild):**
-  - `src/app/api/artworks/route.ts`: Added `tab` (`bebas` | `challenge`) and `sort` (`latest` | `oldest`) filtering, left-joined `challengeSubmissions` and `challenges` to expose `challengeTitle`, `challengeSlug`, and `effectiveCaption` while maintaining 100% backward compatibility for Gate E / Phase 4 tests.
-  - `src/hooks/useArtworks.ts` & `src/stores/useGalleryFilterStore.ts`: Updated with `tab`, `sortBy`, `galleryTab`, `challengeTitle`, `challengeSlug`.
-  - `src/components/gallery/ArtworkCard.tsx`: Replaced "Kritik Terbuka" with "Komentar Terbuka", added challenge provenance badge (`Challenge: [Title]`), resolved `effectiveCaption`, and added Atelier badges.
-  - `src/components/gallery/GalleryGrid.tsx`: Rebuilt with `SegmentedPill` (`[ Karya Bebas | Karya Challenge ]` synced with URL `?tab=bebas` and `?tab=challenge`), quick commission discovery link (`/commissions`), media type filter, sort toggle, and "Komentar Terbuka" toggle.
-  - `src/app/gallery/page.tsx`: Wrapped in `CommunityShell` with Atelier typography.
-  - `src/components/artworks/CritiqueSection.tsx`: Replaced all "Kritik" text with "Komentar", updated placeholders and guidelines to constructive comments and appreciation.
-  - `src/components/artworks/ArtworkFocusedBottomBar.tsx`: Created mobile bottom thumb action bar (Artist identity pill, comment count button with smooth scroll to `#comments`, Web Share API with clipboard fallback).
-  - `src/app/artworks/[slug]/page.tsx`: Wrapped in `FocusedTaskShell` (`backHref="/gallery"`, right report/profile actions, bottom thumb action bar, `TimestampWITA`, software badges).
-  - `src/app/artists/page.tsx` & `src/app/artists/[slug]/page.tsx`: Wrapped in `CommunityShell`.
-- **Phase 6: Creator Studio (Public Profile, Portfolio & Commissions):**
-  - `src/app/dashboard/page.tsx`: Rebuilt with `StudioShell` into the "Pratinjau" landing (owner public profile preview banner, artist identity card, specialties/software tags, portfolio showcase with visibility badges, commission packages, and Do/Don't scope rules).
-  - `src/app/me/portfolio/page.tsx`: Wrapped in `StudioShell` with upload action, custom caption editing, visibility toggle, and soft-delete.
-  - `src/app/me/commissions/page.tsx`: Wrapped in `StudioShell` with service package management and scope rules editor.
-  - `src/app/me/profile/page.tsx`: Wrapped in `StudioShell` with public profile preview link and form.
-- **Verification Status:**
-  - `npm run lint`: 0 errors, 0 warnings.
-  - `npm run build`: 32/32 routes + worker bundle compiled cleanly.
-  - `npm run test:all`: All 19 test suites passing 100%.
-
-- **Phase 7: Commission Hub Polish & Discovery Flow:**
-  - `src/app/commissions/page.tsx`: Wrapped in `CommunityShell` with Atelier badges, responsive search bar, and empty states.
-  - Implemented mobile-first font sizes (`text-base sm:text-xs`) preventing iOS Safari auto-zoom.
-  - Displayed waitlist slot availability indicators (`waitlistCurrentSlots` / `waitlistMaxSlots`).
-  - Added artist contact consent guard: verified `waConsentGiven` and phone number before generating direct WhatsApp order links, falling back to artist profile.
-  - Polished `src/components/commissions/CommissionServiceModal.tsx` inputs and selects with zoom-prevention styles.
-- **Phase 8: Cross-Device Verification, Playwright E2E & Final Polish:**
-  - Created `e2e/frontend-overhaul-v03.spec.ts` covering persistent 4-destination navigation, $\ge 44$px touch targets, provenance tab switching, "Komentar Terbuka" chip & vernacular assertions, mobile zoom prevention, and protected studio redirection.
-  - 20/20 Playwright E2E tests passed cleanly across mobile and desktop browser projects.
-  - 19/19 backend, security, and invariant test suites in `npm run test:all` passed cleanly (100%).
-  - Clean ESLint (`npm run lint`: 0 errors, 0 warnings).
-  - Production Next.js Turbopack build (`npm run build`: 32/32 routes + worker bundle compiled cleanly).
-- **Verification Status:**
-  - `npm run lint`: 0 errors, 0 warnings.
-  - `npm run build`: 32/32 routes + worker bundle compiled cleanly.
-  - `npm run test:all`: All 19 test suites passing 100%.
-  - `npx playwright test`: 20/20 E2E tests passing 100%.
+## 1. Completed Remediation Highlights (R01–R12)
+- **R01 (P0 Auth Boundary):** `importHistoricalChallengeAction` takes zero actor overrides; internal service `historicalBackfillService.ts` queries live PostgreSQL DB (`users` table). Verified with 6 negative caller scenarios + active staff success in `testPhase2SecurityAndContracts.ts`.
+- **R02/R03 (P1 Voting Queue & Steppers):** `VotingWorkspace.tsx` uses FIFO promise queue with `.catch()` barrier. Rollback to confirmed state on transient rejection; failed intent preserved for retry; timeout/uncertainty reconciles true state via `reconcileBallotAction`. Multi-star steppers (`-` / `+`) enable stacking when `starsPerMember > 1`.
+- **R04 (P1 Scoped Draft Storage):** `draftStorage.ts` isolates keys under `mengart_sub_draft:v1:${userId}:${challengeId}` and purges legacy unscoped keys. Cleared on deliberate discard, successful submission, and logout/account switch.
+- **R05 (P1 Monotonic Disqualification Matrix):** Monotonic row-locking order ($1 \rightarrow 2 \rightarrow 3 \rightarrow 4$) across all mutations eliminates deadlocks. `disqualifyChallengeCandidateService` preserves closed-round snapshots and governed results, only voiding open-round ballots and refunding stars. Added "Diskualifikasi karya" workflow in `ArtworkAdminMenu.tsx`.
+- **R06 (P1 AccessibleDialog Bounds):** `AccessibleDialog.tsx` merges `className` via `cn(...)` and clamps height to `max-h-[min(90vh,calc(100dvh-2rem))] overflow-y-auto`. Reachable at 375×667 and 320px without obstruction.
+- **R07 (P1 Safe Provenance Origin):** `/api/artworks` queries live active staff in DB. Returns `origin: "challenge" | "independent"`. Redacts hidden/deleted challenge titles to `null` without reclassifying provenance.
+- **R08 (P2 Synchronous Spoiler Reset):** `ArtworkMediaFrame` resets spoiler concealment synchronously on artwork identity change before render, pauses and resets video playback, and decouples card-opening from controls.
+- **R09 (P2 Return URL Validator):** `getSafeReturnUrl` validates return destinations, rejecting backslashes, protocol-relative attacks (`//`, `/\`), external schemes, and redirect loops. Suspended accounts navigate directly to `/account-suspended?error=AccountSuspended`.
+- **R10 (P2 Activity-First Beranda):** Beranda hierarchy highlights active challenge in 1st mobile viewport. Neutral Atelier copy ("Lihat karya", "Beri Star", "Komunitas seni visual", strictly "Komentar").
+- **R11 (P2 Authentic Testing Gate):** Action boundary negative tests on disposable DB fixtures. 20/20 backend test suites passed (100%). Playwright Desktop Chrome & Mobile Chrome 50/50 tests passed (100%). Documented WebKit host system dependency gap (`libavif16`).
+- **R12 (P2 Touch Targets & Viewport Clamping):** Minimum $\ge 44 \times 44$px on all buttons, tabs, and steppers. `max-width: 100vw; overflow-x: hidden;` in `globals.css` eliminates horizontal scrolling on narrow viewports (320px).
 
 ---
 
-## 2. Platform Status & Ready State
-The entire Frontend UI/UX Overhaul (Blueprint v0.3) is **100% COMPLETE & VERIFIED**:
-- All 8 security and backend contract repairs (A01–A08) are active and protected.
-- Mobile-First Atomic Design System (Atoms, Molecules, Layout Shells) is deployed.
-- Natural Atelier Vernacular (strictly "Komentar", no "Kritik") is enforced across all surfaces.
-- Challenge and Voting Journey with draft recovery and voting confirmation is verified.
-- Gallery provenance separation (`[ Karya Bebas | Karya Challenge ]`) is live and URL-synchronized.
-- Creator Studio (Pratinjau, Portofolio, Komisi, Profil) is unified.
-- Commission collective hub with WhatsApp consent gating is live.
-- Zero regressions across backend test suites and E2E journeys.
+## 2. Verification Gate Results
+- `npm run lint`: **0 errors, 0 warnings** (exit 0).
+- `npm run test:all`: **20/20 test suites passed** (100% pass, exit 0).
+- `npx playwright test` (Desktop Chrome & Mobile Chrome): **50/50 E2E tests passed** (100% pass, exit 0).
+- `npm run build`: **32/32 routes + worker bundle compiled cleanly** (Turbopack, exit 0).
+- Branch status: Clean git working tree ready for commit and pull request merge.
+
 

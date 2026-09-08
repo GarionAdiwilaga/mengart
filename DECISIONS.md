@@ -712,6 +712,40 @@
 **Business Rule:** All redesigned screens adhere to Studio Atelier design tokens, $\ge 44$px touch targets, iOS auto-zoom prevention, and natural Indonesian terminology.
 **Reason:** Fulfills Blueprint v0.3 Phase 8 requirements and closes the Frontend UI/UX Overhaul.
 
+## 2026-09-09
+
+### Historical Backfill Authorization Boundary & Service Decoupling (R01)
+**Decision:** Fully decoupled `importHistoricalChallengeAction` from caller-controlled identity overrides. The exported Server Action accepts strictly `HistoricalChallengeInput` and internally derives identity via `await requireModerator()`. The underlying service was extracted to `src/lib/services/historicalBackfillService.ts` without `"use server"`, enforcing live database credential queries (`membershipStatus === 'active'`, `role IN ('admin', 'moderator')`, `!deletedAt`).
+**Business Rule:** Privileged server actions must never accept client-supplied actor overrides. Dependency injection is strictly reserved for internal server-only services and tests.
+**Reason:** Eliminates P0 security finding QA-P0-021 where malicious clients could supply arbitrary actor IDs to write historical challenges.
+
+### Serialized Voting Queue, Reconciliation & Multi-Star Steppers (R02, R03)
+**Decision:** Implemented a serialized FIFO promise queue with `.catch()` error barriers in `VotingWorkspace.tsx`. Separated internal state into `confirmedAllocationsRef`, `pendingAllocations`, and `failedIntentRef`. On transient network failures, state rolls back to confirmed and stores failed intent for explicit retry; on timeout or uncertainty, it triggers `reconcileBallotAction` before unlocking. For `starsPerMember > 1`, direct stepper buttons (`-` / `+`) allow budget stacking up to allowance.
+**Business Rule:** Stored ballots in PostgreSQL must deterministically reflect the user's latest accepted voting intent with zero race-condition write tearing.
+**Reason:** Eliminates P1 voting race conditions and stale response overwrites during rapid voting.
+
+### Scoped Draft Storage Lifecycle & Dialog Height Clamping (R04, R06)
+**Decision:** Standardized submission draft storage under scoped key `mengart_sub_draft:v1:${userId}:${challengeId}` via centralized `draftStorage.ts`, permanently purging legacy unscoped keys on initialization. Draft storage is cleared upon deliberate discard, successful submission, and user logout/account switch. `AccessibleDialog.tsx` now merges custom `className` properties via `cn(...)` and enforces `max-h-[min(90vh,calc(100dvh-2rem))] overflow-y-auto`.
+**Business Rule:** Draft state must never cross user account boundaries or challenge boundaries. Modals must remain scrollable and reachable across small mobile viewports (375×667 and 320px).
+**Reason:** Resolves P1 draft leakage and modal truncation findings.
+
+### Monotonic Database Locking & Disqualification Phase Matrix (R05, R07)
+**Decision:** Standardized row-level lock ordering across all mutation services to strictly:
+$$\text{challengeVotingRounds (1)} \longrightarrow \text{challenges (2)} \longrightarrow \text{challengeSubmissions (3)} \longrightarrow \text{challengeBallots (4)}$$
+Implemented the full lifecycle phase matrix in `disqualifyChallengeCandidateService`: preserves closed-round snapshots and governed history; only refunds and voids open-round ballots; handles single-candidate/zero-candidate transitions cleanly; records `voidedAllocations` in audit log. Updated `/api/artworks` with live staff check, safe origin discriminator `origin: "challenge" | "independent"`, and redaction of hidden/deleted challenge titles to `null` without reclassifying provenance.
+**Business Rule:** Candidate disqualification is prohibited on finished challenges without explicit result revocation. Redacted challenge entries remain classified as `origin: "challenge"`. Monotonic locking order is mandatory across all transactions.
+**Reason:** Mathematically prevents database deadlocks and maintains audit integrity under concurrent voting, finalization, and moderation.
+
+### Navigation Continuity, Activity-First Beranda & Dual-Dimension Touch Targets (R08, R09, R10, R12)
+**Decision:** 
+1. Created `getSafeReturnUrl` in `src/lib/navigation/returnUrl.ts` rejecting backslashes, protocol-relative paths (`//`, `/\`), external schemes, and redirect loops.
+2. Synchronously reset spoiler concealment and paused video playback in `ArtworkMediaFrame` on artwork identity changes.
+3. Reworked Beranda layout to be activity-first (Compact Header $\rightarrow$ Current Challenge in 1st mobile viewport $\rightarrow$ Past Winners $\rightarrow$ General Artworks $\rightarrow$ Spotlight $\rightarrow$ Commissions $\rightarrow$ About) and adopted natural neutral vocabulary ("Lihat karya", "Beri Star", "Komunitas seni visual", strictly "Komentar").
+4. Enforced $\ge 44 \times 44$px in both dimensions on all buttons, tabs, and steppers, with `overflow-x: hidden` clamped to `100vw`.
+**Business Rule:** External redirect manipulation is blocked. Primary interactive controls must meet WCAG 2.2 Level AA touch target requirements ($\ge 44 \times 44$px).
+**Reason:** Closes P2 findings R08, R09, R10, and R12, ensuring navigation continuity, touch accessibility, and mobile viewport ergonomics.
+
+
 
 
 

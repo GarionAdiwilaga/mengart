@@ -32,13 +32,13 @@ export function SegmentedPill({
   const containerRef = useRef<HTMLDivElement>(null);
 
   const sizeStyles = {
-    sm: "p-0.5 text-xs",
+    sm: "p-1 text-xs min-h-[44px]",
     md: "p-1 text-sm min-h-[44px]",
   };
 
   const itemSizeStyles = {
-    sm: "py-1.5 px-3 min-h-[36px]",
-    md: "py-2 px-4 min-h-[40px]",
+    sm: "py-2 px-3.5 min-h-[44px] min-w-[44px]",
+    md: "py-2.5 px-4 min-h-[44px] min-w-[44px]",
   };
 
   const handleKeyDown = (e: React.KeyboardEvent, currentIndex: number) => {

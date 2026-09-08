@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { signOut } from "next-auth/react";
+import { clearAllSubmissionDrafts } from "@/lib/utils/draftStorage";
 
 interface UserDropdownProps {
   user: {
@@ -153,7 +154,10 @@ export function UserDropdown({ user }: UserDropdownProps) {
               {/* Logout Action */}
               <div className="pt-1 border-t border-white/10">
                 <button
-                  onClick={() => signOut({ callbackUrl: "/" })}
+                  onClick={() => {
+                    clearAllSubmissionDrafts();
+                    signOut({ callbackUrl: "/" });
+                  }}
                   className="w-full flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] rounded-xl text-xs font-sans text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors cursor-pointer"
                 >
                   <LogOut className="h-4 w-4" />

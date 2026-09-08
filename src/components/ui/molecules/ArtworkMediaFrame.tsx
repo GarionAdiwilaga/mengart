@@ -7,6 +7,7 @@ import { Eye, EyeOff, Play } from "lucide-react";
 import { AtelierBadge } from "../atoms/AtelierBadge";
 
 export interface ArtworkMediaFrameProps {
+  artworkId?: string;
   src: string;
   thumbnailSrc?: string | null;
   mediaType?: "image" | "video";
@@ -21,6 +22,7 @@ export interface ArtworkMediaFrameProps {
 }
 
 export function ArtworkMediaFrame({
+  artworkId,
   src,
   thumbnailSrc,
   mediaType = "image",
@@ -33,8 +35,22 @@ export function ArtworkMediaFrame({
   onClick,
   showPlayIndicator = true,
 }: ArtworkMediaFrameProps) {
+  const currentIdentity = artworkId || src;
+  const [prevIdentity, setPrevIdentity] = useState(currentIdentity);
   const [isRevealed, setIsRevealed] = useState(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const videoRef = React.useRef<HTMLVideoElement | null>(null);
+
+  // Synchronously reset spoiler conceal and video playback when artwork identity changes
+  if (prevIdentity !== currentIdentity) {
+    setPrevIdentity(currentIdentity);
+    setIsRevealed(false);
+    setIsVideoPlaying(false);
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.currentTime = 0;
+    }
+  }
 
   const shouldBlur = isSpoiler && !isRevealed;
   const displayAlt = shouldBlur ? "Konten spoiler tersembunyi" : alt;
@@ -52,10 +68,22 @@ export function ArtworkMediaFrame({
   return (
     <div
       onClick={shouldBlur ? undefined : onClick}
+      role={onClick && !shouldBlur ? "button" : undefined}
+      tabIndex={onClick && !shouldBlur ? 0 : undefined}
+      onKeyDown={
+        onClick && !shouldBlur
+          ? (e) => {
+              if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
       style={aspectRatio && !fill ? { aspectRatio } : undefined}
       className={cn(
         "relative w-full overflow-hidden bg-[#0a0c10] select-none rounded-2xl flex items-center justify-center",
-        onClick && !shouldBlur && "cursor-pointer group",
+        onClick && !shouldBlur && "cursor-pointer group focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500",
         fill && "h-full",
         className
       )}
@@ -64,6 +92,7 @@ export function ArtworkMediaFrame({
       {mediaType === "video" ? (
         <div className="relative w-full h-full flex items-center justify-center">
           <video
+            ref={videoRef}
             src={src}
             poster={thumbnailSrc || undefined}
             playsInline
@@ -136,7 +165,7 @@ export function ArtworkMediaFrame({
             <button
               type="button"
               onClick={handleRevealClick}
-              className="mt-1 inline-flex items-center gap-1.5 px-4 py-2 min-h-[44px] rounded-xl bg-white/10 hover:bg-white/15 text-[#f6f2e9] text-xs font-sans font-medium border border-white/15 transition-all active:scale-98 cursor-pointer"
+              className="mt-1 inline-flex items-center justify-center gap-1.5 px-4 py-2 min-h-[44px] min-w-[44px] rounded-xl bg-white/10 hover:bg-white/15 text-[#f6f2e9] text-xs font-sans font-medium border border-white/15 transition-all active:scale-98 cursor-pointer"
             >
               <Eye className="h-3.5 w-3.5" />
               <span>Buka Konten</span>
