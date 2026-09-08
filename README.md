@@ -1,365 +1,250 @@
-# Mengart — Digital Art Collective & Private Atelier Platform
+# Mengart Atelier — Frontend UI/UX Overhaul & Atomic Design System
 
+[![Branch: overhaul_frontend_atomic_design](https://img.shields.io/badge/Branch-overhaul__frontend__atomic__design-amber?style=for-the-badge&logo=git&logoColor=black)](https://github.com/GarionAdiwilaga/mengart/tree/overhaul_frontend_atomic_design)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16.3.3-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org/)
 [![React 19](https://img.shields.io/badge/React-19.0.0-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Drizzle ORM](https://img.shields.io/badge/Drizzle_ORM-0.39-C5F74F?style=for-the-badge&logo=drizzle&logoColor=black)](https://orm.drizzle.team/)
 [![Tailwind CSS v4](https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
-[![Playwright](https://img.shields.io/badge/Playwright-E2E-2EAD33?style=for-the-badge&logo=playwright&logoColor=white)](https://playwright.dev/)
-[![Production Ready](https://img.shields.io/badge/Status-Production_Ready_100%25-10B981?style=for-the-badge)](https://github.com/GarionAdiwilaga/mengart)
+[![Playwright E2E](https://img.shields.io/badge/Playwright_E2E-20%2F20_Passed-2EAD33?style=for-the-badge&logo=playwright&logoColor=white)](https://playwright.dev/)
+[![Overhaul Status](https://img.shields.io/badge/Frontend_Overhaul-100%25_Verified-10B981?style=for-the-badge)](https://github.com/GarionAdiwilaga/mengart)
 
-**Mengart** is an invitation-only digital art collective and atelier platform engineered for ~100 active creators. Designed with the **Studio Atelier** aesthetic (*Warm Obsidian & Gallery Amber*), Mengart combines high-craft visual presentation with rigorous server-side invariants: privacy-first dual-variant media pipelines, anti-bias Star voting, unranked dynamic jury awards, Discord-style plaintext bearer invitations, client-side 9:16 Canvas Story Cards, and zero-debt database architecture.
+This branch (`overhaul_frontend_atomic_design`) delivers a comprehensive, mobile-first frontend architecture and user experience redesign for **Mengart Atelier**, built strictly in accordance with **`studio-atelier-frontend-style-guide.md`** and **`Mengart frontend overhaul blueprint v0.3`**.
+
+It eliminates disconnected page experiences, solves broken terminology with natural Indonesian (*"Atelier Vernacular"*), introduces an **Atomic Design System** with three dedicated layout shells, hardens backend contracts, and provides a seamless mobile touch experience ($\ge 44$px targets, iOS Safari auto-zoom prevention).
 
 ---
 
 ## 🏛️ Table of Contents
 
-- [Architectural Highlights](#-architectural-highlights)
-- [Design System & Frontend Craft](#-design-system--frontend-craft)
-- [Domain Systems & Invariants](#-domain-systems--invariants)
-  - [1. Authentication & Discord-Style Invites](#1-authentication--discord-style-invites)
-  - [2. Dual Media Pipeline & Content Safety](#2-dual-media-pipeline--content-safety)
-  - [3. Artwork Presentation & Spoiler UX](#3-artwork-presentation--spoiler-ux)
-  - [4. Challenge Lifecycle & Anti-Bias Voting](#4-challenge-lifecycle--anti-bias-voting)
-  - [5. Dynamic Jury & Recorder Model](#5-dynamic-jury--recorder-model)
-  - [6. Community Comments & Curated Spotlight](#6-community-comments--curated-spotlight)
-  - [7. 9:16 Canvas Story Card Generator](#7-916-canvas-story-card-generator)
-- [Technology Stack](#-technology-stack)
-- [Repository Structure](#-repository-structure)
-- [Getting Started](#-getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Environment Setup](#environment-setup)
-  - [Database Setup & Migrations](#database-setup--migrations)
-  - [Running the Application](#running-the-application)
-- [Comprehensive Verification Matrix](#-comprehensive-verification-matrix)
-- [Production Deployment & DevOps](#-production-deployment--devops)
-- [Release Gates & Zero-Debt History](#-release-gates--zero-debt-history)
-- [License](#-license)
+- [Branch Highlights & Core Upgrades](#-branch-highlights--core-upgrades)
+- [Atomic Design System Hierarchy](#-atomic-design-system-hierarchy)
+- [Key User Journeys & Screen Redesigns](#-key-user-journeys--screen-redesigns)
+  - [1. Persistent 4-Destination Navigation](#1-persistent-4-destination-navigation)
+  - [2. Alur Challenge & Voting Workspace](#2-alur-challenge--voting-workspace)
+  - [3. Connected Gallery & Provenance Separation](#3-connected-gallery--provenance-separation)
+  - [4. Immersive Artwork Detail Screen](#4-immersive-artwork-detail-screen)
+  - [5. Creator Studio Landing & Management](#5-creator-studio-landing--management)
+  - [6. Commission Collective Hub & WhatsApp Consent](#6-commission-collective-hub--whatsapp-consent)
+- [Backend Contract & Security Repairs (A01–A08)](#-backend-contract--security-repairs-a01a08)
+- [Atelier Vernacular (Terminology Refinements)](#-atelier-vernacular-terminology-refinements)
+- [Independent QA Verification Matrix](#-independent-qa-verification-matrix)
+- [Inherited Foundation & Domain Invariants](#-inherited-foundation--domain-invariants)
+- [Getting Started & Local Execution](#-getting-started--local-execution)
 
 ---
 
-## 🌟 Architectural Highlights
+## 🌟 Branch Highlights & Core Upgrades
 
-* **Zero Legacy Debt Policy:** Completely purged of deprecated MVP structures. Post-Gate-H migration `0014` and baseline revision `0015` eliminated legacy columns (`quorum_requirement`, `allow_revisions`, `round_sequence`, `critique_aspect`, `winner_slot_id`), deprecated enums (`critique_aspect`, `slot_type`, `'gif'`), and obsolete tables (`challenge_jury_scores`, `challenge_jury_slot_assignments`, `challenge_winner_slots`).
-* **Single Authoritative Media Validation Engine:** Sniffs raw magic bytes before disk promotion. Accepts strictly static images (PNG, JPEG, WebP $\le$ 25MB) and MP4 video (H.264 + AAC or silent $\le$ 50MB, zero duration limit). Explicitly rejects GIF87a/89a, WebM, MKV, QuickTime `.mov`, SVG, and executables fail-closed.
-* **Dual-Variant Media Architecture:** Resolution-limited WebP/MP4 derivatives ($\le 1920$px, zero watermarks) for public viewing; pristine original master files protected behind Gate A / Gate D Access Control Lists (accessible only to verified owners and active staff).
-* **Deterministic Two-Phase Locking (2PL):** Concurrency-critical database mutations (invitation redemptions, ballot voting, jury assignments, staff demotions) utilize PostgreSQL row-level locks (`FOR UPDATE`) and transaction advisory locks to guarantee zero race conditions.
-* **Tiered Sliding-Window Rate Limiting:** 14 write surfaces protected via Redis sliding windows. Graceful degradation: Security-critical actions fail closed on Redis outages; low-risk user profile/commission edits fail open with warnings to preserve uptime.
-* **WITA Operational Timezone:** Timestamps and deadlines natively stored in UTC and rendered in absolute WITA (`Asia/Makassar` / UTC+8), reflecting community operating rhythms.
+```mermaid
+graph TD
+    subgraph Core [Fondasi Utama Overhaul]
+        A[Mobile-First Ergonomics<br/>44px targets & iOS Zoom Guard]
+        B[Atomic Design System<br/>Atoms · Molecules · Layout Shells]
+        C[Atelier Vernacular<br/>Komentar bukan Kritik]
+    end
 
----
+    subgraph Shells [3 Dedicated Layout Shells]
+        S1[CommunityShell<br/>Beranda · Challenge · Galeri · Hub Komisi]
+        S2[StudioShell<br/>Pratinjau · Portofolio · Komisi · Profil]
+        S3[FocusedTaskShell<br/>Voting Workspace & Artwork Detail]
+    end
 
-## 🎨 Design System & Frontend Craft
+    subgraph Journeys [Redesigned Experiences]
+        J1[Voting: 2-Kolom Mobile, Single-Star Confirm, Uncropped]
+        J2[Galeri: Tab Provenance Bebas vs Challenge]
+        J3[Submisi: Local Text Draft Recovery]
+        J4[Komisi: WhatsApp Consent & Slot Counter]
+    end
 
-Mengart is styled strictly under the **Studio Atelier / Warm Obsidian & Gallery Amber** design specification:
-
-* **Canvas & Surfaces:** Warm obsidian dark canvas (`#0e1015`), layered elevated charcoal cards (`#13161d`, `#191c23`, `#20232c`), 1px subtle glass hairlines (`border-white/10`).
-* **The "One-Amber" Rule:** Restrained use of warm amber/gold (`#f59e0b` / Tailwind `amber-500`) reserved exclusively for primary interactive calls-to-action, Stars, active challenge stages, and award badges. No decorative amber clutter.
-* **Typography Hierarchy:**
-  * **Display & Headings:** *Syne* (expressive, artistic, bold).
-  * **Body & Interface:** *Plus Jakarta Sans* (clean, legible, modern geometric sans).
-  * **Metadata & Timestamps:** *JetBrains Mono* (software tags, WITA timestamps, invite codes, telemetry).
-* **Mobile-First Touch Ergonomics:** Persistent thumb-first `MobileBottomNav` with safe-area inset adaptation (`env(safe-area-inset-bottom)`), $\ge 44$px touch targets, mobile stacked table views, and font-size clamping (`text-base sm:text-xs`) to prevent iOS Safari auto-zoom.
-
----
-
-## ⚙️ Domain Systems & Invariants
-
-### 1. Authentication & Discord-Style Invites
-* **Google-Only OAuth 2.0:** Eliminates passwords, bcrypt hashing, and SMTP verification tokens. Requires verified Google identities (`profile.email_verified === true`).
-* **Pending Invite Separation:** Authenticated accounts awaiting onboarding exist in a derived `PENDING_INVITE` state (`users.membership_status IS NULL`).
-* **Direct Bearer Codes:**
-  * Default generated codes use an unbiased CSPRNG (`crypto.randomInt(0, 62)`) producing exactly **8 alphanumeric characters** (`[A-Za-z0-9]`).
-  * Custom vanity codes are normalized to lowercase `[a-z0-9-]`, $\le 25$ characters, with a reserved system keyword filter (`admin`, `api`, `dashboard`, etc.).
-  * Stored uniquely as plaintext in `membership_invites.code`.
-* **Admin-Only Management:** Active Admins can create, list, view bearer codes, copy raw codes, copy direct `/invite/<code>` links, and revoke invites.
-* **OAuth Continuation:** Landing on an invite sets an HttpOnly cookie (`mengart_pending_invite`, TTL 15m). Google OAuth redirects to clean `/api/auth/redeem-callback` without token query leaks, redeeming the invite and clearing the cookie.
-
-### 2. Dual Media Pipeline & Content Safety
-* **Strict Format Enforcement:**
-  * Images: JPEG (`ffd8ff`), PNG (`89504e470d0a1a0a`), WebP (`52494646...WEBP`), $\le 25$MB.
-  * Video: MP4 container (`ftypisom`, `iso2`, `mp41`, `mp42`, `avc1`, `dash`, `m4v`), H.264 video codec, AAC audio or silent, $\le 50$MB, no duration limit.
-* **Zero Watermarks on Public Derivatives:** High-DPI master originals are preserved. Public derivatives are resized/compressed to $\le 1920$px WebP or H.264 MP4 with stripped metadata and zero visual watermark overlays.
-* **Asynchronous Queue Worker:** Powered by BullMQ + Redis with concurrency clamping, processing non-blocking background conversions, video posters, and 400x400 grid thumbnails.
-
-### 3. Artwork Presentation & Spoiler UX
-* **Artist-Controlled Spoiler Flag:** Creators can toggle `is_spoiler` on artwork creation, editing, or direct challenge submission.
-* **Unrevealed State:**
-  * In gallery grids (`ArtworkCard`), unrevealed spoiler artworks render with a heavy blur filter (`blur-xl`), generic safe alt text (`"Konten spoiler tersembunyi"`), a spoiler warning badge, and an interactive **"Buka Konten"** button.
-  * In the full viewer (`ArtworkLightbox`), unrevealed spoilers render with `blur-2xl`, a centered warning modal card, and a **"Tampilkan Karya"** reveal button.
-* **Authoritative Invariants:** Flagging an artwork as a spoiler never alters audience status, publication visibility, media ACL, contest eligibility, or Star voting tallies.
-
-### 4. Challenge Lifecycle & Anti-Bias Voting
-* **Authoritative Lifecycle State Machine:**
-  $$\text{draft} \longrightarrow \text{scheduled} \longrightarrow \text{submission\_open} \longrightarrow \text{submission\_locked} \longrightarrow \text{voting\_open} \longrightarrow \text{tie\_pending} \mid \text{tiebreak\_open} \mid \text{jury\_selection\_open} \longrightarrow \text{finished}$$
-* **4 Award Modes:** `vote_and_jury`, `vote_only`, `jury_only`, and `showcase_only`.
-* **Anti-Bias Discovery:** Candidate grids apply a deterministic per-voter seed shuffle so no candidate remains permanently at the top or bottom of the gallery.
-* **Star Allocation:** Members receive a configurable star allowance (default 1 Star/member). Enforces non-negative finite integer allocations, anti-self voting, and candidate whitelists.
-* **Tie Resolution:** Single official Community Winner (`award_type = 'community_vote_winner'`). Ties for Rank #1 transition to `tie_pending`, allowing staff to start a single tiebreak round (seq 2, 1 Star/member) or resolve manually with an audit log.
-
-### 5. Dynamic Jury & Recorder Model
-* **Dynamic Category Awards:** Replaced rigid winner slots and numeric 1–100 scoring with free-text category labels (e.g. *"Best Lighting"*, *"Visual Narrative"*, defaulting to *"Jury Winner"*).
-* **Single Designated Recorder:** Displayed jury panel with exactly one Jury Recorder (`is_recorder = true`). Recorder/Admin hold draft award edit authority during `JURY_SELECTION_OPEN`.
-* **Mixed Mode Exclusion:** In `vote_and_jury` challenges, the resolved Community Winner is strictly excluded from receiving a Jury Award.
-* **Governance Results Revocation:** Finished challenges can be revoked to `results_revoked` with an immutable audit snapshot, allowing Admin/Moderators to replace/clear winners before republishing.
-
-### 6. Community Comments & Curated Spotlight
-* **Unified Simple Comments Stream:** Author editing with an explicit `(diedit)` indicator, author soft-deletion, and staff hide/restore moderation with mandatory $\ge 5$ character reason and audit trails.
-* **"Kritik Dipersilakan" Social Badge:** Artwork critique mode is treated as a social indicator ("Kritik Dipersilakan" or "Showcase") and does not block commenting.
-* **Manual Featured Artist:** Strictly curated by Administrators (`monthly_spotlights`). Automated background crons and reminder notifications are eliminated. Soft-deletion columns and partial unique index `(year, month) WHERE deleted_at IS NULL` allow clean replacement curation while archiving history.
-
-### 7. 9:16 Canvas Story Card Generator
-* **Client-Side High-DPI Canvas:** Exports exact $1080 \times 1920$ px PNG story cards directly in the browser without server-side render queues.
-* **Dual Rendering Modes:**
-  * **Results Mode:** Renders Challenge Title, Winner Artwork, Artist Alias, and unranked Award Badges (zero synthetic `#null` or `#2` numbers).
-  * **Announcement Mode:** Renders Challenge Banner and submission deadlines formatted in absolute WITA.
-* **Sharing:** Native Web Share API (`navigator.share`) with automatic PNG download fallback.
-
----
-
-## 🛠️ Technology Stack
-
-| Layer | Technologies |
-|---|---|
-| **Framework** | Next.js 16 (App Router, Turbopack, Server Actions, Route Handlers) |
-| **Runtime & Language** | Node.js 20+ LTS, TypeScript 5.7, React 19 |
-| **Database & ORM** | PostgreSQL 16, Drizzle ORM 0.39, `drizzle-kit` |
-| **Queue & Cache** | BullMQ 5.41, Redis 7 (AOF persistence), `ioredis` |
-| **Media Processing** | `sharp` (decompression bomb protection, WebP), `ffmpeg` / `ffprobe` |
-| **Styling & UI** | Tailwind CSS v4, `shadcn/ui` (New York style), Lucide Icons, Framer Motion |
-| **Client State** | Zustand 5.0, TanStack React Query 5.102 |
-| **Authentication** | NextAuth.js / Auth.js v5 beta (Google OAuth 2.0 only) |
-| **Validation & Schema**| Zod 3.24, Content Sniffing Magic Bytes |
-| **Testing & Auditing** | Playwright 1.62, TSX custom runner, Chrome DevTools MCP |
-
----
-
-## 📁 Repository Structure
-
-```text
-mengart/
-├── .agents/                    # Agent shared memory, rules, and specialized skills
-├── .gstack/qa-reports/         # Comprehensive QA audit reports and baseline screenshots
-├── drizzle/                    # PostgreSQL migrations (0000_... to 0015_prune_gif_media_type.sql)
-│   └── meta/_journal.json      # Drizzle migration journal
-├── e2e/                        # Playwright End-to-End test suites
-│   ├── final-production-qa.spec.ts
-│   └── gate-g-journeys.spec.ts
-├── public/                     # Static assets and favicon
-├── scripts/                    # Operational automation, migration verification, and backups
-│   ├── backup.sh               # AES-256 + HMAC-SHA256 encrypted database and media backup
-│   ├── restore.sh              # Authenticated archive restoration and verification
-│   ├── resetDatabase.ts        # Disposable fixture reset for pre-production environments
-│   ├── runScheduler.ts         # CLI challenge transition materializer
-│   └── verifyMigrations.ts     # 12-scenario full-chain migration upgrade & invariant test suite
-├── src/
-│   ├── app/                    # Next.js App Router (pages, layouts, server actions, API routes)
-│   │   ├── actions/            # Type-safe Server Actions (artworks, challenges, critiques, invites)
-│   │   ├── admin/              # Command Center (diagnostics, invites, users, audits, spotlight)
-│   │   ├── api/                # Health probes, protected cron endpoints, media delivery
-│   │   ├── artists/            # Public artist profiles and commission status
-│   │   ├── artworks/           # Artwork details, lightbox, and critique comments
-│   │   ├── challenges/         # Challenge timeline, jury workspace, and results
-│   │   ├── commissions/        # Public commissions directory and guidelines
-│   │   ├── gallery/            # Public curated artwork gallery with filter controls
-│   │   └── invite/             # Discord-style invitation onboarding and redemption
-│   ├── auth.ts                 # NextAuth Google OAuth configuration and identity resolver
-│   ├── components/             # Reusable UI components (admin, artworks, gallery, jury, ui)
-│   ├── db/                     # Drizzle schema definitions and database connection pool
-│   ├── hooks/                  # Client-side React hooks (useArtworks, etc.)
-│   ├── lib/                    # Domain services, policy engine, rate limiting, and invariants
-│   │   ├── __tests__/          # 18 exhaustive integration and invariant test suites
-│   │   ├── services/           # Challenge, jury, voting, media, and moderation services
-│   │   ├── policy.ts           # Centralized Gate A / Gate D Access Control List (ACL)
-│   │   └── rateLimit.ts        # Sliding-window rate limiter with tiered degradation
-│   ├── stores/                 # Zustand client stores (gallery filters, modals)
-│   └── workers/                # BullMQ media processing background worker
-├── CURRENT_STATUS.md           # Handoff document tracking active phases and blockers
-├── DECISIONS.md                # Permanent project memory of all architectural decisions
-├── DEPLOYMENT.md               # Production operations runbook and topology guide
-├── docker-compose.yml          # Production multi-container orchestration
-├── Dockerfile                  # Multi-stage production container build
-└── package.json                # Dependencies and npm script targets
+    Core --> Shells
+    Shells --> Journeys
 ```
 
+* **Mobile-First & Touch Ergonomics:** Built touch-first. All interactive buttons, tabs, and actions strictly satisfy $\ge 44$px touch dimensions. All text inputs enforce `text-base sm:text-xs` / `text-base sm:text-sm` to eliminate iOS Safari viewport auto-zoom.
+* **Atomic Component Architecture:** Extracted clean, reusable components into `src/components/ui/atoms/`, `src/components/ui/molecules/`, and `src/components/layout/shells/`.
+* **Submission Text Recovery:** Unsubmitted contest text (title & description) auto-saves locally per challenge (`mengart_sub_draft:${challengeId}`). Reloading restores the draft with an informative recovery banner and 1-click "Buang draf" action.
+* **Gallery Provenance Separation:** Independent creator uploads and challenge entries are distinctly browsable via `[ Karya Bebas | Karya Challenge ]` segmented tabs synced with URL query parameters (`?tab=bebas`, `?tab=challenge`).
+* **Inclusive Atelier Vernacular:** Completely replaced competitive/intimidating "Kritik" labels with welcoming, creator-respectful **"Komentar"** and **"Komentar Terbuka"**.
+* **Prerequisite Contract Repairs (A01–A08):** Closed 8 critical security, privacy, and schema-parity vulnerabilities before launching the new visual layer.
+
 ---
 
-## 🚀 Getting Started
+## 🧱 Atomic Design System Hierarchy
 
-### Prerequisites
+All UI components reside in a strictly typed, accessible component hierarchy:
 
-* **Node.js:** `v20.10.0+` (Node 22 recommended)
-* **Package Manager:** `npm` (v10+)
-* **Docker & Docker Compose:** For running PostgreSQL and Redis services
-* **FFmpeg:** Installed on system (`ffmpeg` and `ffprobe` available on `$PATH`)
+### Atoms (`src/components/ui/atoms/`)
+| Atom | Purpose | Key Features |
+|---|---|---|
+| [`AtelierButton`](src/components/ui/atoms/AtelierButton.tsx) | Primary interactive button | Varian: `primary-amber`, `surface`, `ghost`, `danger`, `outline-amber`. $\ge 44$px touch targets, loading spinner state. |
+| [`AtelierBadge`](src/components/ui/atoms/AtelierBadge.tsx) | Status & category badge | Varian: `amber`, `success`, `danger`, `muted`, `default`. Sentence-case typography. |
+| [`SegmentedPill`](src/components/ui/atoms/SegmentedPill.tsx) | Multi-option segmented control | Keyboard navigation, active indicator transitions, touch-friendly pill targets. |
+| [`AtelierInput`](src/components/ui/atoms/AtelierInput.tsx) | Text form input | Enforces `text-base sm:text-sm` to prevent iOS Safari auto-zoom, focus rings. |
+| [`AtelierTextarea`](src/components/ui/atoms/AtelierTextarea.tsx) | Multi-line text field | Auto-expanding textarea with zoom-prevention styles and character counts. |
+| [`TimestampWITA`](src/components/ui/atoms/TimestampWITA.tsx) | Operational datetime display | Tabular numerals in *JetBrains Mono*, standardized UTC+8 (WITA) rendering. |
+| [`StatusDot`](src/components/ui/atoms/StatusDot.tsx) | Live status indicator | Subtle pulsing dot indicating open submissions, voting, or online availability. |
 
-### Environment Setup
+### Molecules (`src/components/ui/molecules/`)
+| Molecule | Purpose | Key Features |
+|---|---|---|
+| [`ArtworkMediaFrame`](src/components/ui/molecules/ArtworkMediaFrame.tsx) | Uncropped artwork media container | Preserves original aspect ratios (zero cropping), additive spoiler blur with interactive reveal. |
+| [`MetadataRow`](src/components/ui/molecules/MetadataRow.tsx) | Artist attribution & tags | Avatar, creator display name, software badges, and absolute WITA timestamp. |
+| [`StarAllocationCounter`](src/components/ui/molecules/StarAllocationCounter.tsx) | Thumb allocation counter | Sticky bottom bar displaying remaining star allowance, budget exhaustion guidance, and save state. |
+| [`SubmissionRecoveryBanner`](src/components/ui/molecules/SubmissionRecoveryBanner.tsx) | Draft restoration notice | Banner alerting the artist that draft text was restored, with a "Buang draf" action. |
+| [`FilterPills`](src/components/ui/molecules/FilterPills.tsx) | Horizontal chip scroller | Smooth horizontal panning without scrollbar visual clutter (`scrollbar-none`). |
+| [`ConfirmModal`](src/components/ui/molecules/ConfirmModal.tsx) | Accessible confirmation dialog | Accessible Radix dialog for confirming single-star moves or discarding drafts. |
 
-Create `.env.local` based on `.env.example`:
+### Layout Shells (`src/components/layout/shells/`)
+| Shell | Purpose | Used In |
+|---|---|---|
+| [`CommunityShell`](src/components/layout/shells/CommunityShell.tsx) | General community navigation | `/`, `/challenges`, `/gallery`, `/commissions`, `/artists` |
+| [`StudioShell`](src/components/layout/shells/StudioShell.tsx) | Creator workspace with sub-nav rail | `/dashboard`, `/me/portfolio`, `/me/commissions`, `/me/profile` |
+| [`FocusedTaskShell`](src/components/layout/shells/FocusedTaskShell.tsx) | Immersive task view (hides bottom nav) | `/challenges/[slug]/voting`, `/artworks/[slug]` |
+
+---
+
+## 📱 Key User Journeys & Screen Redesigns
+
+### 1. Persistent 4-Destination Navigation
+Mengart unifies navigation into **4 primary destinations** across mobile and desktop:
+* **Beranda (`/`):** Atelier discovery, featured spotlight, recent artworks, operational notices.
+* **Challenge (`/challenges`):** Active contests, submission portals, official winner showcase.
+* **Galeri (`/gallery`):** Public artwork discovery with provenance filtering.
+* **Studio (`/dashboard`):** Creator studio landing with public profile preview and management shortcuts.
+* **Center Upload FAB:** A prominent floating action button triggering the quick upload workflow.
+
+### 2. Alur Challenge & Voting Workspace
+* **Submission Text Recovery (`ChallengeSubmissionModal.tsx`):** Protects creators from accidental tab closure. Draft title and description are auto-saved in browser storage per challenge (`mengart_sub_draft:${challengeId}`). Berkas media wajib dipilih ulang secara sadar demi keamanan.
+* **2-Column Mobile Overview (`VotingWorkspace.tsx`):** Eliminates awkward single-column scrolling while preserving natural artwork aspect ratios.
+* **Public Upfront Stars:** Public aggregate star counts are displayed upfront for transparency; voter identities remain strictly confidential.
+* **Single-Star Movement Guard:** Moving the default 1-Star budget from artwork A to artwork B prompts an explicit confirmation modal (*"Pindahkan Star dari karya A ke karya B?"*) to prevent accidental voting slips.
+* **Multi-Star Budget Guidance:** Clear feedback when the star allowance is exhausted.
+* **Non-Mandatory Full Inspection:** Tapping any card opens the high-resolution lightbox inspector; voting can be performed both in overview and detail.
+* **Presentation of Concluded Challenges:** Theme brief $\rightarrow$ Official results & podium $\rightarrow$ Participant entries archive.
+
+### 3. Connected Gallery & Provenance Separation
+* **Segmented Pill Navigation:** Switch instantly between **"Karya Bebas"** (independent member creations) and **"Karya Challenge"** (submissions entered into community challenges), synchronized with URL search params (`?tab=bebas` and `?tab=challenge`).
+* **Challenge Provenance Badge:** Every challenge artwork displays an Atelier badge (`Challenge: [Judul]`) linking directly to the contest page.
+* **Filter Chips:** Filter by media type (Semua, Gambar, Video), sort order (Terbaru, Terlama), and toggle "Komentar Terbuka".
+* **Quick Commission Discovery:** Contextual discovery banner linking directly to `/commissions`.
+
+### 4. Immersive Artwork Detail Screen
+* **`FocusedTaskShell` Integration:** Contextual top back button (`/gallery`), right-side report/profile actions, and auto-hidden mobile bottom nav.
+* **Mobile Thumb Dock (`ArtworkFocusedBottomBar`):** Sticky bottom bar featuring artist identity pill, smooth scroll button to comments (`#comments`), and Web Share API trigger with clipboard fallback.
+* **Inclusive Commenting Stream (`CritiqueSection`):** Natural "Komentar" terminology throughout, author edit indicator `(diedit)`, soft-deletion, and staff moderation with mandatory reason and audit trails.
+
+### 5. Creator Studio Landing & Management
+* **Public Profile Preview Landing (`/dashboard`):** Wrapped in `StudioShell`. Displays the artist's profile exactly as seen by visitors, with owner sub-nav rail `[ Pratinjau | Portofolio | Layanan Komisi | Edit Profil ]`.
+* **Portfolio Manager (`/me/portfolio`):** Inline custom caption editor, visibility toggles (`isVisible`), and soft-deletion.
+* **Commission Packages & Rules Manager (`/me/commissions`):** Manage pricing types, turnaround days, and Do/Don't scope rule guidelines.
+* **Profile Settings (`/me/profile`):** Direct public profile link, banner/avatar upload, specialties, and software chips.
+
+### 6. Commission Collective Hub & WhatsApp Consent
+* **Directory Grid (`/commissions`):** Wrapped in `CommunityShell` with Atelier cards, category pills, and instant search.
+* **WhatsApp Privacy Consent Guard:** Verifies `waConsentGiven` on the artist's profile before rendering direct WhatsApp order links. If consent is absent, gracefully links to the artist's profile (`/artists/[slug]`).
+* **Waitlist Slot Indicators:** Displays current waitlist capacity (`Slot: X/Y`) and status badges (*"Terbuka"* / *"Waitlist"*).
+
+---
+
+## 🔒 Backend Contract & Security Repairs (A01–A08)
+
+All 8 vulnerabilities and contract mismatches were resolved and verified prior to deploying redesigned frontend components:
+
+| Code | Vulnerability / Contract Issue | Resolution Implemented | Test Coverage |
+|---|---|---|---|
+| **A01** | Voting Data Auth Read Bypass | Derived viewer identity strictly from authenticated server session (`requireAuth()`) in `getChallengeVotingData`. | `testPhase2SecurityAndContracts.ts` Scenario 1 |
+| **A02** | Master Storage Key Leakage | Stripped `masterStorageKey` from public home queries; restricted strictly to owners and active admins. | `testPhase2SecurityAndContracts.ts` Scenario 2 |
+| **A03** | Missing Public Entity Filters | Enforced active membership (`membershipStatus === 'active'`) and public profile status on artist profiles and commissions; enforced `isNull(deletedAt)` on challenges. | `testPhase2SecurityAndContracts.ts` Scenario 3 |
+| **A04** | Direct Staff Takedown No-Op | Replaced client mock with transactional `takedownArtworkDirectService` requiring $\ge 5$ char reason and writing audit log `artwork.takedown`. | `testPhase2SecurityAndContracts.ts` Scenario 4 |
+| **A05** | Candidate Disqualification Invariant | Implemented `disqualifyChallengeCandidateService` with transactional Star deduction from ballots, voter refund notifications, and candidate notice. | `testPhase2SecurityAndContracts.ts` Scenario 5 |
+| **A06** | Suspended Account Redirect Loop | Created dedicated terminal `/account-suspended` view and redirected suspended accounts away from `/dashboard`. | `testPhase2SecurityAndContracts.ts` Scenario 6 |
+| **A07** | Upload Caption/Description Inconsistency | Harmonized `caption` and `description` in `createArtworkUploadAction`, added `isSpoiler` toggle, and aligned UI pickers. | `testPhase2SecurityAndContracts.ts` Scenario 7 |
+| **A08** | Timezone Offset Shifts on Datetime Inputs | Created `src/lib/presentation/witaTime.ts` with canonical WITA converters, eliminating browser timezone shifts on challenge forms. | `testPhase2SecurityAndContracts.ts` Scenario 8 |
+
+---
+
+## 🗣️ Atelier Vernacular (Terminology Refinements)
+
+To eliminate intimidating, overly critical phrasing and foster a welcoming, appreciative community atmosphere:
+
+| Old / Fragmented Phrasing | New Atelier Vernacular | Context / Surface |
+|---|---|---|
+| *Kritik / Kritik Terbuka* | **Komentar / Komentar Terbuka** | Filter galeri, tombol detail karya, lencana |
+| *Beri Kritik Terstruktur* | **Tulis Komentar atau Apresiasi** | Form komentar karya (`CritiqueSection`) |
+| *Hub Layanan Kreator* | **Layanan Komisi Komunitas** | Halaman `/commissions` & link pintasan galeri |
+| *Kunci Submisi* | *(Dihapus dari UI - Otomatis via Scheduler)* | Administrasi siklus hidup challenge |
+| *Hitung Hasil (Podium)* | **Lihat Hasil Resmi & Karya Juara** | Halaman hasil challenge selesai |
+| *Vault Karya* | **Portofolio Kreator** | Sub-navigasi Studio & galeri pribadi |
+
+---
+
+## 🧪 Independent QA Verification Matrix
+
+This branch has achieved **100% PASS** across all automated test harnesses:
 
 ```bash
-cp .env.example .env.local
+# 1. Verify ESLint (0 errors, 0 warnings)
+npm run lint
+
+# 2. Compile Next.js 16 App Router (32/32 routes) & Media Worker
+npm run build
+
+# 3. Run all 19 domain, security, contract, and migration test suites
+npm run test:all
+
+# 4. Run all 20 Playwright E2E test journeys (including mobile viewport tests)
+npx playwright test
 ```
 
-Configure your local credentials:
+### Verification Results Summary
 
-```ini
-# Application
-NODE_ENV=development
-APP_URL=http://localhost:3000
-TIMEZONE=Asia/Makassar
+| Test Suite | Command | Result | Details |
+|---|---|:---:|---|
+| **ESLint** | `npm run lint` | **PASS** | 0 errors, 0 warnings across all TypeScript & JSX files |
+| **Production Build** | `npm run build` | **PASS** | 32/32 Next.js App Router routes + worker bundle compiled |
+| **Backend & Invariant Suites** | `npm run test:all` | **PASS** | 19/19 test suites passed (Gates A–H + Contract Repairs A01–A08) |
+| **Playwright E2E** | `npx playwright test` | **PASS** | 20/20 user journey and mobile tests passed cleanly |
 
-# PostgreSQL Database
-POSTGRES_USER=mengart
-POSTGRES_PASSWORD=mengart_dev_pass
-POSTGRES_DB=mengart_db
-POSTGRES_PORT=5433
-DATABASE_URL=postgres://mengart:mengart_dev_pass@localhost:5433/mengart_db
+---
 
-# Redis
-REDIS_PORT=6379
-REDIS_URL=redis://localhost:6379
+## 🏛️ Inherited Foundation & Domain Invariants
 
-# NextAuth / Auth.js
-AUTH_SECRET=development_super_secret_session_key_32bytes_minimum
-NEXTAUTH_URL=http://localhost:3000
-GOOGLE_CLIENT_ID=your_google_client_id
-GOOGLE_CLIENT_SECRET=your_google_client_secret
+This branch inherits and fully preserves all previous release gate guarantees:
 
-# Storage Root
-STORAGE_ROOT=./storage
-```
+* **Google-Only OAuth 2.0:** Verified Google identities only (`profile.email_verified === true`). Direct 8-character CSPRNG bearer invite codes.
+* **Dual Media Pipeline:** JPEG, PNG, WebP ($\le 25$MB) and MP4 H.264/AAC ($\le 50$MB, no duration limit). Strict rejection of GIF/WebM/SVG.
+* **Zero Watermarks:** Public derivatives are resolution-limited ($\le 1920$px WebP/MP4) with zero visual watermark overlays; clean originals remain ACL-protected.
+* **Challenge State Machine:** Single Community Winner, unranked dynamic jury awards, tiebreak rounds, and governance results revocation.
+* **Zero Legacy Debt:** Clean schema without deprecated columns, tables, or legacy enum members.
 
-### Database Setup & Migrations
+---
 
-Start local database and redis containers:
+## 🚀 Getting Started & Local Execution
+
+### 1. Start Database & Redis Services
 
 ```bash
 docker compose up -d postgres redis
 ```
 
-Apply all migrations sequentially:
+### 2. Run Migrations & Seed Test Data
 
 ```bash
 npm run db:migrate
-```
-
-*(Optional)* Seed standard test accounts:
-
-```bash
 npm run db:seed:accounts
 ```
 
-### Running the Application
-
-Start the Next.js development server:
+### 3. Launch the Development Server
 
 ```bash
 npm run dev
 ```
 
-In a separate terminal, build and run the media background worker:
-
-```bash
-npm run build:worker
-npm run worker:media
-```
-
-Navigate to `http://localhost:3000`.
-
----
-
-## 🧪 Comprehensive Verification Matrix
-
-Mengart maintains a 100% automated verification standard across migrations, domain services, security policies, concurrency, and browser journeys.
-
-```bash
-# 1. Run full-chain PostgreSQL migration tests (12 scenarios including 0014 and 0015 upgrades)
-npm run test:migrate
-
-# 2. Run all 18 domain, lifecycle, concurrency, and security test suites
-npm run test:all
-
-# 3. Verify TypeScript types and ESLint
-npm run lint
-
-# 4. Compile Next.js production build and worker bundle
-npm run build
-
-# 5. Execute Playwright End-to-End test journeys
-npx playwright test
-```
-
-### Key Automated Test Suites
-
-* `scripts/verifyMigrations.ts`: Tests fresh database creation, sequential forward upgrades (0000 through 0015), fail-closed unreset checks, and column/table pruning assertions.
-* `testGate1SecurityAndIntegrity.ts`: Verifies master media ACLs, soft deletion, and rate limits.
-* `testPhase2VotingAndTiebreak.ts`: Verifies anti-bias shuffle, Star allocation rules, and tiebreak generation.
-* `testPhase3SimplifiedJury.ts`: 63 scenarios validating recorder partial uniqueness, unranked awards, and mixed-mode exclusion.
-* `testPhase4AuthAndInvites.ts`: 22 scenarios validating Google OAuth, 2PL redemption, surrogate codes, and last-active-admin lock.
-* `testGateESubmissionAndPortfolio.ts`: 62 scenarios validating direct canonical submissions and portfolio promotions.
-* `testGateFMediaAndRateLimiting.ts`: 28 scenarios testing magic-byte sniffing, GIF/WebM rejection, and MP4 container constraints.
-* `testGateHConcurrencyAndDR.ts`: Validates rate limit saturation, Sharp memory clamping, and pool concurrency.
-* `testPhase9LegacyCleanup.ts`: Asserts zero deprecated columns/tables/types in database schema.
-* `final-production-qa.spec.ts`: Full browser journeys with automated screenshot capture across desktop and mobile viewports.
-
----
-
-## 🚢 Production Deployment & DevOps
-
-See [`DEPLOYMENT.md`](DEPLOYMENT.md) for the complete operations runbook.
-
-### Production Container Orchestration
-
-Mengart provides a multi-stage Docker build producing a minimal standalone Next.js runner alongside PostgreSQL 16, Redis 7, and the BullMQ media worker:
-
-```bash
-docker compose -f docker-compose.yml up -d --build
-```
-
-### Health Probes
-
-* **Liveness:** `GET /api/health/liveness` (Returns HTTP 200 `{"status":"ok"}`)
-* **Readiness:** `GET /api/health/readiness` (Checks PostgreSQL and Redis connections, returns HTTP 200 `{"status":"ready"}`)
-
-### Automated State Materializer (Cron)
-
-Challenge state progression is driven by the idempotent scheduler:
-* **Option A (Local Crontab):** `* * * * * cd /opt/mengart && npm run cron:materialize`
-* **Option B (HTTP Endpoint):** `POST /api/cron/materialize-challenges` with `Authorization: Bearer <CRON_SECRET>`. Fails closed (`HTTP 503`) when unconfigured.
-
-### Disaster Recovery & Backups
-
-Encrypted, authenticated backups using AES-256-CBC with HMAC-SHA256 integrity signatures:
-
-```bash
-# Backup database and media storage
-./scripts/backup.sh
-
-# Restore from backup archive
-./scripts/restore.sh <TIMESTAMP_OR_ARCHIVE_FILE>
-```
-
----
-
-## 🏆 Release Gates & Zero-Debt History
-
-| Phase / Gate | Focus Area | Status | Key Deliverables |
-|---|---|:---:|---|
-| **Gate A** | Database Migrations & Lifecycle Engine | ✅ PASS | Migration 0007, Rank #1 tiebreak reconstruction, scheduler idempotency |
-| **Gate B** | Voting & Tie Resolution | ✅ PASS | Migration 0008 & 0009, single Community Winner, per-round ballot uniqueness |
-| **Gate C** | Simplified Jury & Results Model | ✅ PASS | Migration 0010, dynamic category labels, single designated Jury Recorder |
-| **Gate D** | Authentication & Direct Invites | ✅ PASS | Migration 0011, Google OAuth only, 8-char CSPRNG codes, 2PL redemption |
-| **Gate E** | Submissions & Portfolio | ✅ PASS | Migration 0012, direct canonical submissions, portfolio auto-promotion |
-| **Gate F** | Media Pipeline & Rate Limiting | ✅ PASS | Single validation engine, MP4-only video, watermark removal amendment |
-| **Gate G** | Community UX & Story Cards | ✅ PASS | Migration 0013, simple comments, manual spotlight, 9:16 Story Card Canvas |
-| **Gate H** | Disaster Recovery & Concurrency | ✅ PASS | Insecure defaults audit, memory clamping, pool concurrency, security headers |
-| **Phase 9** | Comprehensive Legacy Cleanup | ✅ PASS | Migration 0014, dropped 5 columns, 2 enums, 3 legacy tables, 0 legacy debt |
-| **Phase 10**| Final Production QA Baseline | ✅ PASS | Migration 0015, pruned GIF/WebM from schema/UI, completed Artwork Spoiler UX |
+Visit `http://localhost:3000`. Quick-login credentials for local testing (Admin, Moderator, Member) are available on `/login` in development mode.
 
 ---
 
 ## 📄 License
 
 Private and proprietary. Developed for the Mengart Artist Collective. All rights reserved.
+
