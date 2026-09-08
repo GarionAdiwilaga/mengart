@@ -3,6 +3,7 @@ import { profiles, users } from "@/db/schema";
 import { eq, desc, and, or, ilike, isNull } from "drizzle-orm";
 import Link from "next/link";
 import { Palette, Sparkles, Search, User, Briefcase, MapPin, ArrowRight } from "lucide-react";
+import { CommunityShell } from "@/components/layout/shells/CommunityShell";
 
 interface ArtistsPageProps {
   searchParams: Promise<{
@@ -50,7 +51,7 @@ export default async function ArtistsDirectoryPage({ searchParams }: ArtistsPage
     .orderBy(desc(profiles.createdAt));
 
   return (
-    <main className="p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-8 flex-1">
+    <CommunityShell maxWidth="wide" className="flex flex-col gap-8">
       {/* Hero & Search */}
       <section className="flex flex-col sm:flex-row sm:items-end justify-between gap-6">
         <div>
@@ -200,6 +201,6 @@ export default async function ArtistsDirectoryPage({ searchParams }: ArtistsPage
           })}
         </div>
       )}
-    </main>
+    </CommunityShell>
   );
 }

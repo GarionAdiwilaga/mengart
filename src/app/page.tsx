@@ -58,7 +58,6 @@ export default async function HomePage() {
       artistCommissionStatus: profiles.commissionStatus,
       publicStorageKey: artworkVersions.publicStorageKey,
       thumbnailStorageKey: artworkVersions.thumbnailStorageKey,
-      masterStorageKey: artworkVersions.masterStorageKey,
       width: artworkVersions.width,
       height: artworkVersions.height,
       createdAt: artworks.createdAt,

@@ -213,9 +213,9 @@ export function CritiqueSection({
 
         {/* Social Flag Only (Blueprint 2.2.2 §7.5) */}
         {isCritiqueWelcome ? (
-          <span className="px-3 py-1 rounded-full text-xs font-mono font-medium bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1.5">
-            <Sparkles className="h-3.5 w-3.5" />
-            <span>Kritik Dipersilakan</span>
+          <span className="px-3 py-1 rounded-full text-xs font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5">
+            <MessageSquare className="h-3.5 w-3.5" />
+            <span>Komentar Terbuka</span>
           </span>
         ) : (
           <span className="px-3 py-1 rounded-full text-xs font-mono font-medium bg-white/5 text-zinc-400 border border-white/10 flex items-center gap-1.5">
@@ -230,10 +230,10 @@ export function CritiqueSection({
           <ShieldCheck className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
           <div className="flex flex-col gap-0.5">
             <span className="font-mono font-bold text-amber-300">
-              Kreator menyambut kritik & saran konstruktif
+              Kreator menyambut komentar & masukan konstruktif
             </span>
             <p className="text-zinc-300 leading-relaxed font-sans">
-              Berikan masukan berfokus pada teknik, pencahayaan, atau komposisi visual untuk mendukung kemajuan rekan artist.
+              Berikan apresiasi atau masukan seputar teknik, pencahayaan, atau komposisi visual untuk mendukung kemajuan rekan artist.
             </p>
           </div>
         </div>
@@ -250,10 +250,10 @@ export function CritiqueSection({
             rows={3}
             placeholder={
               isCritiqueWelcome
-                ? "Tuliskan komentar, apresiasi, atau kritik konstruktif..."
+                ? "Tuliskan komentar, apresiasi, atau masukan membangun..."
                 : "Tuliskan apresiasi untuk karya ini..."
             }
-            className="w-full px-4 py-3 rounded-2xl bg-white/5 border border-white/10 text-[#f6f2e9] placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-amber-500 text-xs font-sans resize-none"
+            className="w-full px-4 py-3 rounded-2xl bg-white/5 border border-white/10 text-[#f6f2e9] placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-amber-500 text-base sm:text-xs font-sans resize-none"
             required
           />
 

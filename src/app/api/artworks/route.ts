@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { artworks, artworkVersions, profiles, users, portfolioEntries } from "@/db/schema";
-import { eq, and, desc, sql, ilike, isNull } from "drizzle-orm";
+import {
+  artworks,
+  artworkVersions,
+  profiles,
+  users,
+  portfolioEntries,
+  challengeSubmissions,
+  challenges,
+} from "@/db/schema";
+import { eq, and, desc, asc, sql, ilike, isNull, isNotNull } from "drizzle-orm";
 import { auth } from "@/auth";
 
 export async function handleGetArtworks(
@@ -12,6 +20,8 @@ export async function handleGetArtworks(
   const search = searchParams.get("search")?.trim();
   const mediaType = searchParams.get("mediaType");
   const critiqueMode = searchParams.get("critiqueMode");
+  const tab = searchParams.get("tab"); // "bebas" | "challenge" | null
+  const sort = searchParams.get("sort"); // "latest" | "oldest" | null
   const limit = Math.min(Number(searchParams.get("limit")) || 30, 100);
 
   let sessionUser = sessionUserOverride;
@@ -51,6 +61,14 @@ export async function handleGetArtworks(
     conditions.push(eq(artworks.critiqueMode, critiqueMode as any));
   }
 
+  if (tab === "bebas") {
+    conditions.push(isNull(challengeSubmissions.id));
+  } else if (tab === "challenge") {
+    conditions.push(isNotNull(challengeSubmissions.id));
+  }
+
+  const orderByClause = sort === "oldest" ? asc(artworks.createdAt) : desc(artworks.createdAt);
+
   const items = await db
     .select({
       id: artworks.id,
@@ -75,6 +93,9 @@ export async function handleGetArtworks(
       masterStorageKey: artworkVersions.masterStorageKey,
       width: artworkVersions.width,
       height: artworkVersions.height,
+      challengeId: challengeSubmissions.challengeId,
+      challengeTitle: challenges.title,
+      challengeSlug: challenges.slug,
     })
     .from(artworks)
     .innerJoin(profiles, eq(profiles.userId, artworks.userId))
@@ -87,8 +108,10 @@ export async function handleGetArtworks(
       )
     )
     .leftJoin(artworkVersions, eq(artworkVersions.id, artworks.currentVersionId))
+    .leftJoin(challengeSubmissions, eq(challengeSubmissions.artworkId, artworks.id))
+    .leftJoin(challenges, eq(challenges.id, challengeSubmissions.challengeId))
     .where(and(...conditions))
-    .orderBy(desc(artworks.createdAt))
+    .orderBy(orderByClause)
     .limit(limit);
 
   // Sanitize masterStorageKey: Expose only to ACTIVE artwork owner or ACTIVE platform admin

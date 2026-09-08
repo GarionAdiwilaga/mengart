@@ -45,7 +45,8 @@ export async function createArtworkUploadAction(formData: FormData) {
   }
 
   const title = (formData.get("title") as string)?.trim() || "Untitled Artwork";
-  const description = (formData.get("caption") as string)?.trim() || null;
+  const rawDesc = formData.get("description") ?? formData.get("caption");
+  const description = typeof rawDesc === "string" ? rawDesc.trim() || null : null;
   const audience = ((formData.get("audience") as string) || "public") as
     | "public"
     | "members_only"

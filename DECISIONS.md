@@ -538,3 +538,180 @@
 **Decision:** Added a non-production `Credentials` provider and 1-click test login toolbar on `/login` to simulate Admin (`admin@mengart.local`), Moderator (`moderator@mengart.local`), Member (`member@mengart.local`), and Unverified/Pending Invite (`pending@mengart.local`) accounts without requiring Google OAuth credentials.
 **Business Rule:** Dev credentials authorization is strictly disabled in production (`process.env.NODE_ENV === 'production'`) and only operates on seeded development accounts.
 **Reason:** Enables fast manual QA and multi-role testing of admin tools, moderation queues, voting flows, and onboarding without needing external OAuth credentials.
+
+## 2026-09-07
+
+### Frontend Overhaul Blueprint v0.3 Adoption (Mobile-First, Atomic Design, Flow Continuity & Contract Repair)
+**Decision:** Formally adopt `Mengart frontend overhaul blueprint v0.3` as the authoritative frontend design, state architecture, and engineering execution specification:
+1. **Primary Navigation Architecture:** Standardize on 4 persistent destinations across mobile and desktop: **Beranda · Challenge · Galeri · Studio** (with Studio pointing to the signed-in creator's public profile preview with management shortcuts). Commissions are placed as a discovery sub-section in Galeri/Artist profiles and managed inside Studio.
+2. **Gallery Provenance Separation:** Provide two distinct gallery tabs: **"Karya bebas"** (independent member uploads) and **"Karya challenge"** (challenge contest submissions), derived from canonical submission relationships.
+3. **Challenge Voting Mechanics:**
+   - Two-column phone overview with uncropped aspect-ratio preservation; tap opens full detail view.
+   - Voting controls accessible in both overview and detail. Inspection is not mandatory.
+   - Public aggregate Star totals visible before voting; voter identities remain 100% private.
+   - Immediate server save on Star allocation/removal.
+   - Explicit confirmation required when moving the default assigned single Star from artwork A to artwork B (*"Pindahkan Star dari karya A ke karya B?"*).
+4. **Past Challenge Presentation:** Render the original theme and brief first, followed by published results and winner showcase, then participant entries.
+5. **Submission Text Recovery:** Restore unsubmitted text fields (title & description) locally after browser closure; media files must be deliberately re-selected. No client-persisted files, tokens, or private URLs.
+6. **Backend Contract & Security Repair Prerequisites (Phase 2):** Resolve vulnerabilities A01–A08 prior to releasing redesigned UI screens:
+   - A01: Secure `getChallengeVotingData` by deriving viewer identity strictly server-side.
+   - A02: Strip `masterStorageKey` from public home/gallery queries.
+   - A03: Enforce active membership and public profile status on artist and challenge lookups.
+   - A04: Replace no-op admin takedown with real transactional service and audit logging.
+   - A05: Implement canonical `disqualifyChallengeCandidateService` with Star refund.
+   - A06: Eliminate suspended account redirect loop with a dedicated terminal `/account-suspended` view.
+   - A07: Unify artwork upload schema and harmonize `caption` vs `description`.
+   - A08: Canonical WITA datetime input converter eliminating browser timezone shifts.
+**Business Rule:** User-authorized operations must flow through verified server actions and domain services. Never present decorative features without server backing. All public UI copy strictly adheres to natural, creator-respectful Bahasa Indonesia (*Atelier Vernacular*).
+**Reason:** Resolves UI page detachment, broken translated phrasing, mobile touch deficiencies, and contract/security gaps identified during the 7-Sept-2026 comprehensive repository audit.
+
+### Grill-Me Interaction & Engineering Resolutions
+**Decision:** Resolved 8 concrete execution details through interactive design-tree grilling:
+1. **Direct Staff Takedown (A04):** Implemented direct staff takedown action requiring mandatory reason ($\ge 5$ chars), producing committed database mutation and audit log without requiring a prior member report.
+2. **Suspended Account State (A06):** Created dedicated terminal `/account-suspended` route with explanatory message and Sign Out action, eliminating the redirect loop on `/dashboard`.
+3. **Focused Screen Mobile Navigation:** `MobileBottomNav` is hidden on both `/challenges/[slug]/voting` and `/artworks/[slug]`, replaced by contextual thumb-zone action bars.
+4. **Gallery Separation Architecture:** Implemented top segmented pill bar `[ Karya Bebas | Karya Challenge ]` synced with URL parameters `?tab=bebas` and `?tab=challenge`.
+5. **Submission Recovery Presentation:** Text fields auto-populate upon form opening, accompanied by an informative banner (*"Teks dipulihkan. Pilih kembali berkas karya untuk melanjutkan."*) and a *"Buang draf"* action.
+6. **Multi-Star Budget Movement:** Direct informative toast/banner guidance when full budget is allocated (*"Semua {maxStars} Star sudah kamu gunakan. Kurangi alokasi dari karya lain terlebih dahulu sebelum memilih karya ini."*).
+7. **Creator Studio Landing:** `/dashboard` opens the artist's public profile preview with an owner sub-navigation bar `[ Pratinjau | Portofolio | Layanan Komisi | Edit Profil ]`.
+8. **Command Palette & Search Scoping:** `⌘K` palette acts as "Pintasan Cepat" (shortcuts, navigation, quick actions), while in-depth content searches live directly on discovery pages.
+**Business Rule:** These 8 decisions govern Phase 2 through Phase 6 implementations.
+**Reason:** Fully aligned during user interview and blueprint grilling.
+
+### Terminologi UI: Penggantian Istilah "Kritik" Menjadi "Komentar"
+**Decision:** Mengganti istilah "Kritik" / "Kritik Terbuka" menjadi "Komentar" / "Komentar Terbuka" di seluruh antarmuka pengguna (misal: "Beri Komentar", "Komentar (12)", filter "Komentar Terbuka").
+**Business Rule:** Skema database dan enum backend tetap kompatibel (`critique_mode`), namun seluruh layer presentasi pengguna, label tombol, badge, placeholder form, dan notifikasi menyajikan kata "Komentar" yang ramah dan inklusif.
+**Reason:** Istilah "Kritik" terkesan kaku, mengintimidasi, dan menimbulkan tekanan psikologis bahwa respon harus berupa kritik analitis. "Komentar" menciptakan ruang interaksi, apresiasi, dan diskusi karya yang hangat dan alami bagi seluruh anggota komunitas.
+
+## 2026-09-08
+
+### Phase 2: Security & Backend Contract Repairs Execution Complete (A01–A08)
+**Decision:** Fully executed and verified all 8 critical security, authorization, and contract remediations:
+1. **A01 (Voting Read Auth):** `getChallengeVotingData` derives identity strictly from server-authenticated session (`requireAuth()`), blocking unauthorized 3rd-party user ballot requests.
+2. **A02 (Master Key Leakage):** Stripped `masterStorageKey` from public home queries and restricted to authorized owners/admins.
+3. **A03 (Public Entity Filters):** Joined `users` and enforced active membership (`membershipStatus === 'active'`, `!deletedAt`) and active public profile status (`profileStatus === 'active_public'`) across artist profiles (`/artists/[slug]`) and commissions (`/commissions`). Enforced `isNull(challenges.deletedAt)` and `isVisible === true` on `getChallengeBySlug` with staff preview allowances.
+4. **A04 (Direct Staff Takedown):** Replaced mock toast with transactional `takedownArtworkDirectService` setting `publicationStatus: 'hidden'`, requiring $\ge 5$ character reason and writing immutable audit log `artwork.takedown`. Wired `ArtworkAdminMenu.tsx`.
+5. **A05 (Disqualify Candidate & Star Refund):** Implemented `disqualifyChallengeCandidateService` and `disqualifyChallengeCandidateAction` executing transactional status transition to `disqualified`, snapshot removal, automated Star refund deduction from ballots, voter notification (`star_returned`), candidate moderation notification, and audit log.
+6. **A06 (Suspended Account Terminal Route):** Created `/account-suspended` view and updated `requireAuth` in `src/lib/rbac.ts` to redirect suspended users to `/account-suspended`, breaking the infinite redirect loop on `/dashboard`.
+7. **A07 (Upload Description Harmonization):** Updated `createArtworkUploadAction` to accept either `description` or `caption`. Aligned `QuickUploadModal.tsx` and `UploadArtworkModal.tsx` to pass both, added `isSpoiler` toggle, and updated UI terminology from "Kritik" to "Komentar".
+8. **A08 (WITA Timezone Helpers):** Created `src/lib/presentation/witaTime.ts` (`toWitaDatetimeLocalValue`, `parseWitaDatetimeLocalInput`, `formatWitaDate`) and integrated into `ChallengeCreateForm.tsx` to eliminate browser timezone offset shifts.
+**Business Rule:** All mutations flow through verified server actions and domain services with live active membership checks. Public queries never expose suspended, deleted, or invisible entities.
+**Reason:** Prerequisite engineering master plan milestone to ensure backend integrity before deploying redesigned frontend components. Verified via 19 test suites and 100% build pass.
+
+### Phase 3: Atomic Design Foundations & Navigation Shells Complete
+**Decision:** Built and verified the complete atomic component hierarchy and layout shell system:
+1. **Atoms (`src/components/ui/atoms/`):**
+   - `AtelierButton`: Standardized atelier styling (`primary-amber`, `surface`, `ghost`, `danger`, `outline-amber`), 44px min touch height on touchscreens, accessible focus rings.
+   - `AtelierBadge`: Semantic badge variants (`amber`, `success`, `danger`, `muted`, `default`) with sentence-case typography.
+   - `SegmentedPill`: Keyboard-navigable accessible tab control with 44px touch targets.
+   - `AtelierInput` & `AtelierTextarea`: Clean input fields enforcing `text-base sm:text-sm` to prevent iOS Safari viewport auto-zoom.
+   - `TimestampWITA`: Standardized tabular numerals in `JetBrains Mono` for absolute WITA timestamps.
+   - `StatusDot`: Semantic status indicator with subtle pulse animations.
+2. **Molecules (`src/components/ui/molecules/`):**
+   - `ArtworkMediaFrame`: Uncropped aspect-ratio container with image/video rendering and additive spoiler presentation (`blur-2xl`, safe alt, interactive reveal/hide).
+   - `MetadataRow`: Compact artist info row with avatar, display name, software badges, and absolute timestamp.
+   - `StarAllocationCounter`: Sticky thumb allocation counter displaying remaining budget, exhaustion feedback, and immediate server-save states.
+   - `SubmissionRecoveryBanner`: Recovery notification with 1-click "Buang draf" action.
+   - `FilterPills`: Pan-scroll horizontal chip filter with no scrollbar clutter.
+   - `ConfirmModal`: Radix-based accessible confirmation dialog for single-star movement and draft clearing.
+3. **Layout Shells & Reconfigured Navigation:**
+   - `CommunityShell`: Persistent header with 4-item `MobileBottomNav` (`Beranda`, `Challenge`, `Galeri`, `Studio`).
+   - `StudioShell`: Creator studio layout with owner sub-nav rail `[ Pratinjau | Portofolio | Layanan Komisi | Edit Profil ]`.
+   - `FocusedTaskShell`: Immersive full-focus shell for voting and artwork detail views with top back navigation and mobile bottom thumb action bar, hiding `MobileBottomNav`.
+   - Updated `AppHeader`, `MobileBottomNav`, `UserDropdown`, and `GlobalCommandPalette` to adopt 4 persistent destinations and Atelier Vernacular copy.
+**Business Rule:** Minimum touch target size $\ge 44$px for all interactive elements. Forms enforce zoom prevention.
+**Reason:** Eliminates mobile friction, standardizes design tokens across all views, and fulfills Blueprint v0.3 Phase 3.
+
+### Phase 4: Challenge & Voting Journey Rebuild Complete
+**Decision:** Rebuilt the complete challenge directory, challenge details, submission workflow, and voting experience:
+1. **Submission Text Recovery (`ChallengeSubmissionModal.tsx`):** Unsubmitted challenge submission text (`title`, `description`) is saved locally per challenge (`mengart_sub_draft:${challengeId}`). Upon modal opening, saved draft text is automatically restored with an informative banner and a "Buang draf" action. Media files must be selected fresh by the creator.
+2. **Voting Fairness & Dual Mobile Workflow (`VotingWorkspace.tsx`):**
+   - Implemented a 2-column mobile card overview preserving uncropped aspect ratios.
+   - Public aggregate star totals are displayed upfront for transparency.
+   - Direct voting controls on cards with immediate optimistic UI and background server save (`castOrUpdateBallotAction`).
+   - Single-star movement confirmation dialog (`ConfirmModal`) preventing accidental vote shifts when moving the default 1-Star budget.
+   - Multi-star budget exhaustion guidance banner when allocation ceiling is reached.
+   - Fullscreen focus inspection dialog allowing deep evaluation without mandatory modal gating.
+3. **Immersive Voting Shell (`challenges/[slug]/voting/page.tsx`):** Wrapped in `FocusedTaskShell` with breadcrumb navigation and sticky mobile thumb dock featuring `StarAllocationCounter`.
+4. **Challenge Presentation Flow Alignment (`challenges/[slug]/page.tsx`):**
+   - Active challenges display brief, deadline countdown, rules, and participant gallery.
+   - Concluded challenges display theme brief first, followed by official published results and winner showcase, followed by participant entries archive.
+5. **Challenge Directory Polish (`challenges/page.tsx`):** Integrated `CommunityShell`, status filter tabs, and Atelier cards with absolute WITA deadlines.
+**Business Rule:** Public Star counts are visible; individual voter identities remain strictly confidential. Voting allocations are persisted immediately. Concluded challenges highlight winners first.
+**Reason:** Fulfills Blueprint v0.3 Phase 4 requirements and Grill-Me decisions #3, #4, #5, #6.
+
+### Phase 5: Connected Discovery (Gallery & Artwork Detail Rebuild) Complete
+**Decision:** Rebuilt public artwork discovery and artwork detail presentation with complete provenance and Atelier Vernacular:
+1. **Gallery Provenance & Backward Compatible Filtering (`src/app/api/artworks/route.ts`):**
+   - Extended API route with `tab` (`bebas` | `challenge`) and `sort` (`latest` | `oldest`) query parameter handling.
+   - Left-joined `challengeSubmissions` and `challenges` to enrich artworks with `challengeTitle`, `challengeSlug`, and `effectiveCaption` (`custom_caption ?? system_caption`).
+   - Maintained 100% backward compatibility: when `tab` is omitted, all visible portfolio artworks are returned (preserving Gate E and Phase 4 test suite expectations).
+2. **Synchronized Filter Store & URL Parameters (`src/stores/useGalleryFilterStore.ts`, `src/hooks/useArtworks.ts`):**
+   - Synced segmented tab state with URL query parameters `?tab=bebas` and `?tab=challenge`.
+3. **Atelier Gallery Grid (`src/components/gallery/GalleryGrid.tsx`):**
+   - Top segmented pill `[ Karya Bebas | Karya Challenge ]`.
+   - Filter chips for media types (`Semua`, `Gambar`, `Video`), sorting, and "Komentar Terbuka".
+   - Contextual discovery banner linking to open commissions (`/commissions`).
+4. **Artwork Card Provenance & Atelier Copy (`src/components/gallery/ArtworkCard.tsx`):**
+   - Replaced all "Kritik Terbuka" text with "Komentar Terbuka".
+   - Rendered challenge provenance badge (`Challenge: [Title]`) linking to challenge page.
+5. **Immersive Artwork Detail Screen (`src/app/artworks/[slug]/page.tsx`):**
+   - Wrapped in `FocusedTaskShell` with contextual back navigation (`/gallery`), right-side report/profile actions, and bottom thumb action bar.
+   - Preserved uncropped aspect ratio media presentation with spoiler reveal, software tags, and absolute WITA timestamp.
+6. **Mobile Thumb Action Bar (`src/components/artworks/ArtworkFocusedBottomBar.tsx`):**
+   - Sticky bottom bar featuring artist identity pill, comment count button with smooth scroll to `#comments`, and Web Share API trigger with clipboard fallback.
+7. **Inclusive Commenting Experience (`src/components/artworks/CritiqueSection.tsx`):**
+   - Fully replaced "Kritik" with "Komentar" (e.g. "Beri Komentar", "Komentar (N)", appreciative placeholder copy).
+   - Preserved author edit `(diedit)`, soft-deletion, and staff hide/restore moderation workflows.
+8. **Artist Directory Polish (`src/app/artists/page.tsx`, `src/app/artists/[slug]/page.tsx`):**
+   - Wrapped in `CommunityShell` with Atelier typography and active membership filtering.
+**Business Rule:** Independent uploads and challenge submissions are distinctly browsable. Social commenting uses "Komentar". Artwork detail view prioritizes mobile thumb navigation.
+**Reason:** Fulfills Blueprint v0.3 Phase 5 and user-mandated terminology invariants.
+
+### Phase 6: Creator Studio (Public Profile, Portfolio & Commissions) Complete
+**Decision:** Rebuilt creator dashboard and management experiences into a cohesive "Studio Atelier":
+1. **Public Profile Preview Landing (`src/app/dashboard/page.tsx`):**
+   - Wrapped in `StudioShell` with owner sub-navigation rail `[ Pratinjau | Portofolio | Layanan Komisi | Edit Profil ]`.
+   - "Pratinjau" mode displays how visitors see the artist's profile, including bio, specialties, software tags, commission status, public portfolio grid with visibility indicators, commission packages with turnaround days (`minTurnaroundDays` - `maxTurnaroundDays`), and scope rules (`commissionScopeRules` with Do and Don't lists).
+2. **Portfolio Manager Rebuild (`src/app/me/portfolio/page.tsx`):**
+   - Wrapped in `StudioShell`.
+   - Integrated quick upload modal trigger, custom caption inline editing, visibility toggle (`isVisible`), and soft-deletion.
+3. **Commission Packages & Rules Manager (`src/app/me/commissions/page.tsx`):**
+   - Wrapped in `StudioShell`.
+   - Provided service package creation, editing, turnaround days, price ranges, and Do/Don't scope rules management.
+4. **Creator Profile Settings (`src/app/me/profile/page.tsx`):**
+   - Wrapped in `StudioShell`.
+   - Direct link to preview public profile (`/dashboard` or `/artists/[slug]`), avatar/banner uploads, specialties, and software chips.
+**Business Rule:** Studio provides the artist with a unified hub matching the public presentation view while exposing quick editing capabilities.
+**Reason:** Fulfills Blueprint v0.3 Phase 6 requirements and Grill-Me Decision #7.
+
+### Phase 7: Commission Hub Polish & Discovery Flow Complete
+**Decision:** Rebuilt and polished the public commission directory and service cards:
+1. **Community Shell Integration (`src/app/commissions/page.tsx`):** Wrapped in `CommunityShell`, adopting standard header navigation, persistent mobile bottom navigation, and Atelier design tokens.
+2. **Atelier Vernacular Copy:** Replaced disjointed copy with natural Indonesian phrasing (*"Kolektif Komisi Kreator"*, *"Jelajahi tawaran layanan ilustrasi dan seni visual dari para kreator terverifikasi di Mengart Atelier"*).
+3. **Mobile-First Input & Touch Targets:** Enforced `text-base sm:text-xs` on search inputs and `min-h-[44px]` on all interactive buttons to avoid iOS auto-zoom and thumb navigation strain.
+4. **Waitlist & Slot Availability:** Displayed slot status (`waitlistCurrentSlots` / `waitlistMaxSlots`) on waitlist cards and "Terbuka" on open status cards.
+5. **WhatsApp Privacy Protection:** Directly verified `waConsentGiven` (`profiles.waConsentGiven`) and valid WhatsApp numbers before generating direct WhatsApp click-to-chat links; gracefully fell back to the artist profile when consent is absent.
+6. **Service Modal Polish (`src/components/commissions/CommissionServiceModal.tsx`):** Updated all form inputs to enforce `text-base sm:text-xs` for iOS auto-zoom prevention.
+**Business Rule:** Commission discovery strictly respects artist contact privacy preferences and provides clear pricing and delivery estimates.
+**Reason:** Fulfills Blueprint v0.3 Phase 7 requirements.
+
+### Phase 8: Cross-Device Verification, Playwright E2E & Final Release Audit Complete
+**Decision:** Executed comprehensive cross-device validation, mobile viewport accessibility audit, and automated Playwright E2E regression:
+1. **E2E Test Suite (`e2e/frontend-overhaul-v03.spec.ts`):**
+   - Verified 4 persistent navigation destinations (**Beranda · Challenge · Galeri · Studio**) with $\ge 44$px touch targets on mobile viewports.
+   - Verified gallery provenance tabs switching (`[ Karya Bebas | Karya Challenge ]`) and URL synchronization.
+   - Verified strict vernacular invariant: verified "Komentar Terbuka" chip and verified zero instances of legacy "Kritik" buttons on public interfaces.
+   - Verified mobile font-size bounds ($\ge 16$px on mobile viewports) to eliminate iOS Safari auto-zoom.
+   - Verified unauthenticated `/dashboard` access redirects to `/login`.
+2. **Full Regression Validation:**
+   - 20/20 Playwright E2E tests passed cleanly across both mobile and desktop browser projects.
+   - 19/19 backend, security, and invariant test suites in `npm run test:all` passed cleanly (100%).
+   - Clean ESLint run (`npm run lint`: 0 errors, 0 warnings).
+   - Production Next.js Turbopack build (`npm run build`: 32/32 routes + worker bundle compiled cleanly).
+**Business Rule:** All redesigned screens adhere to Studio Atelier design tokens, $\ge 44$px touch targets, iOS auto-zoom prevention, and natural Indonesian terminology.
+**Reason:** Fulfills Blueprint v0.3 Phase 8 requirements and closes the Frontend UI/UX Overhaul.
+
+
+
+

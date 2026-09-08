@@ -1,6 +1,6 @@
 "use server";
 
-import { requireAuth, requireModerator } from "@/lib/rbac";
+import { requireAuth, requireModerator, getCurrentUser } from "@/lib/rbac";
 import { db } from "@/db";
 import {
   challenges,
@@ -30,14 +30,31 @@ import {
 } from "@/lib/services/votingService";
 
 /**
- * Fetch challenge candidates and user's ballot for a specific voting round
+ * Fetch challenge candidates and user's ballot for a specific voting round.
+ * Server Action securely derives viewer identity and rejects unauthorized 3rd-party ballot queries.
  */
 export async function getChallengeVotingData(
   challengeId: string,
   userId?: string | null,
   roundType: "main" | "tiebreak" = "main"
 ) {
-  return await getAuthoritativeVotingRoundData(challengeId, userId);
+  const sessionUser = await getCurrentUser();
+
+  let targetUserId: string | null = null;
+  if (userId) {
+    const isStaff =
+      sessionUser &&
+      (sessionUser.role === "admin" || sessionUser.role === "moderator") &&
+      sessionUser.membershipStatus === "active";
+    if (sessionUser?.id !== userId && !isStaff) {
+      throw new Error("Akses ditolak: Tidak dapat melihat alokasi suara anggota lain.");
+    }
+    targetUserId = userId;
+  } else {
+    targetUserId = sessionUser?.id || null;
+  }
+
+  return await getAuthoritativeVotingRoundData(challengeId, targetUserId);
 }
 
 /**

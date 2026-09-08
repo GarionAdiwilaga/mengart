@@ -7,6 +7,8 @@ import {
   challengeBallots,
   challengeBallotStars,
   challengeResults,
+  challengeJuryAwards,
+  notifications,
   auditLogs,
   users,
 } from "@/db/schema";
@@ -978,4 +980,182 @@ export async function materializeScheduledTransitionsService(
     transitions,
   };
 }
+
+/**
+ * Authoritative Canonical Domain Service for Disqualifying a Challenge Candidate Submission
+ * 
+ * - Verifies staff authority (loaded inside transaction)
+ * - Requires mandatory reason (>= 5 chars)
+ * - Locks challenge_submissions row FOR UPDATE
+ * - Locks parent challenges row FOR UPDATE
+ * - Validates challenge is in an active (non-finished, non-cancelled) lifecycle state
+ * - Updates challenge_submissions to disqualified with reason, timestamp, and actor
+ * - Removes entry from active round candidate snapshots
+ * - Refunds Stars: finds all challengeBallotStars for this submission, subtracts from challengeBallots.starsAllocated, deletes star rows, and notifies affected voters
+ * - Removes draft jury awards for this submission if any
+ * - Removes draft results for this submission if any
+ * - Notifies candidate artist with moderation notification
+ * - Records immutable audit log
+ */
+export async function disqualifyChallengeCandidateService(
+  dbOrTx: any,
+  actor: ServiceContext | { userId: string | null; role?: string },
+  params: {
+    submissionId: string;
+    reason: string;
+  }
+) {
+  const { submissionId, reason } = params;
+  if (!reason || reason.trim().length < 5) {
+    throw new Error("Alasan diskualifikasi wajib diisi minimal 5 karakter.");
+  }
+
+  if (actor.role !== "admin" && actor.role !== "moderator") {
+    throw new Error("Hanya administrator atau moderator yang dapat mendiskualifikasi karya.");
+  }
+
+  const run = async (tx: any) => {
+    // 1. Lock and fetch submission
+    const [submission] = await tx
+      .select()
+      .from(challengeSubmissions)
+      .where(eq(challengeSubmissions.id, submissionId))
+      .for("update");
+
+    if (!submission) {
+      throw new Error("Submisi tidak ditemukan.");
+    }
+
+    if (submission.submissionStatus === "disqualified") {
+      throw new Error("Submisi telah didiskualifikasi sebelumnya.");
+    }
+
+    // 2. Lock and fetch parent challenge
+    const [challenge] = await tx
+      .select()
+      .from(challenges)
+      .where(eq(challenges.id, submission.challengeId))
+      .for("update");
+
+    if (!challenge) {
+      throw new Error("Challenge tidak ditemukan.");
+    }
+
+    if (challenge.status === "finished" || challenge.status === "cancelled") {
+      throw new Error(
+        `Tidak dapat mendiskualifikasi karya pada challenge yang telah ${
+          challenge.status === "finished" ? "selesai" : "dibatalkan"
+        }.`
+      );
+    }
+
+    // 3. Mark submission as disqualified
+    await tx
+      .update(challengeSubmissions)
+      .set({
+        submissionStatus: "disqualified",
+        disqualificationReason: reason.trim(),
+        disqualifiedBy: actor.userId,
+        disqualifiedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(challengeSubmissions.id, submission.id));
+
+    // 4. Remove from candidate snapshots
+    await tx
+      .delete(challengeVotingRoundCandidates)
+      .where(eq(challengeVotingRoundCandidates.submissionId, submission.id));
+
+    // 5. Star refund for any ballots that voted for this submission
+    const votedStars = await tx
+      .select({
+        id: challengeBallotStars.id,
+        ballotId: challengeBallotStars.ballotId,
+        starsCount: challengeBallotStars.starsCount,
+        userId: challengeBallots.userId,
+      })
+      .from(challengeBallotStars)
+      .innerJoin(challengeBallots, eq(challengeBallots.id, challengeBallotStars.ballotId))
+      .where(eq(challengeBallotStars.submissionId, submission.id));
+
+    for (const vote of votedStars) {
+      // Deduct refunded stars from ballot's total allocated count
+      await tx
+        .update(challengeBallots)
+        .set({
+          starsAllocated: sql`GREATEST(0, ${challengeBallots.starsAllocated} - ${vote.starsCount})`,
+          updatedAt: new Date(),
+        })
+        .where(eq(challengeBallots.id, vote.ballotId));
+
+      // Notify voter about returned Star
+      await tx.insert(notifications).values({
+        userId: vote.userId,
+        type: "star_returned",
+        title: "Star Anda Dikembalikan",
+        body: `Karya dalam "${challenge.title}" didiskualifikasi. ${vote.starsCount} Star telah dikembalikan ke saldo voting Anda.`,
+        targetType: "challenge",
+        targetId: challenge.id,
+        actionUrl: `/challenges/${challenge.slug}/voting`,
+        priority: "high",
+      });
+    }
+
+    // Delete star votes for this submission
+    if (votedStars.length > 0) {
+      await tx
+        .delete(challengeBallotStars)
+        .where(eq(challengeBallotStars.submissionId, submission.id));
+    }
+
+    // 6. Remove any draft jury awards for this submission
+    await tx
+      .delete(challengeJuryAwards)
+      .where(eq(challengeJuryAwards.submissionId, submission.id));
+
+    // 7. Remove any draft results for this submission
+    await tx
+      .delete(challengeResults)
+      .where(eq(challengeResults.submissionId, submission.id));
+
+    // 8. Notify candidate artist
+    await tx.insert(notifications).values({
+      userId: submission.userId,
+      type: "moderation",
+      title: "Submisi Didiskualifikasi",
+      body: `Submisi Anda "${submission.title}" dalam challenge "${challenge.title}" telah didiskualifikasi. Alasan: ${reason.trim()}`,
+      targetType: "challenge",
+      targetId: challenge.id,
+      actionUrl: `/challenges/${challenge.slug}`,
+      priority: "high",
+    });
+
+    // 9. Audit log
+    await tx.insert(auditLogs).values({
+      actorId: actor.userId,
+      action: "challenge.disqualify_candidate",
+      targetType: "challenge_submission",
+      targetId: submission.id,
+      reason: reason.trim(),
+      metadata: {
+        challengeId: challenge.id,
+        candidateUserId: submission.userId,
+        artworkId: submission.artworkId,
+        refundedBallotsCount: votedStars.length,
+      },
+    });
+
+    return {
+      success: true,
+      submissionId: submission.id,
+      challengeId: challenge.id,
+      refundedBallotsCount: votedStars.length,
+    };
+  };
+
+  return typeof dbOrTx.transaction === "function"
+    ? await dbOrTx.transaction(async (tx: any) => run(tx))
+    : await run(dbOrTx);
+}
+
 

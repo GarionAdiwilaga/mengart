@@ -298,15 +298,72 @@
 - **QA-P0-022** (System-Wide Feature Hardening, Query Leakage Prevention, WhatsApp Privacy Guard, Candidate Spoiler Presentation, and Type Purity): RESOLVED & VERIFIED
 
 ## Current Branch
-`main`
+`overhaul_frontend_atomic_design`
 
 ## Current Focus
-- All 6 final polish and hardening fixes implemented across 10 platform files.
-- 100% test pass rate across all 18 repository test suites (`npm run test:all`), Phase 6 historical tests, ESLint (0 errors, 0 warnings), and Next.js Turbopack production build (31/31 routes + worker bundle).
+- Active Phase: **Frontend UI/UX Overhaul — Blueprint v0.3 (Mobile-First, Atomic Design, Flow Continuity & Contract Repair)**.
+- **Phase 2: Security & Backend Contract Repairs (A01–A08):** **COMPLETED & 100% VERIFIED**
+  - [A01] Secured `getChallengeVotingData` via server-side session identity derivation.
+  - [A02] Stripped `masterStorageKey` from public home queries and restricted to owners/admins.
+  - [A03] Enforced active membership status and active public profile joins on `/artists/[slug]`, `/commissions`, and soft-deleted/invisible guards on `getChallengeBySlug`.
+  - [A04] Implemented `takedownArtworkDirectService` and `takedownArtworkDirectAction` with mandatory $\ge 5$ char reason and audit log `artwork.takedown`. Wired `ArtworkAdminMenu.tsx`.
+  - [A05] Implemented `disqualifyChallengeCandidateService` and `disqualifyChallengeCandidateAction` with Star refund deduction from ballots, notifications (`star_returned`, `moderation`), and audit logging.
+  - [A06] Created `/account-suspended` route and redirected suspended accounts away from `/dashboard` loop.
+  - [A07] Harmonized `description` and `caption` across actions and modals, added `isSpoiler` toggle, and updated UI terminology from "Kritik" to "Komentar".
+  - [A08] Created `src/lib/presentation/witaTime.ts` with canonical WITA conversions and updated `ChallengeCreateForm.tsx`.
+  - Automated test suite `src/lib/__tests__/testPhase2SecurityAndContracts.ts` verified (100% pass across all scenarios).
+  - All 19 test suites in `npm run test:all` passing cleanly. `npm run lint` (0 errors), `npm run build` (32/32 routes + worker compiled cleanly).
+- **Phase 3: Atomic Design Foundations & Navigation Shells:** **COMPLETED & 100% VERIFIED**
+  - Built Atelier Atoms (`AtelierButton`, `AtelierBadge`, `SegmentedPill`, `AtelierInput`, `AtelierTextarea`, `TimestampWITA`, `StatusDot`).
+  - Built Atelier Molecules (`ArtworkMediaFrame`, `MetadataRow`, `StarAllocationCounter`, `SubmissionRecoveryBanner`, `FilterPills`, `ConfirmModal`).
+  - Built Atelier Layout Shells (`CommunityShell`, `StudioShell`, `FocusedTaskShell`).
+  - Reconfigured persistent navigation: 4 destinations (**Beranda, Challenge, Galeri, Studio**), central upload FAB, and contextual hidden bottom nav on focused tasks.
+- **Phase 4: Challenge & Voting Journey Rebuild:** **COMPLETED & 100% VERIFIED**
+  - Rebuilt `ChallengeSubmissionModal.tsx` with local storage draft recovery, `SubmissionRecoveryBanner`, and atomic inputs.
+  - Rebuilt `VotingWorkspace.tsx` with 2-column mobile overview, uncropped aspect ratios, upfront public total stars, direct Star buttons, single-star movement `ConfirmModal`, multi-star budget exhaustion guidance, immediate server save, and full focus detail modal.
+  - Rebuilt `challenges/[slug]/voting/page.tsx` wrapped in `FocusedTaskShell` with sticky thumb `StarAllocationCounter`.
+  - Rebuilt `challenges/[slug]/page.tsx` with presentation flow (concluded challenges highlight brief -> official results/podium -> participant archive; active challenges show submission window -> rules -> gallery).
+  - Rebuilt `challenges/page.tsx` with `CommunityShell`, `AtelierBadge`, `TimestampWITA`, category tabs, and clean Atelier Vernacular copy.
+  - Linter (`npm run lint`), compilation (`npm run build`), and test suite (`npm run test:all`) all passing 100% (exit 0).
+- **Phase 5: Connected Discovery (Gallery & Artwork Detail Rebuild):** **COMPLETED & 100% VERIFIED**
+  - Updated `src/app/api/artworks/route.ts` with `tab` (`bebas` | `challenge`) and `sort` (`latest` | `oldest`) filtering, left-joined `challengeSubmissions` and `challenges` to expose `challengeTitle`, `challengeSlug`, and `effectiveCaption` with 100% backward compatibility for tests.
+  - Updated `src/hooks/useArtworks.ts` and `src/stores/useGalleryFilterStore.ts` with URL-synced tabs and challenge metadata.
+  - Rebuilt `src/components/gallery/ArtworkCard.tsx` with challenge provenance badge, resolved caption, and "Komentar Terbuka" badge.
+  - Rebuilt `src/components/gallery/GalleryGrid.tsx` with top `SegmentedPill` `[ Karya Bebas | Karya Challenge ]`, media chips, sorting, and commissions discovery link.
+  - Rebuilt `src/app/artworks/[slug]/page.tsx` wrapped in `FocusedTaskShell` with contextual back navigation, software badges, absolute WITA timestamp, and `ArtworkFocusedBottomBar`.
+  - Rebuilt `src/components/artworks/CritiqueSection.tsx` with natural "Komentar" vernacular, comment author editing/soft-deletion, and staff hide/restore moderation.
+  - Wrapped `src/app/artists/page.tsx` and `src/app/artists/[slug]/page.tsx` in `CommunityShell`.
+- **Phase 6: Creator Studio (Public Profile, Portfolio & Commissions):** **COMPLETED & 100% VERIFIED**
+  - Rebuilt `src/app/dashboard/page.tsx` with `StudioShell` into the "Pratinjau" landing (owner public profile preview banner, artist identity card, specialties/software tags, portfolio showcase with visibility badges, commission packages with turnaround days, and scope rules Do/Don't lists).
+  - Rebuilt `src/app/me/portfolio/page.tsx` wrapped in `StudioShell` with upload trigger, custom caption editing, visibility toggle, and soft-delete.
+  - Rebuilt `src/app/me/commissions/page.tsx` wrapped in `StudioShell` with service package management and scope rules editor.
+  - Rebuilt `src/app/me/profile/page.tsx` wrapped in `StudioShell` with public profile preview link and settings form.
+  - Linter (`npm run lint`), compilation (`npm run build`), and test suite (`npm run test:all`) all passing 100% (exit 0).
+- **Phase 7: Commission Hub Polish & Discovery Flow:** **COMPLETED & 100% VERIFIED**
+  - Wrapped `src/app/commissions/page.tsx` in `CommunityShell` with Atelier badges, responsive search bar, and empty states.
+  - Implemented mobile-first font sizes (`text-base sm:text-xs`) to prevent iOS Safari auto-zoom.
+  - Displayed waitlist slot availability indicators (`waitlistCurrentSlots` / `waitlistMaxSlots`).
+  - Added artist contact consent guard: verified `waConsentGiven` and phone number before generating direct WhatsApp order links, falling back to artist profile.
+  - Polished `src/components/commissions/CommissionServiceModal.tsx` inputs and selects with zoom-prevention styles.
+- **Phase 8: Cross-Device Verification, Playwright E2E & Final Polish:** **COMPLETED & 100% VERIFIED**
+  - Created `e2e/frontend-overhaul-v03.spec.ts` covering persistent 4-destination navigation, $\ge 44$px touch targets, provenance tab switching, "Komentar Terbuka" chip & vernacular assertions, mobile zoom prevention, and protected studio redirection.
+  - 20/20 Playwright E2E tests passed cleanly across mobile and desktop browser projects.
+  - 19/19 backend, security, and invariant test suites in `npm run test:all` passed cleanly (100%).
+  - Clean ESLint (`npm run lint`: 0 errors, 0 warnings).
+  - Production Next.js Turbopack build (`npm run build`: 32/32 routes + worker bundle compiled cleanly).
 
 ## Overall Status
-- **GO FOR PRODUCTION LAUNCH** (All Gates A–H, Phase 9 Legacy Cleanup, Baseline QA Revisions, Historical Backfill Reconciliation, and System-Wide Feature Hardening 100% complete and verified).
-
+- **FRONTEND UI/UX OVERHAUL (BLUEPRINT v0.3) — 100% COMPLETE & VERIFIED**
+  - Baseline Backend & Gates A–H: 100% Verified.
+  - Master Engineering Plan: Approved and locked.
+  - Grill-Me Interview: 100% Complete & Decisions Appended.
+  - Phase 2 Security & Contract Repairs: **COMPLETED & 100% VERIFIED**.
+  - Phase 3 Atomic Foundations & Navigation Shells: **COMPLETED & 100% VERIFIED**.
+  - Phase 4 Challenge & Voting Journey Rebuild: **COMPLETED & 100% VERIFIED**.
+  - Phase 5 Connected Discovery (Gallery & Artwork Detail): **COMPLETED & 100% VERIFIED**.
+  - Phase 6 Creator Studio (Public Profile, Portfolio & Commissions): **COMPLETED & 100% VERIFIED**.
+  - Phase 7 Commission Hub Polish & Discovery Flow: **COMPLETED & 100% VERIFIED**.
+  - Phase 8 Cross-Device Verification & E2E: **COMPLETED & 100% VERIFIED**.
 
 
 

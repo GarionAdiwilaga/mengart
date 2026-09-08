@@ -1,14 +1,15 @@
 import { auth } from "@/auth";
-import { Sparkles, Palette } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { GalleryGrid } from "@/components/gallery/GalleryGrid";
+import { CommunityShell } from "@/components/layout/shells/CommunityShell";
 
 export default async function PublicGalleryPage() {
   const session = await auth();
 
   return (
-    <main className="p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-8 flex-1">
+    <CommunityShell maxWidth="wide" className="flex flex-col gap-8">
       {/* Hero Header */}
-      <section className="flex flex-col gap-2">
+      <section className="flex flex-col gap-2 pt-2">
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-mono w-fit">
           <Sparkles className="h-3 w-3" />
           <span>SHOWCASE KARYA DIGITAL TERKURASI</span>
@@ -23,6 +24,6 @@ export default async function PublicGalleryPage() {
 
       {/* Reactive Gallery Grid with React Query & Zustand */}
       <GalleryGrid currentUserRole={session?.user?.role} />
-    </main>
+    </CommunityShell>
   );
 }

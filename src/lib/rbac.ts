@@ -28,7 +28,7 @@ export async function requireAuth(redirectTo: string = "/login") {
     redirect("/onboarding");
   }
   if (user.membershipStatus === "suspended") {
-    redirect("/dashboard?error=AccountSuspended");
+    redirect("/account-suspended");
   }
   if (user.membershipStatus === "deleted") {
     redirect("/login?error=AccountDeleted");

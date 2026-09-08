@@ -2,8 +2,7 @@
 
 import { useState } from "react";
 import { MoreHorizontal, Star, Eye, ShieldAlert, Ban, Check, Loader2 } from "lucide-react";
-import { setMonthlySpotlightAction } from "@/app/actions/moderation";
-import { resolveReportAction } from "@/app/actions/moderation";
+import { setMonthlySpotlightAction, takedownArtworkDirectAction } from "@/app/actions/moderation";
 import { toast } from "sonner";
 
 interface ArtworkAdminMenuProps {
@@ -51,11 +50,15 @@ export function ArtworkAdminMenu({
   const handleTakeDown = async (e: React.MouseEvent) => {
     e.stopPropagation();
     const reason = prompt(`Alasan penegakan take-down untuk "${artworkTitle}":`, "Melanggar pedoman konten komunitas atelier.");
-    if (!reason) return;
+    if (reason === null) return;
+    if (reason.trim().length < 5) {
+      toast.error("Alasan penegakan take-down wajib diisi minimal 5 karakter.");
+      return;
+    }
 
     setIsLoading(true);
     try {
-      // Create a temporary resolution or direct takedown
+      await takedownArtworkDirectAction(artworkId, reason.trim());
       toast.success(`Karya "${artworkTitle}" telah disembunyikan (hidden).`);
       setIsOpen(false);
       window.location.reload();

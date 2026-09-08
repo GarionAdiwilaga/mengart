@@ -23,6 +23,10 @@ export interface ArtworkListItem {
   masterStorageKey: string | null;
   width: number | null;
   height: number | null;
+  challengeId?: string | null;
+  challengeTitle?: string | null;
+  challengeSlug?: string | null;
+  effectiveCaption?: string | null;
 }
 
 export function useArtworksQuery(filters: {
@@ -30,6 +34,8 @@ export function useArtworksQuery(filters: {
   tag?: string | null;
   mediaType?: string;
   critiqueMode?: string;
+  tab?: "bebas" | "challenge";
+  sortBy?: "latest" | "oldest";
 }) {
   return useQuery({
     queryKey: ["artworks", filters],
@@ -39,6 +45,8 @@ export function useArtworksQuery(filters: {
       if (filters.tag) params.set("tag", filters.tag);
       if (filters.mediaType && filters.mediaType !== "all") params.set("mediaType", filters.mediaType);
       if (filters.critiqueMode && filters.critiqueMode !== "all") params.set("critiqueMode", filters.critiqueMode);
+      if (filters.tab) params.set("tab", filters.tab);
+      if (filters.sortBy) params.set("sort", filters.sortBy);
 
       const res = await fetch(`/api/artworks?${params.toString()}`);
       if (!res.ok) throw new Error("Gagal memuat galeri karya.");

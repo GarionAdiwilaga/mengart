@@ -14,20 +14,20 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "@/auth";
 import Link from "next/link";
 import {
-  Palette,
-  ArrowLeft,
   User,
-  Clock,
-  Sparkles,
-  MessageSquare,
-  ShieldCheck,
   Tag,
   Monitor,
   Calendar,
+  Sparkles,
+  ExternalLink,
 } from "lucide-react";
 import { ArtworkLightbox } from "@/components/gallery/ArtworkLightbox";
 import { CritiqueSection } from "@/components/artworks/CritiqueSection";
 import { ReportModal } from "@/components/artworks/ReportModal";
+import { ArtworkFocusedBottomBar } from "@/components/artworks/ArtworkFocusedBottomBar";
+import { FocusedTaskShell } from "@/components/layout/shells/FocusedTaskShell";
+import { TimestampWITA } from "@/components/ui/atoms/TimestampWITA";
+import { AtelierBadge } from "@/components/ui/atoms/AtelierBadge";
 import { canViewArtwork, canAccessMasterMedia, type PolicyUser } from "@/lib/policy";
 
 interface ArtworkDetailPageProps {
@@ -181,174 +181,192 @@ export default async function ArtworkDetailPage({ params }: ArtworkDetailPagePro
       ? `/api/media/master/${artwork.masterStorageKey}`
       : null;
 
-  const formattedDate = new Intl.DateTimeFormat("id-ID", {
-    timeZone: "Asia/Makassar",
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(artwork.createdAt)) + " WITA";
-
   return (
-    <main className="p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-8 flex-1">
-      {/* Sub-Header & Breadcrumb Bar */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/gallery"
-            className="inline-flex items-center gap-1.5 text-xs font-mono text-zinc-400 hover:text-amber-400 transition-colors"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Kembali ke Galeri
-          </Link>
-          <span className="text-zinc-600 font-mono text-xs">/</span>
-          <span className="text-zinc-300 font-mono text-xs truncate max-w-[200px]">
-            {artwork.title}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-3">
+    <FocusedTaskShell
+      backHref="/gallery"
+      backLabel="Galeri"
+      title={artwork.title}
+      rightAction={
+        <div className="flex items-center gap-2">
           <ReportModal
             targetType="artwork"
             targetId={artwork.id}
             targetTitle={artwork.title}
           />
-
           <Link
             href={`/artists/${artwork.artistSlug}`}
-            className="px-3.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-xs font-mono transition-colors flex items-center gap-1.5"
+            className="px-3.5 py-2 min-h-[44px] rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-xs font-mono transition-colors flex items-center gap-1.5 cursor-pointer"
           >
             <User className="h-3.5 w-3.5 text-amber-400" />
-            <span>Profil Artist</span>
+            <span className="hidden sm:inline">Profil Artist</span>
           </Link>
         </div>
-      </div>
+      }
+      bottomBar={
+        <ArtworkFocusedBottomBar
+          artworkTitle={artwork.title}
+          artistName={artwork.artistName}
+          artistSlug={artwork.artistSlug}
+          artistAvatar={artwork.artistAvatar}
+          commentsCount={commentRows.length}
+        />
+      }
+    >
+      <div className="p-4 sm:p-8 lg:p-12 max-w-7xl mx-auto w-full flex flex-col gap-8">
+        {/* Main Content Layout: Viewer (Left) + Details Sidebar (Right) */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Left Column: Lightbox & Comments Section */}
+          <div className="lg:col-span-2 flex flex-col gap-8">
+            <ArtworkLightbox
+              publicMediaUrl={publicMediaUrl}
+              masterMediaUrl={masterMediaUrl}
+              isMember={isMember}
+              title={artwork.title}
+              mediaType={artwork.mediaType as any}
+              width={artwork.width}
+              height={artwork.height}
+              isSpoiler={artwork.isSpoiler}
+            />
 
-      {/* Main Content Layout: Viewer (Left) + Details Sidebar (Right) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left Column: Lightbox & Critique Section */}
-        <div className="lg:col-span-2 flex flex-col gap-8">
-          <ArtworkLightbox
-            publicMediaUrl={publicMediaUrl}
-            masterMediaUrl={masterMediaUrl}
-            isMember={isMember}
-            title={artwork.title}
-            mediaType={artwork.mediaType as any}
-            width={artwork.width}
-            height={artwork.height}
-            isSpoiler={artwork.isSpoiler}
-          />
-
-          {/* Artwork Description & Process Notes */}
-          <section className="glass-panel p-6 sm:p-8 rounded-3xl flex flex-col gap-4">
-            <h2 className="font-display font-bold text-xl text-[#f6f2e9]">{artwork.title}</h2>
-
-            {artwork.description ? (
-              <p className="text-sm text-zinc-300 font-sans leading-relaxed whitespace-pre-line">
-                {artwork.description}
-              </p>
-            ) : (
-              <p className="text-xs text-zinc-500 italic">Tidak ada deskripsi tambahan.</p>
-            )}
-
-            {/* Tags */}
-            {attachedTags.length > 0 ? (
-              <div className="flex flex-wrap gap-2 pt-4 border-t border-white/5">
-                {attachedTags.map((t) => (
-                  <span
-                    key={t.slug}
-                    className="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-300 text-xs font-mono flex items-center gap-1"
+            {/* Artwork Description & Process Notes */}
+            <section className="glass-panel p-6 sm:p-8 rounded-3xl flex flex-col gap-4 border border-white/10">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="font-display font-bold text-xl text-[#f6f2e9]">{artwork.title}</h2>
+                <div className="flex items-center gap-2">
+                  <AtelierBadge
+                    variant={
+                      artwork.artistCommissionStatus === "open"
+                        ? "success"
+                        : artwork.artistCommissionStatus === "waitlist"
+                        ? "amber"
+                        : "default"
+                    }
+                    size="sm"
                   >
-                    <Tag className="h-3 w-3 text-amber-400" />
-                    #{t.name}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-          </section>
-
-          {/* Constructive Critique Section */}
-          <CritiqueSection
-            artworkId={artwork.id}
-            artworkSlug={artwork.slug}
-            critiqueMode={artwork.critiqueMode as any}
-            artworkOwnerUserId={artwork.userId}
-            currentUserId={viewer?.id}
-            currentUserRole={viewer?.role}
-            comments={commentRows}
-          />
-        </div>
-
-        {/* Right Column: Artist Bio Card & Technical Metadata */}
-        <div className="flex flex-col gap-6">
-          {/* Artist Card */}
-          <div className="glass-panel p-6 rounded-3xl flex flex-col gap-5">
-            <div className="flex items-center gap-4">
-              <div className="h-14 w-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 font-display font-bold text-xl">
-                {artwork.artistName?.charAt(0) || "A"}
-              </div>
-              <div className="flex flex-col">
-                <Link
-                  href={`/artists/${artwork.artistSlug}`}
-                  className="font-display font-bold text-lg text-[#f6f2e9] hover:text-amber-300 transition-colors truncate"
-                >
-                  {artwork.artistName}
-                </Link>
-                <span
-                  className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded-full border w-fit mt-1 ${
-                    artwork.artistCommissionStatus === "open"
-                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
-                      : artwork.artistCommissionStatus === "waitlist"
-                      ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
-                      : "bg-zinc-500/10 text-zinc-400 border-zinc-500/30"
-                  }`}
-                >
-                  Commission: {artwork.artistCommissionStatus}
-                </span>
-              </div>
-            </div>
-
-            {artwork.artistBio ? (
-              <p className="text-xs text-zinc-400 line-clamp-3 leading-relaxed">
-                {artwork.artistBio}
-              </p>
-            ) : null}
-
-            <Link
-              href={`/artists/${artwork.artistSlug}`}
-              className="w-full py-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-xs font-mono font-semibold transition-colors flex items-center justify-center gap-1.5"
-            >
-              <span>Kunjungi Profil Artist</span>
-            </Link>
-          </div>
-
-          {/* Technical Specs Panel */}
-          <div className="glass-panel p-6 rounded-3xl flex flex-col gap-4 text-xs font-mono">
-            <h4 className="font-display font-bold text-sm text-[#f6f2e9]">Detail Teknis Karya</h4>
-
-            <div className="flex flex-col gap-2.5 divide-y divide-white/5">
-              <div className="flex items-center justify-between pt-1">
-                <span className="text-zinc-500">Tipe Media:</span>
-                <span className="text-zinc-200 uppercase">{artwork.mediaType}</span>
+                    Komisi: {artwork.artistCommissionStatus}
+                  </AtelierBadge>
+                </div>
               </div>
 
-              {artwork.width && artwork.height ? (
-                <div className="flex items-center justify-between pt-2.5">
-                  <span className="text-zinc-500">Resolusi Kanvas:</span>
-                  <span className="text-zinc-200 tabular-nums">
-                    {artwork.width} × {artwork.height} px
-                  </span>
+              {artwork.description ? (
+                <p className="text-sm text-zinc-300 font-sans leading-relaxed whitespace-pre-line">
+                  {artwork.description}
+                </p>
+              ) : (
+                <p className="text-xs text-zinc-500 italic font-sans">Tidak ada catatan proses tambahan.</p>
+              )}
+
+              {/* Tags */}
+              {attachedTags.length > 0 ? (
+                <div className="flex flex-wrap gap-2 pt-4 border-t border-white/5">
+                  {attachedTags.map((t) => (
+                    <span
+                      key={t.slug}
+                      className="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-300 text-xs font-mono flex items-center gap-1"
+                    >
+                      <Tag className="h-3 w-3 text-amber-400" />
+                      #{t.name}
+                    </span>
+                  ))}
                 </div>
               ) : null}
+            </section>
 
-              <div className="flex items-center justify-between pt-2.5">
-                <span className="text-zinc-500">Diunggah:</span>
-                <span className="text-zinc-400 text-[11px]">{formattedDate}</span>
+            {/* Constructive Comments Thread */}
+            <div id="comments" className="scroll-mt-24">
+              <CritiqueSection
+                artworkId={artwork.id}
+                artworkSlug={artwork.slug}
+                critiqueMode={artwork.critiqueMode as any}
+                artworkOwnerUserId={artwork.userId}
+                currentUserId={viewer?.id}
+                currentUserRole={viewer?.role}
+                comments={commentRows}
+              />
+            </div>
+          </div>
+
+          {/* Right Column: Artist Bio Card & Technical Metadata */}
+          <div className="flex flex-col gap-6">
+            {/* Artist Card */}
+            <div className="glass-panel p-6 rounded-3xl flex flex-col gap-5 border border-white/10">
+              <div className="flex items-center gap-4">
+                <div className="h-14 w-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 font-display font-bold text-xl overflow-hidden shrink-0">
+                  {artwork.artistAvatar ? (
+                    <img
+                      src={artwork.artistAvatar}
+                      alt={artwork.artistName}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    artwork.artistName?.charAt(0) || "A"
+                  )}
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <Link
+                    href={`/artists/${artwork.artistSlug}`}
+                    className="font-display font-bold text-lg text-[#f6f2e9] hover:text-amber-300 transition-colors truncate"
+                  >
+                    {artwork.artistName}
+                  </Link>
+                  <span
+                    className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded-full border w-fit mt-1 ${
+                      artwork.artistCommissionStatus === "open"
+                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                        : artwork.artistCommissionStatus === "waitlist"
+                        ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
+                        : "bg-zinc-500/10 text-zinc-400 border-zinc-500/30"
+                    }`}
+                  >
+                    Komisi: {artwork.artistCommissionStatus}
+                  </span>
+                </div>
+              </div>
+
+              {artwork.artistBio ? (
+                <p className="text-xs text-zinc-400 line-clamp-3 leading-relaxed font-sans">
+                  {artwork.artistBio}
+                </p>
+              ) : null}
+
+              <Link
+                href={`/artists/${artwork.artistSlug}`}
+                className="w-full py-2.5 min-h-[44px] rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-xs font-mono font-semibold transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <span>Kunjungi Profil Artist</span>
+                <ExternalLink className="h-3 w-3" />
+              </Link>
+            </div>
+
+            {/* Technical Specs Panel */}
+            <div className="glass-panel p-6 rounded-3xl flex flex-col gap-4 text-xs font-mono border border-white/10">
+              <h4 className="font-display font-bold text-sm text-[#f6f2e9]">Detail Teknis Karya</h4>
+
+              <div className="flex flex-col gap-2.5 divide-y divide-white/5">
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-zinc-500">Tipe Media:</span>
+                  <span className="text-zinc-200 uppercase">{artwork.mediaType}</span>
+                </div>
+
+                {artwork.width && artwork.height ? (
+                  <div className="flex items-center justify-between pt-2.5">
+                    <span className="text-zinc-500">Resolusi Kanvas:</span>
+                    <span className="text-zinc-200 tabular-nums">
+                      {artwork.width} × {artwork.height} px
+                    </span>
+                  </div>
+                ) : null}
+
+                <div className="flex items-center justify-between pt-2.5">
+                  <span className="text-zinc-500">Diunggah:</span>
+                  <TimestampWITA date={artwork.createdAt} includeTime={true} showIcon={true} />
+                </div>
               </div>
             </div>
           </div>
         </div>
       </div>
-    </main>
+    </FocusedTaskShell>
   );
 }
+

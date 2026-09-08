@@ -177,7 +177,7 @@ export function CommissionServiceModal({ serviceToEdit, onClose }: CommissionSer
                     <select
                       value={pricingType}
                       onChange={(e) => setPricingType(e.target.value as any)}
-                      className="w-full px-3 py-2 rounded-xl bg-[#181c26] border border-white/10 text-white text-xs font-sans focus:outline-none"
+                      className="w-full px-3 py-2.5 rounded-xl bg-[#181c26] border border-white/10 text-white text-base sm:text-xs font-sans focus:outline-none"
                     >
                       <option value="starting_from">Mulai Dari (Starting from)</option>
                       <option value="fixed">Harga Tetap (Fixed)</option>
@@ -195,7 +195,7 @@ export function CommissionServiceModal({ serviceToEdit, onClose }: CommissionSer
                       value={minPrice}
                       onChange={(e) => setMinPrice(e.target.value === "" ? "" : Number(e.target.value))}
                       placeholder="e.g. 250000"
-                      className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-xs font-mono"
+                      className="w-full px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-base sm:text-xs font-mono"
                     />
                   </div>
 
@@ -209,7 +209,7 @@ export function CommissionServiceModal({ serviceToEdit, onClose }: CommissionSer
                         value={maxPrice}
                         onChange={(e) => setMaxPrice(e.target.value === "" ? "" : Number(e.target.value))}
                         placeholder="e.g. 500000"
-                        className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-xs font-mono"
+                        className="w-full px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-base sm:text-xs font-mono"
                       />
                     </div>
                   ) : null}
@@ -227,7 +227,7 @@ export function CommissionServiceModal({ serviceToEdit, onClose }: CommissionSer
                       max={180}
                       value={minTurnaroundDays}
                       onChange={(e) => setMinTurnaroundDays(Number(e.target.value))}
-                      className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-xs font-mono text-center"
+                      className="w-full px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-base sm:text-xs font-mono text-center"
                     />
                     <span className="text-zinc-500 font-mono text-xs">-</span>
                     <input
@@ -236,7 +236,7 @@ export function CommissionServiceModal({ serviceToEdit, onClose }: CommissionSer
                       max={365}
                       value={maxTurnaroundDays}
                       onChange={(e) => setMaxTurnaroundDays(Number(e.target.value))}
-                      className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-xs font-mono text-center"
+                      className="w-full px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-base sm:text-xs font-mono text-center"
                     />
                   </div>
                 </div>
@@ -249,7 +249,7 @@ export function CommissionServiceModal({ serviceToEdit, onClose }: CommissionSer
                     max={20}
                     value={includedRevisions}
                     onChange={(e) => setIncludedRevisions(Number(e.target.value))}
-                    className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-xs font-mono"
+                    className="w-full px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-base sm:text-xs font-mono"
                   />
                 </div>
 
@@ -258,7 +258,7 @@ export function CommissionServiceModal({ serviceToEdit, onClose }: CommissionSer
                   <select
                     value={serviceStatus}
                     onChange={(e) => setServiceStatus(e.target.value as any)}
-                    className="w-full px-3 py-2 rounded-xl bg-[#181c26] border border-white/10 text-white text-xs font-sans focus:outline-none"
+                    className="w-full px-3 py-2.5 rounded-xl bg-[#181c26] border border-white/10 text-white text-base sm:text-xs font-sans focus:outline-none"
                   >
                     <option value="published">Publik (Aktif)</option>
                     <option value="unavailable">Penuh / Tidak Tersedia</option>
@@ -274,7 +274,7 @@ export function CommissionServiceModal({ serviceToEdit, onClose }: CommissionSer
                   <select
                     value={orderDestination}
                     onChange={(e) => setOrderDestination(e.target.value as any)}
-                    className="w-full px-3 py-2 rounded-xl bg-[#181c26] border border-white/10 text-white text-xs font-sans focus:outline-none"
+                    className="w-full px-3 py-2.5 rounded-xl bg-[#181c26] border border-white/10 text-white text-base sm:text-xs font-sans focus:outline-none"
                   >
                     <option value="whatsapp">Direct WhatsApp (Rekomendasi)</option>
                     <option value="vgen">VGen</option>
@@ -293,7 +293,7 @@ export function CommissionServiceModal({ serviceToEdit, onClose }: CommissionSer
                       value={customDestinationUrl}
                       onChange={(e) => setCustomDestinationUrl(e.target.value)}
                       placeholder="https://vgen.co/..."
-                      className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-xs font-sans"
+                      className="w-full px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-base sm:text-xs font-sans"
                     />
                   </div>
                 ) : null}

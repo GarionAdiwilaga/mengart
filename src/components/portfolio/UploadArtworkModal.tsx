@@ -59,6 +59,7 @@ export function UploadArtworkModal() {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("title", title.trim() || "Untitled");
+      formData.append("description", caption.trim());
       formData.append("caption", caption.trim());
       formData.append("specialty", specialty);
       formData.append("medium", medium);
@@ -256,14 +257,14 @@ export function UploadArtworkModal() {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-mono text-zinc-300">MODE KOMENTAR & KRITIK</label>
+                  <label className="text-xs font-mono text-zinc-300">MODE KOMENTAR</label>
                   <select
                     value={critiqueMode}
                     onChange={(e) => setCritiqueMode(e.target.value as any)}
                     className="w-full px-3 py-2 rounded-xl bg-[#181c26] border border-white/10 text-white text-xs font-sans focus:outline-none"
                   >
-                    <option value="showcase_only">Showcase Saja (Apresiasi Standar)</option>
-                    <option value="open_for_critique">Buka Kritik Konstruktif (Feedback)</option>
+                    <option value="open_for_critique">Buka Komentar & Masukan</option>
+                    <option value="showcase_only">Showcase Saja (Hanya Tampilan)</option>
                   </select>
                 </div>
               </div>
