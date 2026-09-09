@@ -11,11 +11,39 @@ const FORBIDDEN_AUTH_LOOP_PREFIXES = [
   "/register",
 ];
 
+function hasControlChars(str: string): boolean {
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if ((code >= 0 && code <= 31) || code === 127) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const ENCODED_CONTROL_REGEX = /%(0[0-9a-fA-F]|1[0-9a-fA-F]|7[fF])/;
+const TRUSTED_DUMMY_BASE = "http://mengart.internal";
+
 export function getSafeReturnUrl(
   candidate: string | null | undefined,
   fallback: string = "/gallery"
 ): string {
   if (!candidate || typeof candidate !== "string") {
+    return fallback;
+  }
+
+  // Reject raw ASCII control characters (\x00-\x1F, \x7F) including tabs and newlines
+  if (hasControlChars(candidate)) {
+    return fallback;
+  }
+
+  // Reject percent-encoded control characters (%00-%1F, %7F)
+  if (ENCODED_CONTROL_REGEX.test(candidate)) {
+    return fallback;
+  }
+
+  // Reject backslashes (both literal and percent-encoded %5C / %5c)
+  if (candidate.includes("\\") || /%5[cC]/.test(candidate)) {
     return fallback;
   }
 
@@ -26,30 +54,48 @@ export function getSafeReturnUrl(
     return fallback;
   }
 
-  // Reject any backslashes anywhere in the URL
-  if (trimmed.includes("\\")) {
-    return fallback;
-  }
-
-  // Reject external protocols and control characters
+  // Reject external protocol schemes
   if (
     trimmed.includes("://") ||
-    trimmed.toLowerCase().includes("javascript:") ||
-    trimmed.toLowerCase().includes("data:") ||
-    trimmed.toLowerCase().includes("vbscript:")
+    /^(javascript|data|vbscript):/i.test(trimmed)
   ) {
     return fallback;
   }
 
-  // Extract path without query parameters for loop check
-  const pathPart = trimmed.split("?")[0].toLowerCase();
+  // Parse against trusted dummy base to resolve dot-segments and normalize origin
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed, TRUSTED_DUMMY_BASE);
+  } catch {
+    return fallback;
+  }
 
-  // Reject auth loop paths
+  // Ensure candidate parsed strictly into the internal origin without scheme/host morphing
+  if (
+    parsed.origin !== TRUSTED_DUMMY_BASE ||
+    parsed.protocol !== "http:" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.hostname !== "mengart.internal" ||
+    parsed.port !== ""
+  ) {
+    return fallback;
+  }
+
+  // Normalized path after WHATWG normalization (resolves dot segments like /gallery/../login -> /login)
+  const normalizedPath = parsed.pathname.toLowerCase();
+
+  if (!normalizedPath.startsWith("/")) {
+    return fallback;
+  }
+
+  // Reject auth loop paths after full canonical normalization
   for (const forbidden of FORBIDDEN_AUTH_LOOP_PREFIXES) {
-    if (pathPart === forbidden || pathPart.startsWith(`${forbidden}/`)) {
+    if (normalizedPath === forbidden || normalizedPath.startsWith(`${forbidden}/`)) {
       return fallback;
     }
   }
 
-  return trimmed;
+  // Return canonical relative path + search query (stripping hash/fragment)
+  return parsed.pathname + parsed.search;
 }

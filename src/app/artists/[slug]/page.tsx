@@ -390,13 +390,14 @@ export default async function ArtistProfilePage({ params }: ArtistProfilePagePro
               const thumbUrl = item.thumbnailStorageKey
                 ? `/api/media/public/${item.thumbnailStorageKey}`
                 : null;
+              const itemHref = `/artworks/${item.slug}?from=${encodeURIComponent(`/artists/${artist.slug}`)}`;
 
               return (
                 <div
                   key={item.id}
                   className="break-inside-avoid glass-panel rounded-2xl overflow-hidden group hover:border-white/20 transition-all"
                 >
-                  <Link href={`/artworks/${item.slug}`} className="block relative bg-black/40">
+                  <Link href={itemHref} className="block relative bg-black/40">
                     {thumbUrl ? (
                       <img
                         src={thumbUrl}
@@ -411,7 +412,7 @@ export default async function ArtistProfilePage({ params }: ArtistProfilePagePro
                     )}
                   </Link>
                   <div className="p-4 flex flex-col gap-1">
-                    <Link href={`/artworks/${item.slug}`}>
+                    <Link href={itemHref}>
                       <h4 className="font-display font-bold text-sm text-[#f6f2e9] group-hover:text-amber-300 transition-colors truncate">
                         {item.title}
                       </h4>

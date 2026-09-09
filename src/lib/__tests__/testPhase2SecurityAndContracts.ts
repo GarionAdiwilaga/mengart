@@ -14,11 +14,15 @@ import {
   notifications,
   auditLogs,
   commissionServices,
+  challengeResults,
 } from "@/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
 import { takedownArtworkDirectService } from "@/lib/services/moderationService";
 import { disqualifyChallengeCandidateService } from "@/lib/services/challengeService";
 import { getChallengeBySlug } from "@/lib/challenges";
+import { getChallengeVotingData } from "@/lib/voting";
+import { castOrUpdateBallotService } from "@/lib/services/votingService";
+import { importHistoricalChallengeAction } from "@/app/actions/historicalBackfill";
 import {
   toWitaDatetimeLocalValue,
   parseWitaDatetimeLocalInput,
@@ -26,6 +30,8 @@ import {
 } from "@/lib/presentation/witaTime";
 import { importHistoricalChallengeService } from "@/lib/services/historicalBackfillService";
 import { getSafeReturnUrl } from "@/lib/navigation/returnUrl";
+import { handleRedeemCallback } from "@/app/api/auth/redeem-callback/route";
+import { NextRequest } from "next/server";
 
 async function runPhase2SecurityAndContractTests() {
   console.log("\n=================================================================");
@@ -464,12 +470,16 @@ async function runPhase2SecurityAndContractTests() {
   }
 
   // =========================================================================
-  // SCENARIO 5: A01 - Voting Ballot Read Identity Protection
+  // SCENARIO 5: A01 - Voting Ballot Read Identity Protection & Allocation Isolation
   // =========================================================================
   console.log("\n[Scenario 5] Verifying A01 Voting data server-side identity derivation...");
   {
     const { user: userA } = await createTestUser("member", "active");
     const { user: userB } = await createTestUser("member", "active");
+    const { user: artistC, profile: artistProfileC } = await createTestUser("member", "active");
+    const { user: artistD, profile: artistProfileD } = await createTestUser("member", "active");
+    const { artwork: art1, version: ver1 } = await createTestArtwork(artistC.id, artistProfileC.id, "Candidate 1");
+    const { artwork: art2, version: ver2 } = await createTestArtwork(artistD.id, artistProfileD.id, "Candidate 2");
 
     const [challenge] = await db
       .insert(challenges)
@@ -484,6 +494,32 @@ async function runPhase2SecurityAndContractTests() {
       })
       .returning();
 
+    const [sub1] = await db
+      .insert(challengeSubmissions)
+      .values({
+        challengeId: challenge.id,
+        userId: artistC.id,
+        profileId: artistProfileC.id,
+        artworkId: art1.id,
+        artworkVersionId: ver1.id,
+        title: "Candidate Sub 1",
+        submissionStatus: "submitted",
+      })
+      .returning();
+
+    const [sub2] = await db
+      .insert(challengeSubmissions)
+      .values({
+        challengeId: challenge.id,
+        userId: artistD.id,
+        profileId: artistProfileD.id,
+        artworkId: art2.id,
+        artworkVersionId: ver2.id,
+        title: "Candidate Sub 2",
+        submissionStatus: "submitted",
+      })
+      .returning();
+
     const [round] = await db
       .insert(challengeVotingRounds)
       .values({
@@ -492,13 +528,58 @@ async function runPhase2SecurityAndContractTests() {
         status: "open",
         startsAt: new Date(Date.now() - 3600000),
         deadline: new Date(Date.now() + 86400000),
-        starsPerMember: 1,
+        starsPerMember: 3,
       })
       .returning();
 
-    // If viewer is anonymous or passing 3rd party ID, server-side derivation must not use arbitrary client ID
-    // In our patched getChallengeVotingData, userId is strictly determined by session.user.id
-    console.log("  ✓ A01: getChallengeVotingData verified to derive caller identity strictly server-side.");
+    await db.insert(challengeVotingRoundCandidates).values([
+      { votingRoundId: round.id, submissionId: sub1.id },
+      { votingRoundId: round.id, submissionId: sub2.id },
+    ]);
+
+    // 1. Cast ballot for userA (2 stars on sub1)
+    await castOrUpdateBallotService(
+      db,
+      { userId: userA.id, role: userA.role },
+      {
+        votingRoundId: round.id,
+        votes: [{ submissionId: sub1.id, starsCount: 2 }],
+      }
+    );
+
+    // 2. Query reader boundary getChallengeVotingData for userA
+    const dataForA = await getChallengeVotingData(challenge.id, userA.id);
+    if (!dataForA) throw new Error("Scenario 5 Failed: dataForA was null");
+    if (dataForA.userBallot.starsAllocated !== 2) {
+      throw new Error(`Scenario 5 Failed: Expected userA starsAllocated 2, got ${dataForA.userBallot.starsAllocated}`);
+    }
+    if (dataForA.userBallot.remainingStars !== 1) {
+      throw new Error(`Scenario 5 Failed: Expected userA remainingStars 1, got ${dataForA.userBallot.remainingStars}`);
+    }
+
+    // 3. Query reader boundary for userB (must NOT see userA's ballot)
+    const dataForB = await getChallengeVotingData(challenge.id, userB.id);
+    if (!dataForB) throw new Error("Scenario 5 Failed: dataForB was null");
+    if (dataForB.userBallot.starsAllocated !== 0) {
+      throw new Error(`Scenario 5 Failed: Expected userB starsAllocated 0, got ${dataForB.userBallot.starsAllocated}`);
+    }
+    if (dataForB.userBallot.remainingStars !== 3) {
+      throw new Error(`Scenario 5 Failed: Expected userB remainingStars 3, got ${dataForB.userBallot.remainingStars}`);
+    }
+
+    // 4. Query reader boundary for anonymous caller (undefined userId)
+    const dataAnon = await getChallengeVotingData(challenge.id, undefined);
+    if (!dataAnon) throw new Error("Scenario 5 Failed: dataAnon was null");
+    if (dataAnon.userBallot.starsAllocated !== 0) {
+      throw new Error("Scenario 5 Failed: Anonymous caller received non-zero starsAllocated");
+    }
+
+    // 5. Verify candidate list reflects open candidates
+    if (dataForA.candidates.length !== 2) {
+      throw new Error(`Scenario 5 Failed: Expected 2 candidates, got ${dataForA.candidates.length}`);
+    }
+
+    console.log("  ✓ A01: getChallengeVotingData verified with authentic caller boundary and allocation isolation.");
   }
 
   // =========================================================================
@@ -537,7 +618,32 @@ async function runPhase2SecurityAndContractTests() {
       ],
     };
 
-    // 1. Negative: Anonymous / missing actor
+    // 1. Exported Server Action Boundary: unauthenticated caller rejected
+    let actionBoundaryRejected = false;
+    try {
+      await importHistoricalChallengeAction(sampleHistoricalInput);
+    } catch (e: any) {
+      actionBoundaryRejected = true;
+    }
+    if (!actionBoundaryRejected) throw new Error("Scenario 6 Failed: Exported action boundary allowed unauthenticated call!");
+
+    // 2. Exported Server Action Boundary: caller attempting payload injection of actorOverride
+    let actionPayloadInjectionRejected = false;
+    try {
+      await importHistoricalChallengeAction({
+        ...sampleHistoricalInput,
+        actorOverride: { id: activeStaff.id, role: "admin" },
+      } as any);
+    } catch (e: any) {
+      actionPayloadInjectionRejected = true;
+    }
+    if (!actionPayloadInjectionRejected) throw new Error("Scenario 6 Failed: Exported action boundary accepted injected actorOverride!");
+
+    // Verify 0 rows written in challenges table for unauthenticated action attempts
+    const [unauthCheck] = await db.select().from(challenges).where(eq(challenges.slug, sampleHistoricalInput.slug));
+    if (unauthCheck) throw new Error("Scenario 6 Failed: Row was inserted into challenges table by rejected action call!");
+
+    // 3. Negative: Anonymous / missing actor on service
     let anonRejected = false;
     try {
       await importHistoricalChallengeService(db, { id: "", role: "" } as any, sampleHistoricalInput);
@@ -546,7 +652,7 @@ async function runPhase2SecurityAndContractTests() {
     }
     if (!anonRejected) throw new Error("Scenario 6 Failed: Anonymous actor was not rejected!");
 
-    // 2. Negative: Ordinary member caller
+    // 4. Negative: Ordinary member caller
     let memberRejected = false;
     try {
       await importHistoricalChallengeService(db, { id: normalMember.id, role: normalMember.role }, sampleHistoricalInput);
@@ -555,7 +661,7 @@ async function runPhase2SecurityAndContractTests() {
     }
     if (!memberRejected) throw new Error("Scenario 6 Failed: Ordinary member was not rejected!");
 
-    // 3. Negative: Suspended staff caller
+    // 5. Negative: Suspended staff caller
     let suspendedRejected = false;
     try {
       await importHistoricalChallengeService(db, { id: suspendedStaff.id, role: suspendedStaff.role }, sampleHistoricalInput);
@@ -564,7 +670,7 @@ async function runPhase2SecurityAndContractTests() {
     }
     if (!suspendedRejected) throw new Error("Scenario 6 Failed: Suspended staff was not rejected!");
 
-    // 4. Negative: Deleted staff caller
+    // 6. Negative: Deleted staff caller
     let deletedRejected = false;
     try {
       await importHistoricalChallengeService(db, { id: deletedStaff.id, role: deletedStaff.role }, sampleHistoricalInput);
@@ -573,7 +679,7 @@ async function runPhase2SecurityAndContractTests() {
     }
     if (!deletedRejected) throw new Error("Scenario 6 Failed: Deleted staff was not rejected!");
 
-    // 5. Negative: Demoted staff caller (claims role moderator, but database has member)
+    // 7. Negative: Demoted staff caller (claims role moderator, but database has member)
     let demotedRejected = false;
     try {
       await importHistoricalChallengeService(db, { id: demotedStaff.id, role: "moderator" }, sampleHistoricalInput);
@@ -582,21 +688,20 @@ async function runPhase2SecurityAndContractTests() {
     }
     if (!demotedRejected) throw new Error("Scenario 6 Failed: Demoted staff caller was not rejected by live database check!");
 
-    // 6. Negative: Extra injected identity property in input payload
+    // 8. Negative: Extra injected identity property in input payload with member credentials
     let injectedPayloadRejected = false;
     try {
       const injectedPayload = {
         ...sampleHistoricalInput,
         actorOverride: { id: activeStaff.id, role: "admin" },
       };
-      // When called with ordinary member credentials, injected actorOverride must be ignored and still fail
       await importHistoricalChallengeService(db, { id: normalMember.id, role: normalMember.role }, injectedPayload as any);
     } catch (e: any) {
       injectedPayloadRejected = true;
     }
     if (!injectedPayloadRejected) throw new Error("Scenario 6 Failed: Injected actorOverride bypassed auth boundary!");
 
-    // 7. Positive: Authorized active staff caller succeeds
+    // 9. Positive: Authorized active staff caller succeeds
     const successResult = await importHistoricalChallengeService(db, { id: activeStaff.id, role: activeStaff.role }, sampleHistoricalInput);
     if (!successResult.success || !successResult.challengeId) {
       throw new Error("Scenario 6 Failed: Active staff historical import failed unexpectedly.");
@@ -613,10 +718,12 @@ async function runPhase2SecurityAndContractTests() {
     const { user: adminStaff } = await createTestUser("admin", "active");
     const { user: suspendedMod } = await createTestUser("moderator", "suspended");
     const { user: regularUser } = await createTestUser("member", "active");
-    const { user: artist, profile: artistProfile } = await createTestUser("member", "active");
-    const { artwork, version } = await createTestArtwork(artist.id, artistProfile.id, "Disq Test Art");
+    const { user: artist1, profile: artistProfile1 } = await createTestUser("member", "active");
+    const { user: artist2, profile: artistProfile2 } = await createTestUser("member", "active");
+    const { artwork: art1, version: ver1 } = await createTestArtwork(artist1.id, artistProfile1.id, "Disq Art 1");
+    const { artwork: art2, version: ver2 } = await createTestArtwork(artist2.id, artistProfile2.id, "Disq Art 2");
 
-    // Finished challenge
+    // Finished challenge guards
     const [finishedChallenge] = await db
       .insert(challenges)
       .values({
@@ -634,10 +741,10 @@ async function runPhase2SecurityAndContractTests() {
       .insert(challengeSubmissions)
       .values({
         challengeId: finishedChallenge.id,
-        userId: artist.id,
-        profileId: artistProfile.id,
-        artworkId: artwork.id,
-        artworkVersionId: version.id,
+        userId: artist1.id,
+        profileId: artistProfile1.id,
+        artworkId: art1.id,
+        artworkVersionId: ver1.id,
         title: "Finished Sub",
         submissionStatus: "submitted",
       })
@@ -670,7 +777,7 @@ async function runPhase2SecurityAndContractTests() {
     }
     if (!finishedRejected) throw new Error("Scenario 7 Failed: Disqualification on finished challenge was not rejected!");
 
-    // 4. Cancelled challenge
+    // 4. Negative: Cancelled challenge
     const [cancelledChallenge] = await db
       .insert(challenges)
       .values({
@@ -688,10 +795,10 @@ async function runPhase2SecurityAndContractTests() {
       .insert(challengeSubmissions)
       .values({
         challengeId: cancelledChallenge.id,
-        userId: artist.id,
-        profileId: artistProfile.id,
-        artworkId: artwork.id,
-        artworkVersionId: version.id,
+        userId: artist1.id,
+        profileId: artistProfile1.id,
+        artworkId: art1.id,
+        artworkVersionId: ver1.id,
         title: "Cancelled Sub",
         submissionStatus: "submitted",
       })
@@ -705,7 +812,189 @@ async function runPhase2SecurityAndContractTests() {
     }
     if (!cancelledRejected) throw new Error("Scenario 7 Failed: Disqualification on cancelled challenge was not rejected!");
 
-    console.log("  ✓ R05: Disqualification phase matrix verified for staff checks, finished, and cancelled guards.");
+    // 5. Phase: submission_locked with a pending round
+    // Candidate removed from pending round snapshot
+    const [lockedChallenge] = await db
+      .insert(challenges)
+      .values({
+        title: `Locked Challenge ${suffix}`,
+        slug: `locked-challenge-${suffix}`,
+        theme: "Locked Phase",
+        description: "Challenge in submission_locked",
+        promptRules: "Rules",
+        status: "submission_locked",
+        awardMode: "vote_only",
+      })
+      .returning();
+
+    const [lockedSub1] = await db
+      .insert(challengeSubmissions)
+      .values({
+        challengeId: lockedChallenge.id,
+        userId: artist1.id,
+        profileId: artistProfile1.id,
+        artworkId: art1.id,
+        artworkVersionId: ver1.id,
+        title: "Locked Sub 1",
+        submissionStatus: "submitted",
+      })
+      .returning();
+
+    const [lockedSub2] = await db
+      .insert(challengeSubmissions)
+      .values({
+        challengeId: lockedChallenge.id,
+        userId: artist2.id,
+        profileId: artistProfile2.id,
+        artworkId: art2.id,
+        artworkVersionId: ver2.id,
+        title: "Locked Sub 2",
+        submissionStatus: "submitted",
+      })
+      .returning();
+
+    const [pendingRound] = await db
+      .insert(challengeVotingRounds)
+      .values({
+        challengeId: lockedChallenge.id,
+        roundType: "main",
+        status: "pending",
+        startsAt: new Date(Date.now() + 3600000),
+        deadline: new Date(Date.now() + 86400000),
+        starsPerMember: 1,
+      })
+      .returning();
+
+    await db.insert(challengeVotingRoundCandidates).values([
+      { votingRoundId: pendingRound.id, submissionId: lockedSub1.id },
+      { votingRoundId: pendingRound.id, submissionId: lockedSub2.id },
+    ]);
+
+    const disqLockedResult = await disqualifyChallengeCandidateService(
+      db,
+      { userId: adminStaff.id, role: adminStaff.role },
+      { submissionId: lockedSub1.id, reason: "Violates challenge terms in locked phase" }
+    );
+    if (!disqLockedResult.success) throw new Error("Scenario 7 Failed: Locked phase disq was not successful");
+
+    // Check submission status is disqualified
+    const [checkLockedSub1] = await db
+      .select()
+      .from(challengeSubmissions)
+      .where(eq(challengeSubmissions.id, lockedSub1.id));
+    if (checkLockedSub1.submissionStatus !== "disqualified") {
+      throw new Error(`Scenario 7 Failed: Expected submissionStatus disqualified, got ${checkLockedSub1.submissionStatus}`);
+    }
+
+    // Check candidate entry was removed from pending round candidates
+    const pendingCandidates = await db
+      .select()
+      .from(challengeVotingRoundCandidates)
+      .where(eq(challengeVotingRoundCandidates.votingRoundId, pendingRound.id));
+    if (pendingCandidates.length !== 1 || pendingCandidates[0].submissionId !== lockedSub2.id) {
+      throw new Error(`Scenario 7 Failed: Pending round candidate snapshot was not updated correctly! Length: ${pendingCandidates.length}`);
+    }
+
+    // 6. Phase: tiebreak_open with 2 tied candidates
+    // When one is disqualified, remaining candidate resolves the tie and wins!
+    const [tieChallenge] = await db
+      .insert(challenges)
+      .values({
+        title: `Tiebreak Challenge ${suffix}`,
+        slug: `tiebreak-challenge-${suffix}`,
+        theme: "Tiebreak Phase",
+        description: "Challenge in tiebreak_open",
+        promptRules: "Rules",
+        status: "tiebreak_open",
+        awardMode: "vote_only",
+      })
+      .returning();
+
+    const [tieSub1] = await db
+      .insert(challengeSubmissions)
+      .values({
+        challengeId: tieChallenge.id,
+        userId: artist1.id,
+        profileId: artistProfile1.id,
+        artworkId: art1.id,
+        artworkVersionId: ver1.id,
+        title: "Tie Sub 1",
+        submissionStatus: "submitted",
+      })
+      .returning();
+
+    const [tieSub2] = await db
+      .insert(challengeSubmissions)
+      .values({
+        challengeId: tieChallenge.id,
+        userId: artist2.id,
+        profileId: artistProfile2.id,
+        artworkId: art2.id,
+        artworkVersionId: ver2.id,
+        title: "Tie Sub 2",
+        submissionStatus: "submitted",
+      })
+      .returning();
+
+    const [tiebreakRound] = await db
+      .insert(challengeVotingRounds)
+      .values({
+        challengeId: tieChallenge.id,
+        roundType: "tiebreak",
+        status: "open",
+        startsAt: new Date(Date.now() - 3600000),
+        deadline: new Date(Date.now() + 86400000),
+        starsPerMember: 1,
+      })
+      .returning();
+
+    await db.insert(challengeVotingRoundCandidates).values([
+      { votingRoundId: tiebreakRound.id, submissionId: tieSub1.id },
+      { votingRoundId: tiebreakRound.id, submissionId: tieSub2.id },
+    ]);
+
+    // Disqualify tieSub1
+    const disqTieResult = await disqualifyChallengeCandidateService(
+      db,
+      { userId: adminStaff.id, role: adminStaff.role },
+      { submissionId: tieSub1.id, reason: "Tiebreak candidate disqualified" }
+    );
+    if (!disqTieResult.success) throw new Error("Scenario 7 Failed: Tiebreak disq failed");
+
+    // Check that challenge transitioned to finished
+    const [checkTieChallenge] = await db
+      .select()
+      .from(challenges)
+      .where(eq(challenges.id, tieChallenge.id));
+    if (checkTieChallenge.status !== "finished") {
+      throw new Error(`Scenario 7 Failed: Expected challenge status finished after tie resolved, got ${checkTieChallenge.status}`);
+    }
+
+    // Check that remaining tieSub2 became the community_vote_winner
+    const results = await db
+      .select()
+      .from(challengeResults)
+      .where(eq(challengeResults.challengeId, tieChallenge.id));
+    const winnerResult = results.find((r) => r.submissionId === tieSub2.id);
+    if (!winnerResult || winnerResult.awardType !== "community_vote_winner") {
+      throw new Error("Scenario 7 Failed: Remaining tied candidate was not crowned community_vote_winner!");
+    }
+
+    // 7. Audit log verification
+    const [disqAudit] = await db
+      .select()
+      .from(auditLogs)
+      .where(
+        and(
+          eq(auditLogs.action, "challenge.disqualify_candidate"),
+          eq(auditLogs.targetId, tieSub1.id)
+        )
+      );
+    if (!disqAudit) {
+      throw new Error("Scenario 7 Failed: Audit log for disqualify_candidate was not recorded!");
+    }
+
+    console.log("  ✓ R05: Disqualification phase matrix verified for locked, tiebreak, finished, and cancelled guards.");
   }
 
   // =========================================================================
@@ -717,6 +1006,13 @@ async function runPhase2SecurityAndContractTests() {
     if (getSafeReturnUrl("/gallery") !== "/gallery") throw new Error("Scenario 8 Failed: Valid relative path rejected.");
     if (getSafeReturnUrl("/gallery?tab=challenge") !== "/gallery?tab=challenge") throw new Error("Scenario 8 Failed: Valid query path rejected.");
     if (getSafeReturnUrl("/challenges/atelier-2026") !== "/challenges/atelier-2026") throw new Error("Scenario 8 Failed: Valid challenge path rejected.");
+    // Valid queries with spaces / Indonesian characters
+    if (getSafeReturnUrl("/gallery?search=studi%20warna") !== "/gallery?search=studi%20warna") {
+      throw new Error("Scenario 8 Failed: Valid query parameter with encoded space was rejected.");
+    }
+    if (getSafeReturnUrl("/gallery?category=ilustrasi%20karya") !== "/gallery?category=ilustrasi%20karya") {
+      throw new Error("Scenario 8 Failed: Valid query parameter with encoded Indonesian text was rejected.");
+    }
 
     // Protocol-relative attacks
     if (getSafeReturnUrl("//evil.com") !== "/gallery") throw new Error("Scenario 8 Failed: Protocol-relative '//' attack not prevented.");
@@ -724,18 +1020,78 @@ async function runPhase2SecurityAndContractTests() {
     if (getSafeReturnUrl("\\evil.com") !== "/gallery") throw new Error("Scenario 8 Failed: Backslash attack not prevented.");
     if (getSafeReturnUrl("/artworks\\test") !== "/gallery") throw new Error("Scenario 8 Failed: Mid-path backslash not prevented.");
 
+    // Control character & encoded external redirect attacks (Round 2 QA Findings)
+    if (getSafeReturnUrl("/\t/example.invalid") !== "/gallery") {
+      throw new Error("Scenario 8 Failed: Slash + tab + slash external redirect was not prevented!");
+    }
+    if (getSafeReturnUrl("/%09/example.invalid") !== "/gallery") {
+      throw new Error("Scenario 8 Failed: Encoded tab (%09) external redirect was not prevented!");
+    }
+    if (getSafeReturnUrl("/\n/example.invalid") !== "/gallery") {
+      throw new Error("Scenario 8 Failed: Newline external redirect was not prevented!");
+    }
+    if (getSafeReturnUrl("/%0a/example.invalid") !== "/gallery") {
+      throw new Error("Scenario 8 Failed: Encoded newline (%0a) external redirect was not prevented!");
+    }
+    if (getSafeReturnUrl("/%0d/example.invalid") !== "/gallery") {
+      throw new Error("Scenario 8 Failed: Encoded carriage return (%0d) external redirect was not prevented!");
+    }
+    if (getSafeReturnUrl("/%00/example.invalid") !== "/gallery") {
+      throw new Error("Scenario 8 Failed: Encoded null byte (%00) was not prevented!");
+    }
+
     // External protocol schemes
     if (getSafeReturnUrl("https://evil.com") !== "/gallery") throw new Error("Scenario 8 Failed: External https:// not prevented.");
     if (getSafeReturnUrl("javascript:alert(1)") !== "/gallery") throw new Error("Scenario 8 Failed: javascript: not prevented.");
     if (getSafeReturnUrl("data:text/html,evil") !== "/gallery") throw new Error("Scenario 8 Failed: data: not prevented.");
 
-    // Auth loop paths
+    // Auth loop paths & normalization bypasses
     if (getSafeReturnUrl("/login") !== "/gallery") throw new Error("Scenario 8 Failed: /login loop not prevented.");
     if (getSafeReturnUrl("/login?error=test") !== "/gallery") throw new Error("Scenario 8 Failed: /login query loop not prevented.");
     if (getSafeReturnUrl("/account-suspended") !== "/gallery") throw new Error("Scenario 8 Failed: /account-suspended loop not prevented.");
     if (getSafeReturnUrl("/onboarding") !== "/gallery") throw new Error("Scenario 8 Failed: /onboarding loop not prevented.");
+    // Dot segment traversal bypass
+    if (getSafeReturnUrl("/gallery/../login") !== "/gallery") {
+      throw new Error("Scenario 8 Failed: Dot segment traversal '/gallery/../login' bypassed auth loop check!");
+    }
+    // Fragment bypass
+    if (getSafeReturnUrl("/login#fragment") !== "/gallery") {
+      throw new Error("Scenario 8 Failed: Fragment '/login#fragment' bypassed auth loop check!");
+    }
 
-    console.log("  ✓ R09: getSafeReturnUrl verified against protocol-relative attacks, backslashes, external protocols, and auth loops.");
+    // Test the production callback route handler against the exact QA reproduction
+    const { user: activeTestUser } = await createTestUser("member", "active");
+    const maliciousCallbackReq = new NextRequest("http://localhost:3000/api/auth/redeem-callback?returnTo=%2F%09%2Fexample.invalid");
+    const callbackRes = await handleRedeemCallback(maliciousCallbackReq, activeTestUser);
+    if (callbackRes.status !== 307) {
+      throw new Error(`Scenario 8 Failed: Expected HTTP 307 from callback, got ${callbackRes.status}`);
+    }
+    const redirectLocation = callbackRes.headers.get("location");
+    if (!redirectLocation || redirectLocation.includes("example.invalid")) {
+      throw new Error(`Scenario 8 Failed: Callback redirected to external origin: ${redirectLocation}`);
+    }
+    if (redirectLocation !== "http://localhost:3000/dashboard") {
+      throw new Error(`Scenario 8 Failed: Expected safe fallback http://localhost:3000/dashboard, got ${redirectLocation}`);
+    }
+
+    // Valid Indonesian search parameter callback redirect test
+    const validSearchCallbackReq = new NextRequest("http://localhost:3000/api/auth/redeem-callback?returnTo=%2Fgallery%3Fsearch%3Dstudi%2520warna");
+    const validCallbackRes = await handleRedeemCallback(validSearchCallbackReq, activeTestUser);
+    const validRedirectLocation = validCallbackRes.headers.get("location");
+    if (validRedirectLocation !== "http://localhost:3000/gallery?search=studi%20warna") {
+      throw new Error(`Scenario 8 Failed: Expected valid query redirect http://localhost:3000/gallery?search=studi%20warna, got ${validRedirectLocation}`);
+    }
+
+    // Pending user without invite: forwards returnTo to onboarding
+    const { user: pendingUser } = await createTestUser("member", null);
+    const pendingCallbackReq = new NextRequest("http://localhost:3000/api/auth/redeem-callback?returnTo=%2Fgallery%3Fsearch%3Dstudi%2520warna");
+    const pendingRes = await handleRedeemCallback(pendingCallbackReq, pendingUser);
+    const pendingLocation = pendingRes.headers.get("location");
+    if (!pendingLocation?.startsWith("http://localhost:3000/onboarding?returnTo=")) {
+      throw new Error(`Scenario 8 Failed: Expected onboarding redirect with returnTo, got ${pendingLocation}`);
+    }
+
+    console.log("  ✓ R09: getSafeReturnUrl and handleRedeemCallback verified against external redirects, dot-traversals, control characters, and preserved query parameters.");
   }
 
   console.log("\n=================================================================");

@@ -511,6 +511,10 @@ export async function castOrUpdateBallotService(
       throw new Error("Submisi karya tidak ditemukan.");
     }
 
+    if (sub.submissionStatus === "disqualified") {
+      throw new Error("Karya telah didiskualifikasi dan tidak dapat dipilih.");
+    }
+
     if (sub.userId === voterUserId) {
       throw new Error("Self-voting dilarang dalam aturan atelier.");
     }

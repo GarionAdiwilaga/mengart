@@ -105,6 +105,9 @@ export async function handleRedeemCallback(
   } catch (error: any) {
     const targetUrl = new URL("/onboarding", request.url);
     targetUrl.searchParams.set("error", error?.message || "Gagal mengaktifkan undangan.");
+    if (rawReturnTo) {
+      targetUrl.searchParams.set("returnTo", returnTo);
+    }
 
     const response = NextResponse.redirect(targetUrl);
     response.cookies.delete("mengart_pending_invite");

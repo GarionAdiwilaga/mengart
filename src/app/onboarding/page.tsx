@@ -13,13 +13,16 @@ export const metadata: Metadata = {
   },
 };
 
+import { getSafeReturnUrl } from "@/lib/navigation/returnUrl";
+
 interface OnboardingPageProps {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; returnTo?: string; from?: string }>;
 }
 
 export default async function OnboardingPage({ searchParams }: OnboardingPageProps) {
   const session = await auth();
-  const { error } = await searchParams;
+  const { error, returnTo: rawReturnTo, from: rawFrom } = await searchParams;
+  const returnTo = getSafeReturnUrl(rawReturnTo || rawFrom, "/dashboard");
 
   if (!session?.user || !session.user.id) {
     redirect("/login?error=AuthRequired");
@@ -60,7 +63,12 @@ export default async function OnboardingPage({ searchParams }: OnboardingPagePro
         </div>
 
         {/* Onboarding Form */}
-        <OnboardingInviteForm initialError={error} userEmail={session.user.email || ""} defaultName={session.user.name || ""} />
+        <OnboardingInviteForm
+          initialError={error}
+          userEmail={session.user.email || ""}
+          defaultName={session.user.name || ""}
+          returnTo={returnTo}
+        />
 
         {/* Sign out footer */}
         <div className="pt-4 border-t border-white/10 flex items-center justify-between text-xs text-zinc-500">

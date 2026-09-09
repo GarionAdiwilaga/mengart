@@ -11,6 +11,7 @@ import {
 } from "@/db/schema";
 import { eq, and, desc, asc, sql, ilike, isNull, isNotNull } from "drizzle-orm";
 import { auth } from "@/auth";
+import { projectPublicArtworkProvenance } from "@/lib/presentation/provenance";
 
 export async function handleGetArtworks(
   request: Request,
@@ -140,14 +141,7 @@ export async function handleGetArtworks(
   // Sanitize masterStorageKey & challenge provenance
   const sanitizedItems = items.map((item) => {
     const isOwner = isActiveMember && liveUser?.id === item.userId;
-    const isChallengeOrigin = Boolean(item.challengeSubmissionId);
-    const origin: "challenge" | "independent" = isChallengeOrigin ? "challenge" : "independent";
-
-    const isChallengeHiddenOrDeleted =
-      isChallengeOrigin && (item.challengeIsVisible === false || item.challengeDeletedAt !== null);
-
-    // Redact challengeTitle and challengeSlug to null for non-staff without reclassifying as independent
-    const shouldRedactChallenge = isChallengeHiddenOrDeleted && !isActiveStaff;
+    const projected = projectPublicArtworkProvenance(item, { isActiveStaff });
 
     return {
       id: item.id,
@@ -160,9 +154,9 @@ export async function handleGetArtworks(
       critiqueMode: item.critiqueMode,
       isSpoiler: item.isSpoiler,
       createdAt: item.createdAt,
-      systemCaption: item.systemCaption,
-      customCaption: item.customCaption,
-      effectiveCaption: item.effectiveCaption,
+      systemCaption: projected.systemCaption,
+      customCaption: projected.customCaption,
+      effectiveCaption: projected.effectiveCaption,
       artistName: item.artistName,
       artistSlug: item.artistSlug,
       artistAvatar: item.artistAvatar,
@@ -172,11 +166,11 @@ export async function handleGetArtworks(
       masterStorageKey: isOwner || isActiveAdmin ? item.masterStorageKey : null,
       width: item.width,
       height: item.height,
-      origin,
+      origin: projected.origin,
       challengeSubmissionId: item.challengeSubmissionId,
-      challengeId: shouldRedactChallenge ? null : item.challengeId,
-      challengeTitle: shouldRedactChallenge ? null : item.challengeTitle,
-      challengeSlug: shouldRedactChallenge ? null : item.challengeSlug,
+      challengeId: projected.challengeId,
+      challengeTitle: projected.challengeTitle,
+      challengeSlug: projected.challengeSlug,
     };
   });
 

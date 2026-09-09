@@ -32,6 +32,7 @@ interface ChallengeSubmissionModalProps {
   challengeId: string;
   challengeTitle: string;
   userId?: string;
+  submissionDeadline?: Date | string | null;
   isRevision?: boolean;
   initialTitle?: string;
   initialDescription?: string;
@@ -43,6 +44,7 @@ export function ChallengeSubmissionModal({
   challengeId,
   challengeTitle,
   userId,
+  submissionDeadline,
   isRevision = false,
   initialTitle = "",
   initialDescription = "",
@@ -64,18 +66,26 @@ export function ChallengeSubmissionModal({
   const [success, setSuccess] = useState(false);
 
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isDraftActiveRef = useRef(true);
 
   // Purge legacy unscoped drafts on mount
   useEffect(() => {
     purgeLegacyDrafts();
     return () => {
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
     };
   }, []);
 
   // Handle identity change or form initialization
   useEffect(() => {
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    isDraftActiveRef.current = false;
     setTitle(initialTitle);
     setDescription(initialDescription);
     setSoftwareUsed(initialSoftware);
@@ -89,6 +99,12 @@ export function ChallengeSubmissionModal({
   // Restore draft from localStorage on modal open if not a revision
   useEffect(() => {
     if (isOpen && !isRevision && userId) {
+      // Validate deadline eligibility: if submission window expired, clear & do not restore
+      if (submissionDeadline && new Date(submissionDeadline).getTime() <= Date.now()) {
+        clearSubmissionDraft(userId, challengeId);
+        return;
+      }
+
       const savedDraft = loadSubmissionDraft(userId, challengeId);
       if (savedDraft) {
         if (savedDraft.title || savedDraft.description || savedDraft.softwareUsed) {
@@ -97,10 +113,11 @@ export function ChallengeSubmissionModal({
           setSoftwareUsed(savedDraft.softwareUsed || "");
           setIsSpoiler(Boolean(savedDraft.isSpoiler));
           setIsRecovered(true);
+          isDraftActiveRef.current = true;
         }
       }
     }
-  }, [isOpen, isRevision, userId, challengeId]);
+  }, [isOpen, isRevision, userId, challengeId, submissionDeadline]);
 
   const handleFieldChange = (
     field: "title" | "description" | "software" | "spoiler",
@@ -116,9 +133,11 @@ export function ChallengeSubmissionModal({
     if (field === "software") setSoftwareUsed(value);
     if (field === "spoiler") setIsSpoiler(value);
 
+    isDraftActiveRef.current = true;
     if (!isRevision && userId) {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
+        if (!isDraftActiveRef.current) return;
         saveSubmissionDraft(userId, challengeId, {
           title: nextTitle,
           description: nextDesc,
@@ -130,7 +149,11 @@ export function ChallengeSubmissionModal({
   };
 
   const handleDiscardDraft = () => {
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    isDraftActiveRef.current = false;
     if (userId) {
       clearSubmissionDraft(userId, challengeId);
     }
@@ -143,12 +166,24 @@ export function ChallengeSubmissionModal({
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0];
-    if (selected) {
-      setFile(selected);
+    if (!selected) return;
+
+    // Reject GIF explicitly
+    if (selected.type === "image/gif") {
+      setError("Format GIF tidak didukung. Harap unggah PNG, JPEG, WebP, atau MP4.");
+      return;
+    }
+
+    setFile(selected);
+    setError(null);
+    if (selected.type.startsWith("image/")) {
       setPreviewUrl(URL.createObjectURL(selected));
-      if (!title) {
-        handleFieldChange("title", selected.name.replace(/\.[^/.]+$/, ""));
-      }
+    } else {
+      setPreviewUrl(null);
+    }
+    
+    if (!title) {
+      handleFieldChange("title", selected.name.replace(/\.[^/.]+$/, ""));
     }
   };
 
@@ -202,7 +237,7 @@ export function ChallengeSubmissionModal({
         onClick={() => setIsOpen(true)}
         leftIcon={<Sparkles className="h-4 w-4" />}
       >
-        {isRevision ? "Kirim Revisi Submisi" : "Kirim Karya Submisi"}
+        {isRevision ? "Kirim Revisi Karya" : "Kirim Karya"}
       </AtelierButton>
 
       <Dialog open={isOpen} onOpenChange={(open) => !open && setIsOpen(false)}>

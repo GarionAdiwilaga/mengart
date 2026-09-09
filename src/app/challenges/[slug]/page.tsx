@@ -20,6 +20,7 @@ import {
   Crown,
 } from "lucide-react";
 import { ChallengeSubmissionModal } from "@/components/challenges/ChallengeSubmissionModal";
+import { CandidateStaffDisqualifyButton } from "@/components/challenges/CandidateStaffDisqualifyButton";
 import { StoryCardGenerator } from "@/components/challenges/StoryCardGenerator";
 import { AtelierBadge } from "@/components/ui/atoms/AtelierBadge";
 import { TimestampWITA } from "@/components/ui/atoms/TimestampWITA";
@@ -383,32 +384,76 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
                     const thumbUrl = sub.thumbnailStorageKey
                       ? `/api/media/public/${sub.thumbnailStorageKey}`
                       : "";
+                    const artworkHref = sub.artworkSlug
+                      ? `/artworks/${sub.artworkSlug}?from=${encodeURIComponent(`/challenges/${challenge.slug}`)}`
+                      : null;
 
                     return (
                       <div
                         key={sub.submissionId}
                         className="glass-panel rounded-2xl overflow-hidden group flex flex-col justify-between hover:border-white/20 transition-all"
                       >
-                        <div className="aspect-[4/3] bg-black/40 relative overflow-hidden flex items-center justify-center">
-                          {thumbUrl ? (
-                            <ArtworkMediaFrame
-                              src={thumbUrl}
-                              alt={sub.title}
-                              isSpoiler={sub.isSpoiler}
-                              fill
-                            />
-                          ) : (
-                            <ImageIcon className="h-8 w-8 text-zinc-700" />
-                          )}
-                        </div>
+                        {artworkHref ? (
+                          <Link
+                            href={artworkHref}
+                            className="aspect-[4/3] bg-black/40 relative overflow-hidden flex items-center justify-center block"
+                          >
+                            {thumbUrl ? (
+                              <ArtworkMediaFrame
+                                src={thumbUrl}
+                                alt={sub.title}
+                                isSpoiler={sub.isSpoiler}
+                                fill
+                              />
+                            ) : (
+                              <ImageIcon className="h-8 w-8 text-zinc-700" />
+                            )}
+                          </Link>
+                        ) : (
+                          <div className="aspect-[4/3] bg-black/40 relative overflow-hidden flex items-center justify-center">
+                            {thumbUrl ? (
+                              <ArtworkMediaFrame
+                                src={thumbUrl}
+                                alt={sub.title}
+                                isSpoiler={sub.isSpoiler}
+                                fill
+                              />
+                            ) : (
+                              <ImageIcon className="h-8 w-8 text-zinc-700" />
+                            )}
+                          </div>
+                        )}
 
-                        <div className="p-3 sm:p-4 flex flex-col gap-1">
-                          <h4 className="font-display font-bold text-xs sm:text-sm text-[#f6f2e9] truncate">
-                            {sub.title}
-                          </h4>
-                          <span className="text-xs text-zinc-400 font-sans truncate">
+                        <div className="p-3 sm:p-4 flex flex-col gap-1.5">
+                          {artworkHref ? (
+                            <Link
+                              href={artworkHref}
+                              className="font-display font-bold text-xs sm:text-sm text-[#f6f2e9] hover:text-amber-300 transition-colors truncate"
+                            >
+                              {sub.title}
+                            </Link>
+                          ) : (
+                            <h4 className="font-display font-bold text-xs sm:text-sm text-[#f6f2e9] truncate">
+                              {sub.title}
+                            </h4>
+                          )}
+                          <Link
+                            href={`/artists/${sub.artistSlug}`}
+                            className="text-xs text-zinc-400 hover:text-white transition-colors truncate"
+                          >
                             oleh {sub.artistName}
-                          </span>
+                          </Link>
+
+                          {isStaff && (
+                            <div className="pt-2 border-t border-white/5 flex justify-end">
+                              <CandidateStaffDisqualifyButton
+                                submissionId={sub.submissionId}
+                                candidateTitle={sub.title}
+                                challengeTitle={challenge.title}
+                                isStaff={isStaff}
+                              />
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -505,6 +550,7 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
                             challengeId={challenge.id}
                             challengeTitle={challenge.title}
                             userId={session?.user?.id}
+                            submissionDeadline={challenge.submissionDeadline}
                           />
                         )}
                       </div>
@@ -650,29 +696,59 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
                     const thumbUrl = sub.thumbnailStorageKey
                       ? `/api/media/public/${sub.thumbnailStorageKey}`
                       : "";
+                    const artworkHref = sub.artworkSlug
+                      ? `/artworks/${sub.artworkSlug}?from=${encodeURIComponent(`/challenges/${challenge.slug}`)}`
+                      : null;
 
                     return (
                       <div
                         key={sub.submissionId}
                         className="glass-panel rounded-2xl overflow-hidden group flex flex-col justify-between hover:border-white/20 transition-all"
                       >
-                        <div className="aspect-[4/3] bg-black/40 relative overflow-hidden flex items-center justify-center">
-                          {thumbUrl ? (
-                            <ArtworkMediaFrame
-                              src={thumbUrl}
-                              alt={sub.title}
-                              isSpoiler={sub.isSpoiler}
-                              fill
-                            />
-                          ) : (
-                            <ImageIcon className="h-8 w-8 text-zinc-700" />
-                          )}
-                        </div>
+                        {artworkHref ? (
+                          <Link
+                            href={artworkHref}
+                            className="aspect-[4/3] bg-black/40 relative overflow-hidden flex items-center justify-center block"
+                          >
+                            {thumbUrl ? (
+                              <ArtworkMediaFrame
+                                src={thumbUrl}
+                                alt={sub.title}
+                                isSpoiler={sub.isSpoiler}
+                                fill
+                              />
+                            ) : (
+                              <ImageIcon className="h-8 w-8 text-zinc-700" />
+                            )}
+                          </Link>
+                        ) : (
+                          <div className="aspect-[4/3] bg-black/40 relative overflow-hidden flex items-center justify-center">
+                            {thumbUrl ? (
+                              <ArtworkMediaFrame
+                                src={thumbUrl}
+                                alt={sub.title}
+                                isSpoiler={sub.isSpoiler}
+                                fill
+                              />
+                            ) : (
+                              <ImageIcon className="h-8 w-8 text-zinc-700" />
+                            )}
+                          </div>
+                        )}
 
                         <div className="p-3 sm:p-4 flex flex-col gap-1.5">
-                          <h4 className="font-display font-bold text-xs sm:text-sm text-[#f6f2e9] truncate">
-                            {sub.title}
-                          </h4>
+                          {artworkHref ? (
+                            <Link
+                              href={artworkHref}
+                              className="font-display font-bold text-xs sm:text-sm text-[#f6f2e9] hover:text-amber-300 transition-colors truncate"
+                            >
+                              {sub.title}
+                            </Link>
+                          ) : (
+                            <h4 className="font-display font-bold text-xs sm:text-sm text-[#f6f2e9] truncate">
+                              {sub.title}
+                            </h4>
+                          )}
                           <Link
                             href={`/artists/${sub.artistSlug}`}
                             className="text-xs text-zinc-400 hover:text-white transition-colors truncate"
@@ -683,6 +759,17 @@ export default async function ChallengeDetailPage({ params }: ChallengeDetailPag
                           {sub.softwareUsed && (
                             <div className="pt-1.5 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-zinc-500">
                               <span className="truncate">{sub.softwareUsed}</span>
+                            </div>
+                          )}
+
+                          {isStaff && (
+                            <div className="pt-2 border-t border-white/5 flex justify-end">
+                              <CandidateStaffDisqualifyButton
+                                submissionId={sub.submissionId}
+                                candidateTitle={sub.title}
+                                challengeTitle={challenge.title}
+                                isStaff={isStaff}
+                              />
                             </div>
                           )}
                         </div>

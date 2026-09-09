@@ -126,7 +126,9 @@ export async function reconcileBallotAction(votingRoundId: string) {
     throw new Error("Babak pemungutan suara tidak ditemukan.");
   }
 
-  return await getAuthoritativeVotingRoundData(round.challengeId, user.id);
+  return await getAuthoritativeVotingRoundData(round.challengeId, user.id, {
+    targetRoundId: votingRoundId,
+  });
 }
 
 /**

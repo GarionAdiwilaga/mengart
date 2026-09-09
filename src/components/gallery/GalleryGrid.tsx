@@ -234,13 +234,18 @@ function GalleryGridContent({ currentUserRole, initialTab }: GalleryGridProps) {
           layout
           className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6"
         >
-          {artworks.map((art) => (
-            <ArtworkCard
-              key={art.id}
-              artwork={art}
-              currentUserRole={currentUserRole}
-            />
-          ))}
+          {artworks.map((art) => {
+            const searchString = searchParams.toString();
+            const currentPathWithQuery = searchString ? `${pathname}?${searchString}` : pathname;
+            return (
+              <ArtworkCard
+                key={art.id}
+                artwork={art}
+                currentUserRole={currentUserRole}
+                from={currentPathWithQuery}
+              />
+            );
+          })}
         </motion.div>
       )}
     </div>

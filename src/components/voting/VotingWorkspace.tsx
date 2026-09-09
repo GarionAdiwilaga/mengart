@@ -57,6 +57,7 @@ interface VotingWorkspaceProps {
   initialAllocations?: { [submissionId: string]: number };
   initialRemainingStars?: number;
   candidates: CandidateArtwork[];
+  userId?: string | null;
   isLoggedIn?: boolean;
 }
 
@@ -72,6 +73,7 @@ export function VotingWorkspace({
   initialAllocations = {},
   initialRemainingStars,
   candidates,
+  userId,
   isLoggedIn = false,
 }: VotingWorkspaceProps) {
   const maxStars = explicitMaxStars ?? starsPerMember ?? 1;
@@ -85,6 +87,12 @@ export function VotingWorkspace({
     ...initialAllocations,
   });
 
+  // User and Round Generation tracking for clean invalidation
+  const currentGen = `${userId || "anon"}:${votingRoundId}`;
+  const generationRef = useRef(currentGen);
+  const seqRef = useRef(0);
+  const pendingCountRef = useRef(0);
+
   // Local optimistic allocations
   const [allocations, setAllocations] = useState<{ [submissionId: string]: number }>(
     initialAllocations
@@ -93,10 +101,16 @@ export function VotingWorkspace({
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isPermanentError, setIsPermanentError] = useState(false);
+  const [isUncertain, setIsUncertain] = useState(false);
+  const isUncertainRef = useRef(false);
   const [isReconciling, setIsReconciling] = useState(false);
 
   // Failed intent storage for explicit retry
   const failedIntentRef = useRef<{ [submissionId: string]: number } | null>(null);
+  const busyPendingRefreshRef = useRef<{
+    allocations: Record<string, number>;
+    remaining: number;
+  } | null>(null);
 
   // Focus detail view state
   const [focusedCandidate, setFocusedCandidate] = useState<CandidateArtwork | null>(null);
@@ -129,9 +143,67 @@ export function VotingWorkspace({
     };
   }, []);
 
+  // Invalidate pending queue operations and sync state immediately on account or round generation change
+  useEffect(() => {
+    const newGen = `${userId || "anon"}:${votingRoundId}`;
+    if (generationRef.current !== newGen) {
+      generationRef.current = newGen;
+      pendingCountRef.current = 0;
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      confirmedAllocationsRef.current = { ...initialAllocations };
+      setAllocations(initialAllocations);
+      const total = Object.values(initialAllocations).reduce((a, b) => a + b, 0);
+      setRemainingStars(maxStars - total);
+      setSaveStatus("idle");
+      setErrorMessage(null);
+      setIsPermanentError(false);
+      setIsUncertain(false);
+      isUncertainRef.current = false;
+      failedIntentRef.current = null;
+      busyPendingRefreshRef.current = null;
+    }
+  }, [userId, votingRoundId, initialAllocations, maxStars]);
+
+  // Synchronize refreshed server props when mounted
+  useEffect(() => {
+    // If the queue is busy processing writes, do not overwrite optimistic state with stale refresh
+    if (pendingCountRef.current > 0) {
+      busyPendingRefreshRef.current = {
+        allocations: initialAllocations,
+        remaining: computedInitialRemaining,
+      };
+      return;
+    }
+
+    // Queue is idle: safely synchronize confirmed server allocations
+    confirmedAllocationsRef.current = { ...initialAllocations };
+    setAllocations(initialAllocations);
+    setRemainingStars(computedInitialRemaining);
+  }, [initialAllocations, computedInitialRemaining]);
+
   // Enqueue serialized save operation
   const enqueueSave = useCallback(
     (targetAllocations: { [submissionId: string]: number }) => {
+      if (!isLoggedIn) {
+        setErrorMessage("Silakan masuk terlebih dahulu untuk memberikan suara Star.");
+        setSaveStatus("error");
+        setIsPermanentError(true);
+        return;
+      }
+
+      // Uncertainty gate: pause subsequent writes while outcome is unresolved
+      if (isUncertainRef.current) {
+        setErrorMessage(
+          "Status alokasi suara sebelumnya belum pasti karena gangguan jaringan. Harap periksa status suara terlebih dahulu."
+        );
+        setSaveStatus("error");
+        return;
+      }
+
+      const opGen = generationRef.current;
+      const opSeq = ++seqRef.current;
+      pendingCountRef.current++;
+
       // 1. Optimistic UI update
       setAllocations(targetAllocations);
       const newTotal = Object.values(targetAllocations).reduce((a, b) => a + b, 0);
@@ -142,76 +214,143 @@ export function VotingWorkspace({
       // Clear any pending transition back to idle
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
 
+      const activeVotes = Object.entries(targetAllocations)
+        .filter(([_, count]) => count > 0)
+        .map(([submissionId, starsCount]) => ({ submissionId, starsCount }));
+
       // 2. Chain onto FIFO Promise Queue
       queueRef.current = queueRef.current
         .then(async () => {
-          if (isUnmountedRef.current) return;
+          // Invalidation check: skip if unmounted or account/round generation changed
+          if (isUnmountedRef.current || generationRef.current !== opGen) {
+            pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+            return;
+          }
 
           // Check client-side deadline closure
           if (roundDeadline && new Date() >= new Date(roundDeadline)) {
+            pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
             setSaveStatus("error");
             setErrorMessage("Batas waktu voting untuk babak ini telah berakhir.");
             setIsPermanentError(true);
             return;
           }
 
-          const activeVotes = Object.entries(targetAllocations)
-            .filter(([_, count]) => count > 0)
-            .map(([submissionId, starsCount]) => ({ submissionId, starsCount }));
+          // When this mutation actually runs, reset status & clear idle timers
+          setSaveStatus("saving");
+          if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
 
+          let res: any;
           try {
-            const res = await castOrUpdateBallotAction({
+            res = await castOrUpdateBallotAction({
               votingRoundId,
               votes: activeVotes,
             });
-
-            if (res.success) {
-              confirmedAllocationsRef.current = targetAllocations;
-              failedIntentRef.current = null;
-              setIsPermanentError(false);
-              setSaveStatus("saved");
-
-              if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-              saveTimeoutRef.current = setTimeout(() => {
-                if (!isUnmountedRef.current) {
-                  setSaveStatus("idle");
-                }
-              }, 2500);
-            }
           } catch (err: any) {
-            if (isUnmountedRef.current) return;
+            if (isUnmountedRef.current || generationRef.current !== opGen) {
+              pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+              return;
+            }
 
-            const msg = err?.message || "Gagal menyimpan alokasi suara.";
-            const isPermanent =
+            pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+            const msg: string = err?.message || "Gagal menyimpan alokasi suara.";
+
+            const isConfirmedRejection =
               msg.includes("Karya sendiri") ||
               msg.includes("sedang tidak dibuka") ||
               msg.includes("telah berakhir") ||
-              msg.includes("ditangguhkan");
+              msg.includes("ditangguhkan") ||
+              msg.includes("melebihi alokasi") ||
+              msg.includes("didiskualifikasi") ||
+              msg.includes("tidak terdaftar") ||
+              msg.includes("Format") ||
+              msg.includes("Akses ditolak");
 
-            setIsPermanentError(isPermanent);
-            setSaveStatus("error");
-            setErrorMessage(msg);
-            failedIntentRef.current = targetAllocations;
+            if (isConfirmedRejection) {
+              const isPermanent =
+                msg.includes("Karya sendiri") ||
+                msg.includes("sedang tidak dibuka") ||
+                msg.includes("telah berakhir") ||
+                msg.includes("ditangguhkan") ||
+                msg.includes("didiskualifikasi");
 
-            // Rollback optimistic state to last confirmed snapshot
-            setAllocations(confirmedAllocationsRef.current);
-            const rolledBackTotal = Object.values(confirmedAllocationsRef.current).reduce(
-              (a, b) => a + b,
-              0
-            );
-            setRemainingStars(maxStars - rolledBackTotal);
+              setIsPermanentError(isPermanent);
+              setSaveStatus("error");
+              setErrorMessage(msg);
+              failedIntentRef.current = targetAllocations;
+
+              // Rollback optimistic state ONLY if this was the latest enqueued operation
+              if (opSeq === seqRef.current) {
+                setAllocations(confirmedAllocationsRef.current);
+                const rolledBackTotal = Object.values(confirmedAllocationsRef.current).reduce(
+                  (a, b) => a + b,
+                  0
+                );
+                setRemainingStars(maxStars - rolledBackTotal);
+              }
+            } else {
+              // UNCERTAIN OUTCOME: Network error, timeout, or 500
+              isUncertainRef.current = true;
+              setIsUncertain(true);
+              setSaveStatus("error");
+              setErrorMessage(
+                "Koneksi terputus saat menyimpan suara. Harap periksa status suara untuk memastikan alokasi tersimpan."
+              );
+              failedIntentRef.current = targetAllocations;
+            }
+            return;
+          }
+
+          if (isUnmountedRef.current || generationRef.current !== opGen) {
+            pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+            return;
+          }
+
+          pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+
+          if (res?.success) {
+            confirmedAllocationsRef.current = targetAllocations;
+            failedIntentRef.current = null;
+            setIsPermanentError(false);
+            isUncertainRef.current = false;
+            setIsUncertain(false);
+
+            // If this is the latest enqueued operation, update allocations & remainingStars
+            if (opSeq === seqRef.current) {
+              setAllocations(targetAllocations);
+              const total = Object.values(targetAllocations).reduce((a, b) => a + b, 0);
+              setRemainingStars(maxStars - total);
+            }
+
+            // Only transition to "saved" if no newer work is pending in queue
+            if (pendingCountRef.current === 0) {
+              setSaveStatus("saved");
+              if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+              saveTimeoutRef.current = setTimeout(() => {
+                if (!isUnmountedRef.current && pendingCountRef.current === 0) {
+                  setSaveStatus("idle");
+                }
+              }, 2500);
+
+              // Queue is now idle: discard stale refresh buffer
+              busyPendingRefreshRef.current = null;
+            } else {
+              setSaveStatus("saving");
+            }
           }
         })
         .catch((err) => {
           console.error("Voting queue execution error:", err);
         });
     },
-    [maxStars, roundDeadline, votingRoundId]
+    [isLoggedIn, maxStars, roundDeadline, votingRoundId]
   );
 
   // Retry failed intent
   const handleRetryFailedIntent = () => {
     if (!failedIntentRef.current || isPermanentError) return;
+    isUncertainRef.current = false;
+    setIsUncertain(false);
     enqueueSave(failedIntentRef.current);
   };
 
@@ -221,6 +360,10 @@ export function VotingWorkspace({
     setErrorMessage(null);
     try {
       const roundData = await reconcileBallotAction(votingRoundId);
+      if (roundData?.votingRound?.id && roundData.votingRound.id !== votingRoundId) {
+        throw new Error("ID babak voting tidak sesuai dengan babak aktif.");
+      }
+
       const serverAllocations: Record<string, number> = {};
       if (roundData?.candidates) {
         roundData.candidates.forEach((c: any) => {
@@ -234,6 +377,8 @@ export function VotingWorkspace({
       const serverTotal = Object.values(serverAllocations).reduce((a, b) => a + b, 0);
       setRemainingStars(maxStars - serverTotal);
       failedIntentRef.current = null;
+      isUncertainRef.current = false;
+      setIsUncertain(false);
       setIsPermanentError(false);
       setSaveStatus("saved");
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
@@ -350,7 +495,7 @@ export function VotingWorkspace({
       }
 
       setErrorMessage(
-        `Semua ${maxStars} Star sudah kamu gunakan. Kurangi alokasi dari karya lain terlebih dahulu.`
+        `Alokasi ${maxStars} Star telah digunakan. Kurangi alokasi dari karya lain terlebih dahulu.`
       );
       setSaveStatus("error");
       setIsPermanentError(false);
@@ -374,13 +519,21 @@ export function VotingWorkspace({
   const handleConfirmReset = async () => {
     setIsResetting(true);
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    const opGen = generationRef.current;
 
     queueRef.current = queueRef.current
       .then(async () => {
+        if (isUnmountedRef.current || generationRef.current !== opGen) return;
+
+        setSaveStatus("saving");
         try {
           await resetBallotAction({ votingRoundId });
+          if (isUnmountedRef.current || generationRef.current !== opGen) return;
+
           confirmedAllocationsRef.current = {};
           failedIntentRef.current = null;
+          isUncertainRef.current = false;
+          setIsUncertain(false);
           setAllocations({});
           setRemainingStars(maxStars);
           setSaveStatus("saved");
@@ -390,6 +543,7 @@ export function VotingWorkspace({
             if (!isUnmountedRef.current) setSaveStatus("idle");
           }, 2000);
         } catch (err: any) {
+          if (isUnmountedRef.current || generationRef.current !== opGen) return;
           setSaveStatus("error");
           setErrorMessage(err?.message || "Gagal mereset suara.");
         }
@@ -401,7 +555,9 @@ export function VotingWorkspace({
     try {
       await queueRef.current;
     } finally {
-      setIsResetting(false);
+      if (!isUnmountedRef.current) {
+        setIsResetting(false);
+      }
     }
   };
 
@@ -471,9 +627,10 @@ export function VotingWorkspace({
             <button
               type="button"
               onClick={() => setErrorMessage(null)}
-              className="p-1 rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white cursor-pointer"
+              aria-label="Tutup pesan kesalahan"
+              className="h-11 w-11 min-h-[44px] min-w-[44px] rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white flex items-center justify-center cursor-pointer"
             >
-              <X className="h-3.5 w-3.5" />
+              <X className="h-4 w-4" />
             </button>
           </div>
         </div>
@@ -505,6 +662,7 @@ export function VotingWorkspace({
                 tabIndex={0}
                 onClick={() => openDetailFocus(cand, index)}
                 onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
                     openDetailFocus(cand, index);
@@ -567,20 +725,8 @@ export function VotingWorkspace({
 
                 {/* Multi-Star Stepper or Single-Star Toggle */}
                 {maxStars > 1 ? (
-                  <div className="w-full flex items-center justify-between gap-1 bg-white/[0.04] p-1 rounded-xl border border-white/10">
-                    <button
-                      type="button"
-                      disabled={cand.isSelfSubmission || candidateVoteCount <= 0}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDecrementStar(cand);
-                      }}
-                      aria-label={`Kurangi Star untuk ${cand.title}`}
-                      className="h-11 w-11 min-h-[44px] min-w-[44px] rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center text-zinc-200 transition-colors cursor-pointer"
-                    >
-                      <Minus className="h-4 w-4" />
-                    </button>
-                    <div className="flex items-center gap-1 text-xs font-mono font-bold text-[#f6f2e9]">
+                  <div className="w-full flex flex-col gap-1.5 bg-white/[0.04] p-1.5 rounded-xl border border-white/10">
+                    <div className="flex items-center justify-center gap-1 py-0.5 text-xs font-mono font-bold text-[#f6f2e9]">
                       <Star
                         className={`h-3.5 w-3.5 ${
                           candidateVoteCount > 0 ? "fill-amber-400 text-amber-400" : "text-zinc-500"
@@ -588,18 +734,32 @@ export function VotingWorkspace({
                       />
                       <span>{candidateVoteCount} Star</span>
                     </div>
-                    <button
-                      type="button"
-                      disabled={cand.isSelfSubmission || remainingStars <= 0}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleIncrementStar(cand);
-                      }}
-                      aria-label={`Tambah Star untuk ${cand.title}`}
-                      className="h-11 w-11 min-h-[44px] min-w-[44px] rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors cursor-pointer"
-                    >
-                      <Plus className="h-4 w-4" />
-                    </button>
+                    <div className="grid grid-cols-2 gap-1.5 w-full">
+                      <button
+                        type="button"
+                        disabled={cand.isSelfSubmission || candidateVoteCount <= 0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDecrementStar(cand);
+                        }}
+                        aria-label={`Kurangi Star untuk ${cand.title}`}
+                        className="w-full h-11 min-h-[44px] rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center text-zinc-200 transition-colors cursor-pointer"
+                      >
+                        <Minus className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={cand.isSelfSubmission || remainingStars <= 0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleIncrementStar(cand);
+                        }}
+                        aria-label={`Tambah Star untuk ${cand.title}`}
+                        className="w-full h-11 min-h-[44px] rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors cursor-pointer"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <button

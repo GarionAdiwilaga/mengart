@@ -18,15 +18,30 @@ function getDraftKey(userId: string, challengeId: string): string {
 }
 
 /**
+ * Safe accessor for window.localStorage that catches SecurityErrors
+ * in sandboxed iframes or restricted private-browsing contexts.
+ */
+function getLocalStorage(): Storage | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage ?? null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+/**
  * Purge any legacy unscoped drafts (e.g. mengart_sub_draft:challengeId)
  * or drafts belonging to unknown format versions.
  */
 export function purgeLegacyDrafts(): void {
-  if (typeof window === "undefined" || !window.localStorage) return;
+  const storage = getLocalStorage();
+  if (!storage) return;
+
   try {
     const keysToRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
       if (key && key.startsWith(DRAFT_PREFIX)) {
         // If it doesn't match the versioned format "mengart_sub_draft:v1:..."
         if (!key.startsWith(`${DRAFT_PREFIX}${FORMAT_VERSION}:`)) {
@@ -34,7 +49,7 @@ export function purgeLegacyDrafts(): void {
         }
       }
     }
-    keysToRemove.forEach((k) => localStorage.removeItem(k));
+    keysToRemove.forEach((k) => storage.removeItem(k));
   } catch (_e) {
     // Ignore storage errors
   }
@@ -48,8 +63,8 @@ export function saveSubmissionDraft(
   challengeId: string,
   data: Omit<SubmissionDraftData, "savedAt">
 ): void {
-  if (typeof window === "undefined" || !window.localStorage) return;
-  if (!userId || !challengeId) return;
+  const storage = getLocalStorage();
+  if (!storage || !userId || !challengeId) return;
 
   try {
     const key = getDraftKey(userId, challengeId);
@@ -60,7 +75,7 @@ export function saveSubmissionDraft(
       isSpoiler: Boolean(data.isSpoiler),
       savedAt: Date.now(),
     };
-    localStorage.setItem(key, JSON.stringify(payload));
+    storage.setItem(key, JSON.stringify(payload));
   } catch (_e) {
     // QuotaExceededError or private browsing mode
   }
@@ -74,12 +89,12 @@ export function loadSubmissionDraft(
   userId: string,
   challengeId: string
 ): SubmissionDraftData | null {
-  if (typeof window === "undefined" || !window.localStorage) return null;
-  if (!userId || !challengeId) return null;
+  const storage = getLocalStorage();
+  if (!storage || !userId || !challengeId) return null;
 
   try {
     const key = getDraftKey(userId, challengeId);
-    const raw = localStorage.getItem(key);
+    const raw = storage.getItem(key);
     if (!raw) return null;
 
     const parsed = JSON.parse(raw);
@@ -102,11 +117,11 @@ export function loadSubmissionDraft(
  * Clear a specific challenge draft for a user.
  */
 export function clearSubmissionDraft(userId: string, challengeId: string): void {
-  if (typeof window === "undefined" || !window.localStorage) return;
-  if (!userId || !challengeId) return;
+  const storage = getLocalStorage();
+  if (!storage || !userId || !challengeId) return;
 
   try {
-    localStorage.removeItem(getDraftKey(userId, challengeId));
+    storage.removeItem(getDraftKey(userId, challengeId));
   } catch (_e) {
     // Ignore storage errors
   }
@@ -117,17 +132,18 @@ export function clearSubmissionDraft(userId: string, challengeId: string): void 
  * Used during logout to guarantee zero cross-account leakage.
  */
 export function clearAllSubmissionDrafts(): void {
-  if (typeof window === "undefined" || !window.localStorage) return;
+  const storage = getLocalStorage();
+  if (!storage) return;
 
   try {
     const keysToRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
       if (key && key.startsWith(DRAFT_PREFIX)) {
         keysToRemove.push(key);
       }
     }
-    keysToRemove.forEach((k) => localStorage.removeItem(k));
+    keysToRemove.forEach((k) => storage.removeItem(k));
   } catch (_e) {
     // Ignore storage errors
   }

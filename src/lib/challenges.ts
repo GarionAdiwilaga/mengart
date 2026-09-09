@@ -215,6 +215,7 @@ export async function getChallengeCandidates(challengeId: string) {
       description: challengeSubmissions.description,
       softwareUsed: challengeSubmissions.softwareUsed,
       artworkId: challengeSubmissions.artworkId,
+      artworkSlug: artworks.slug,
       artworkVersionId: challengeSubmissions.artworkVersionId,
       isSpoiler: artworks.isSpoiler,
       artistName: profiles.displayName,

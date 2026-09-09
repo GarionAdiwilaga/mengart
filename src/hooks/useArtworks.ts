@@ -28,6 +28,8 @@ export interface ArtworkListItem {
   challengeTitle?: string | null;
   challengeSlug?: string | null;
   origin?: "challenge" | "independent";
+  systemCaption?: string | null;
+  customCaption?: string | null;
   effectiveCaption?: string | null;
 }
 

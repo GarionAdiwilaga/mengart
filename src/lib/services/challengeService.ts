@@ -16,6 +16,7 @@ import { eq, and, sql, desc, asc, lte, isNull, inArray } from "drizzle-orm";
 import type { EffectiveChallengeStatus } from "@/lib/challenges";
 import { validateJuryPhaseReadinessService } from "./juryService";
 import { autoAddChallengeSubmissionsToPortfolioService } from "./portfolioService";
+import { computeAuthoritativeRoundTally } from "./votingService";
 
 export interface ServiceContext {
   userId: string | null;
@@ -1054,7 +1055,7 @@ export async function disqualifyChallengeCandidateService(
       throw new Error("Submisi telah didiskualifikasi sebelumnya.");
     }
 
-    // Check if an active round exists for this challenge
+    // Check if an active or pending round exists for this challenge
     const [activeRoundLookup] = await tx
       .select({
         id: challengeVotingRounds.id,
@@ -1065,7 +1066,7 @@ export async function disqualifyChallengeCandidateService(
       .where(
         and(
           eq(challengeVotingRounds.challengeId, subLookup.challengeId),
-          eq(challengeVotingRounds.status, "open")
+          inArray(challengeVotingRounds.status, ["open", "pending"])
         )
       )
       .limit(1);
@@ -1073,7 +1074,7 @@ export async function disqualifyChallengeCandidateService(
     // 3. Monotonic Row-Locking Hierarchy:
     // challengeVotingRounds (1) -> challenges (2) -> challengeSubmissions (3) -> challengeBallots (4)
 
-    // (1) Lock active round FOR UPDATE if exists
+    // (1) Lock active/pending round FOR UPDATE if exists
     let activeRound: any = null;
     if (activeRoundLookup) {
       const [lockedRound] = await tx
@@ -1096,6 +1097,10 @@ export async function disqualifyChallengeCandidateService(
     if (!challenge) {
       throw new Error("Challenge tidak ditemukan.");
     }
+
+    // Re-verify round status after acquiring locks
+    const isRoundActuallyOpen = activeRound && activeRound.status === "open";
+    const isRoundPending = activeRound && activeRound.status === "pending";
 
     // Phase Behavior Matrix validation
     if (challenge.status === "finished") {
@@ -1124,10 +1129,10 @@ export async function disqualifyChallengeCandidateService(
     }
 
     // (4) Star refunds for open round:
-    // Only refund stars if there is an active round that is open (voting_open or tiebreak_open)
+    // Only refund stars if there is an active round that is genuinely open
     let votedStars: any[] = [];
     if (
-      activeRound &&
+      isRoundActuallyOpen &&
       (challenge.status === "voting_open" ||
         challenge.status === "tiebreak_open" ||
         challenge.status === "paused")
@@ -1171,9 +1176,9 @@ export async function disqualifyChallengeCandidateService(
       })
       .where(eq(challengeSubmissions.id, submission.id));
 
-    // 5. Remove candidate snapshot from open round (if open)
+    // 5. Remove candidate snapshot from open or pending round (if open/pending)
     // Note: Do NOT delete closed-round candidate snapshots (preserve history)!
-    if (activeRound) {
+    if (activeRound && (isRoundActuallyOpen || isRoundPending)) {
       await tx
         .delete(challengeVotingRoundCandidates)
         .where(
@@ -1226,15 +1231,62 @@ export async function disqualifyChallengeCandidateService(
         );
     }
 
-    // 7. Remove any draft jury awards for this submission
-    await tx
-      .delete(challengeJuryAwards)
+    // 7. Handle draft or revoked jury awards for this submission with audit snapshot
+    const existingJuryAwards = await tx
+      .select()
+      .from(challengeJuryAwards)
       .where(eq(challengeJuryAwards.submissionId, submission.id));
 
-    // 8. Remove any draft results for this submission
-    await tx
-      .delete(challengeResults)
+    if (existingJuryAwards.length > 0) {
+      await tx
+        .delete(challengeJuryAwards)
+        .where(eq(challengeJuryAwards.submissionId, submission.id));
+
+      for (const award of existingJuryAwards) {
+        await tx.insert(auditLogs).values({
+          actorId: actor.userId,
+          action: "jury_award.revoked_by_disqualification",
+          targetType: "challenge_jury_award",
+          targetId: award.id,
+          reason: `Penghargaan juri dicabut karena karya didiskualifikasi: ${reason.trim()}`,
+          metadata: {
+            awardId: award.id,
+            submissionId: submission.id,
+            challengeId: challenge.id,
+            categoryLabel: award.categoryLabel,
+          },
+        });
+      }
+    }
+
+    // 8. Handle draft or revoked results for this submission with audit snapshot
+    const existingResults = await tx
+      .select()
+      .from(challengeResults)
       .where(eq(challengeResults.submissionId, submission.id));
+
+    if (existingResults.length > 0) {
+      await tx
+        .delete(challengeResults)
+        .where(eq(challengeResults.submissionId, submission.id));
+
+      for (const resRow of existingResults) {
+        await tx.insert(auditLogs).values({
+          actorId: actor.userId,
+          action: "challenge_result.revoked_by_disqualification",
+          targetType: "challenge_result",
+          targetId: resRow.id,
+          reason: `Hasil challenge dicabut karena karya didiskualifikasi: ${reason.trim()}`,
+          metadata: {
+            resultId: resRow.id,
+            submissionId: submission.id,
+            challengeId: challenge.id,
+            awardType: resRow.awardType,
+            finalRank: resRow.finalRank,
+          },
+        });
+      }
+    }
 
     // 9. Notify candidate artist
     await tx.insert(notifications).values({
@@ -1272,7 +1324,7 @@ export async function disqualifyChallengeCandidateService(
 
     if (activeLifecycleStatuses.includes(challenge.status)) {
       if (remainingCount === 0) {
-        // Zero submissions remaining -> Cancel challenge
+        // Zero submissions remaining in entire challenge -> Cancel challenge
         await tx
           .update(challenges)
           .set({
@@ -1282,7 +1334,7 @@ export async function disqualifyChallengeCandidateService(
           })
           .where(eq(challenges.id, challenge.id));
 
-        if (activeRound) {
+        if (activeRound && (isRoundActuallyOpen || isRoundPending)) {
           await tx
             .update(challengeVotingRounds)
             .set({ status: "closed", updatedAt: new Date() })
@@ -1297,13 +1349,155 @@ export async function disqualifyChallengeCandidateService(
           reason: "Seluruh karya submisi telah didiskualifikasi sehingga challenge dibatalkan.",
           metadata: { challengeId: challenge.id },
         });
+      } else if (challenge.status === "tiebreak_open" && activeRound) {
+        // In tiebreak_open, evaluate remaining candidates from the active tiebreak round
+        const remainingTiebreakCandidates = await tx
+          .select({
+            id: challengeSubmissions.id,
+            userId: challengeSubmissions.userId,
+          })
+          .from(challengeVotingRoundCandidates)
+          .innerJoin(
+            challengeSubmissions,
+            eq(challengeSubmissions.id, challengeVotingRoundCandidates.submissionId)
+          )
+          .where(
+            and(
+              eq(challengeVotingRoundCandidates.votingRoundId, activeRound.id),
+              eq(challengeSubmissions.submissionStatus, "submitted")
+            )
+          );
+
+        if (remainingTiebreakCandidates.length === 1) {
+          // Exactly 1 tied candidate remains: they win the tiebreak!
+          const singleTieWinner = remainingTiebreakCandidates[0];
+          await tx
+            .update(challengeVotingRounds)
+            .set({ status: "closed", updatedAt: new Date() })
+            .where(eq(challengeVotingRounds.id, activeRound.id));
+
+          await tx
+            .delete(challengeResults)
+            .where(
+              and(
+                eq(challengeResults.challengeId, challenge.id),
+                eq(challengeResults.awardType, "community_vote_winner")
+              )
+            );
+
+          const isPublished = challenge.awardMode === "vote_only";
+          await tx.insert(challengeResults).values({
+            challengeId: challenge.id,
+            submissionId: singleTieWinner.id,
+            finalRank: 1,
+            awardType: "community_vote_winner",
+            totalCommunityStars: 0,
+            resolutionMethod: "disqualification_tie_resolution",
+            isPublished,
+          });
+
+          const nextStatus = challenge.awardMode === "vote_only" ? "finished" : "jury_selection_open";
+          await tx
+            .update(challenges)
+            .set({ status: nextStatus, updatedAt: new Date() })
+            .where(eq(challenges.id, challenge.id));
+
+          if (nextStatus === "finished") {
+            await autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id);
+          }
+        } else if (remainingTiebreakCandidates.length === 0) {
+          // 0 tied candidates remain
+          await tx
+            .update(challengeVotingRounds)
+            .set({ status: "closed", updatedAt: new Date() })
+            .where(eq(challengeVotingRounds.id, activeRound.id));
+
+          const nextStatus = challenge.awardMode === "vote_only" ? "finished" : "jury_selection_open";
+          await tx
+            .update(challenges)
+            .set({ status: nextStatus, updatedAt: new Date() })
+            .where(eq(challenges.id, challenge.id));
+        }
+      } else if (challenge.status === "tie_pending") {
+        // In tie_pending, derive remaining candidates from the original authoritative tied set
+        const [latestClosedRound] = await tx
+          .select({ id: challengeVotingRounds.id })
+          .from(challengeVotingRounds)
+          .where(
+            and(
+              eq(challengeVotingRounds.challengeId, challenge.id),
+              eq(challengeVotingRounds.status, "closed")
+            )
+          )
+          .orderBy(desc(challengeVotingRounds.createdAt))
+          .limit(1);
+
+        if (latestClosedRound) {
+          const tally = await computeAuthoritativeRoundTally(tx, latestClosedRound.id);
+          const tiedIds = tally.outcome === "tie" ? tally.tiedSubmissionIds : [];
+
+          if (tiedIds.length > 0) {
+            const remainingTiedCandidates = await tx
+              .select({
+                id: challengeSubmissions.id,
+                userId: challengeSubmissions.userId,
+              })
+              .from(challengeSubmissions)
+              .where(
+                and(
+                  inArray(challengeSubmissions.id, tiedIds),
+                  eq(challengeSubmissions.submissionStatus, "submitted")
+                )
+              );
+
+            if (remainingTiedCandidates.length === 1) {
+              // Exactly 1 candidate remains in the tied set: they win!
+              const singleTieWinner = remainingTiedCandidates[0];
+
+              await tx
+                .delete(challengeResults)
+                .where(
+                  and(
+                    eq(challengeResults.challengeId, challenge.id),
+                    eq(challengeResults.awardType, "community_vote_winner")
+                  )
+                );
+
+              const isPublished = challenge.awardMode === "vote_only";
+              await tx.insert(challengeResults).values({
+                challengeId: challenge.id,
+                submissionId: singleTieWinner.id,
+                finalRank: 1,
+                awardType: "community_vote_winner",
+                totalCommunityStars: 0,
+                resolutionMethod: "disqualification_tie_resolution",
+                isPublished,
+              });
+
+              const nextStatus = challenge.awardMode === "vote_only" ? "finished" : "jury_selection_open";
+              await tx
+                .update(challenges)
+                .set({ status: nextStatus, updatedAt: new Date() })
+                .where(eq(challenges.id, challenge.id));
+
+              if (nextStatus === "finished") {
+                await autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id);
+              }
+            } else if (remainingTiedCandidates.length === 0) {
+              // 0 tied candidates remain
+              const nextStatus = challenge.awardMode === "vote_only" ? "finished" : "jury_selection_open";
+              await tx
+                .update(challenges)
+                .set({ status: nextStatus, updatedAt: new Date() })
+                .where(eq(challenges.id, challenge.id));
+            }
+          }
+        }
       } else if (
         remainingCount === 1 &&
-        (challenge.status === "voting_open" ||
-          challenge.status === "tiebreak_open" ||
-          challenge.status === "tie_pending")
+        (challenge.status === "voting_open" || challenge.status === "submission_locked")
       ) {
-        // 1 submission remaining during voting / tiebreak / tie_pending -> single submission auto winner flow
+        // 1 submission remaining during voting_open or submission_locked -> auto winner
         const [singleSub] = await tx
           .select({
             id: challengeSubmissions.id,
@@ -1319,7 +1513,7 @@ export async function disqualifyChallengeCandidateService(
           .limit(1);
 
         if (singleSub) {
-          if (activeRound) {
+          if (activeRound && (isRoundActuallyOpen || isRoundPending)) {
             await tx
               .update(challengeVotingRounds)
               .set({ status: "closed", updatedAt: new Date() })

@@ -21,6 +21,7 @@ import {
   challenges,
   challengeResults,
   challengeSubmissions,
+  challengeVotingRounds,
   users,
   portfolioEntries,
 } from "@/db/schema";
@@ -30,15 +31,38 @@ import { getSiteSetting } from "@/app/actions/settings";
 import { auth } from "@/auth";
 import { EditAboutModal } from "@/components/home/EditAboutModal";
 import { ArtworkCard } from "@/components/gallery/ArtworkCard";
+import { projectPublicArtworkProvenance } from "@/lib/presentation/provenance";
 
 export default async function HomePage() {
   const session = await auth();
   const isAdmin = session?.user?.role === "admin";
 
+  let isActiveStaff = false;
+  if (session?.user?.id) {
+    const [currentUser] = await db
+      .select({
+        role: users.role,
+        membershipStatus: users.membershipStatus,
+        deletedAt: users.deletedAt,
+      })
+      .from(users)
+      .where(eq(users.id, session.user.id))
+      .limit(1);
+
+    if (
+      currentUser &&
+      (currentUser.role === "admin" || currentUser.role === "moderator") &&
+      currentUser.membershipStatus === "active" &&
+      !currentUser.deletedAt
+    ) {
+      isActiveStaff = true;
+    }
+  }
+
   const spotlight = await getCurrentMonthlySpotlight();
   const aboutSetting = await getSiteSetting("about_community");
   const defaultAbout =
-    "Mengart Atelier adalah ruang berkarya dan kolektif seni visual privat. Kami mengedepankan kurasi karya autentik beresolusi tinggi, apresiasi konstruktif antar-kreator, sistem voting tantangan karya yang adil tanpa bias popularitas, serta transparansi layanan komisi profesional.";
+    "Mengart Atelier adalah ruang berkarya dan komunitas seni visual privat. Kami mengedepankan kurasi karya autentik beresolusi tinggi, apresiasi konstruktif antar-kreator, sistem voting challenge karya yang adil tanpa bias popularitas, serta transparansi layanan komisi profesional.";
   const aboutContent = aboutSetting || defaultAbout;
 
   // 1. Visible Active or Upcoming Challenge (Displayed first on mobile)
@@ -48,6 +72,7 @@ export default async function HomePage() {
     .where(
       and(
         isNull(challenges.deletedAt),
+        eq(challenges.isVisible, true),
         inArray(challenges.status, [
           "submission_open",
           "voting_open",
@@ -59,11 +84,39 @@ export default async function HomePage() {
     .orderBy(desc(challenges.createdAt))
     .limit(1);
 
+  // Determine actual active deadline for the active challenge
+  let activeDeadline = activeChallenge?.submissionDeadline;
+  let activeDeadlineLabel = "Batas Waktu Submisi";
+
+  if (activeChallenge) {
+    if (activeChallenge.status === "voting_open" || activeChallenge.status === "tiebreak_open") {
+      activeDeadlineLabel = "Batas Waktu Voting";
+      const [activeRound] = await db
+        .select({ deadline: challengeVotingRounds.deadline })
+        .from(challengeVotingRounds)
+        .where(
+          and(
+            eq(challengeVotingRounds.challengeId, activeChallenge.id),
+            eq(challengeVotingRounds.status, "open")
+          )
+        )
+        .limit(1);
+
+      activeDeadline = activeRound?.deadline || activeChallenge.votingDeadline;
+    }
+  }
+
   // 2. Latest Published Challenge Result / Hall of Fame Highlight
   const [latestFinishedChallenge] = await db
     .select()
     .from(challenges)
-    .where(and(isNull(challenges.deletedAt), eq(challenges.status, "finished")))
+    .where(
+      and(
+        isNull(challenges.deletedAt),
+        eq(challenges.isVisible, true),
+        eq(challenges.status, "finished")
+      )
+    )
     .orderBy(desc(challenges.updatedAt))
     .limit(1);
 
@@ -149,9 +202,13 @@ export default async function HomePage() {
       height: artworkVersions.height,
       createdAt: artworks.createdAt,
       challengeSubmissionId: challengeSubmissions.id,
+      challengeId: challenges.id,
       challengeTitle: challenges.title,
       challengeSlug: challenges.slug,
-      effectiveCaption: sql<string | null>`COALESCE(${portfolioEntries.customCaption}, ${portfolioEntries.systemCaption})`,
+      challengeIsVisible: challenges.isVisible,
+      challengeDeletedAt: challenges.deletedAt,
+      systemCaption: portfolioEntries.systemCaption,
+      customCaption: portfolioEntries.customCaption,
     })
     .from(artworks)
     .innerJoin(profiles, eq(profiles.userId, artworks.userId))
@@ -214,11 +271,11 @@ export default async function HomePage() {
             <h1 className="font-display text-3xl sm:text-4xl lg:text-5xl font-extrabold text-[#f6f2e9] tracking-tight leading-[1.15]">
               Ruang Berkarya & <br className="hidden sm:inline" />
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-amber-200 to-amber-500">
-                Kolektif Kreator Seni Visual.
+                Komunitas & Studio Seni Visual.
               </span>
             </h1>
             <p className="text-xs sm:text-sm text-zinc-400 font-sans leading-relaxed">
-              Atelier digital khusus kreator seni visual. Temukan portofolio terkurasi, ikuti tantangan karya dengan alokasi Star yang adil, dan akses layanan komisi kreator.
+              Atelier digital khusus kreator seni visual. Temukan portofolio anggota, ikuti challenge berkala dengan alokasi Star yang adil, dan akses layanan komisi kreator.
             </p>
           </div>
 
@@ -270,11 +327,11 @@ export default async function HomePage() {
               {activeChallenge.description}
             </p>
 
-            {activeChallenge.submissionDeadline ? (
+            {activeDeadline ? (
               <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 pt-1">
                 <Clock className="h-3.5 w-3.5 text-amber-400" />
                 <span>
-                  Batas Waktu:{" "}
+                  {activeDeadlineLabel}:{" "}
                   {new Intl.DateTimeFormat("id-ID", {
                     timeZone: "Asia/Makassar",
                     day: "numeric",
@@ -282,7 +339,7 @@ export default async function HomePage() {
                     year: "numeric",
                     hour: "2-digit",
                     minute: "2-digit",
-                  }).format(new Date(activeChallenge.submissionDeadline))}{" "}
+                  }).format(new Date(activeDeadline))}{" "}
                   WITA
                 </span>
               </div>
@@ -387,36 +444,43 @@ export default async function HomePage() {
 
         {recentArtworks.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {recentArtworks.map((item) => (
-              <ArtworkCard
-                key={item.id}
-                artwork={{
-                  id: item.id,
-                  title: item.title,
-                  slug: item.slug,
-                  description: item.description,
-                  mediaType: item.mediaType as any,
-                  audience: item.audience as any,
-                  isSpoiler: item.isSpoiler,
-                  critiqueMode: item.critiqueMode as any,
-                  publicStorageKey: item.publicStorageKey,
-                  thumbnailStorageKey: item.thumbnailStorageKey,
-                  masterStorageKey: null,
-                  width: item.width,
-                  height: item.height,
-                  createdAt: item.createdAt.toISOString(),
-                  artistName: item.artistName,
-                  artistSlug: item.artistSlug,
-                  artistAvatar: item.artistAvatar,
-                  artistCommissionStatus: (item.artistCommissionStatus as any) || "closed",
-                  challengeSubmissionId: item.challengeSubmissionId,
-                  challengeTitle: item.challengeTitle,
-                  challengeSlug: item.challengeSlug,
-                  effectiveCaption: item.effectiveCaption,
-                  origin: item.challengeSubmissionId ? "challenge" : "independent",
-                }}
-              />
-            ))}
+            {recentArtworks.map((item) => {
+              const projected = projectPublicArtworkProvenance(item, { isActiveStaff });
+              return (
+                <ArtworkCard
+                  key={item.id}
+                  from="/"
+                  artwork={{
+                    id: item.id,
+                    title: item.title,
+                    slug: item.slug,
+                    description: item.description,
+                    mediaType: item.mediaType as any,
+                    audience: item.audience as any,
+                    isSpoiler: item.isSpoiler,
+                    critiqueMode: item.critiqueMode as any,
+                    publicStorageKey: item.publicStorageKey,
+                    thumbnailStorageKey: item.thumbnailStorageKey,
+                    masterStorageKey: null,
+                    width: item.width,
+                    height: item.height,
+                    createdAt: item.createdAt.toISOString(),
+                    artistName: item.artistName,
+                    artistSlug: item.artistSlug,
+                    artistAvatar: item.artistAvatar,
+                    artistCommissionStatus: (item.artistCommissionStatus as any) || "closed",
+                    challengeSubmissionId: item.challengeSubmissionId,
+                    challengeId: projected.challengeId,
+                    challengeTitle: projected.challengeTitle,
+                    challengeSlug: projected.challengeSlug,
+                    systemCaption: projected.systemCaption,
+                    customCaption: projected.customCaption,
+                    effectiveCaption: projected.effectiveCaption,
+                    origin: projected.origin,
+                  }}
+                />
+              );
+            })}
           </div>
         ) : (
           <div className="glass-panel p-8 rounded-2xl text-center text-zinc-500 text-sm font-sans">

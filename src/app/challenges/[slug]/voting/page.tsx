@@ -147,6 +147,8 @@ export default async function ChallengeVotingPage({ params }: VotingPageProps) {
             challengeSlug={challenge.slug}
             votingRoundId={currentRound?.id}
             roundType={currentRound?.roundType as any}
+            roundDeadline={currentRound?.deadline}
+            userId={session?.user?.id}
             candidates={votingData.candidates}
             initialAllocations={initialAllocations}
             maxStars={votingData.userBallot.maxStars}

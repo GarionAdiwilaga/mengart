@@ -11,12 +11,16 @@ import type { ArtworkListItem } from "@/hooks/useArtworks";
 interface ArtworkCardProps {
   artwork: ArtworkListItem;
   currentUserRole?: string;
+  from?: string;
 }
 
-export function ArtworkCard({ artwork, currentUserRole }: ArtworkCardProps) {
+export function ArtworkCard({ artwork, currentUserRole, from }: ArtworkCardProps) {
   const [isRevealed, setIsRevealed] = useState(false);
   const isVideo = artwork.mediaType === "video";
   const isObscured = Boolean(artwork.isSpoiler && !isRevealed);
+  const artworkHref = from
+    ? `/artworks/${artwork.slug}?from=${encodeURIComponent(from)}`
+    : `/artworks/${artwork.slug}`;
 
   return (
     <motion.div
@@ -27,7 +31,7 @@ export function ArtworkCard({ artwork, currentUserRole }: ArtworkCardProps) {
     >
       {/* Media Container with 4:3 Aspect Frame */}
       <Link
-        href={`/artworks/${artwork.slug}`}
+        href={artworkHref}
         className="relative aspect-[4/3] bg-black/40 overflow-hidden block"
       >
         {artwork.thumbnailStorageKey ? (
@@ -130,7 +134,7 @@ export function ArtworkCard({ artwork, currentUserRole }: ArtworkCardProps) {
           )}
 
           <Link
-            href={`/artworks/${artwork.slug}`}
+            href={artworkHref}
             className="font-display font-bold text-base text-[#f6f2e9] hover:text-amber-300 transition-colors line-clamp-1"
           >
             {artwork.title}

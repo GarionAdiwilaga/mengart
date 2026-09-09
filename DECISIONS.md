@@ -743,7 +743,35 @@ Implemented the full lifecycle phase matrix in `disqualifyChallengeCandidateServ
 3. Reworked Beranda layout to be activity-first (Compact Header $\rightarrow$ Current Challenge in 1st mobile viewport $\rightarrow$ Past Winners $\rightarrow$ General Artworks $\rightarrow$ Spotlight $\rightarrow$ Commissions $\rightarrow$ About) and adopted natural neutral vocabulary ("Lihat karya", "Beri Star", "Komunitas seni visual", strictly "Komentar").
 4. Enforced $\ge 44 \times 44$px in both dimensions on all buttons, tabs, and steppers, with `overflow-x: hidden` clamped to `100vw`.
 **Business Rule:** External redirect manipulation is blocked. Primary interactive controls must meet WCAG 2.2 Level AA touch target requirements ($\ge 44 \times 44$px).
-**Reason:** Closes P2 findings R08, R09, R10, and R12, ensuring navigation continuity, touch accessibility, and mobile viewport ergonomics.
+### Voting Lifecycle, Generation Tracking & Uncertainty Barriers (R02, R03, R12)
+**Decision:** Implemented explicit generation tracking (`currentGen = "${userId || 'anon'}:${votingRoundId}"`) in `VotingWorkspace.tsx`. Switching accounts or voting rounds immediately invalidates queued mutations, clears in-flight counters, and resets state to the incoming target round. Added an uncertainty lock barrier on network/500/timeout errors that halts subsequent mutations until authoritative state is verified. Server-side refreshes received while the queue is busy are buffered and reconciled after the queue drains, preventing older refreshed snapshots from clobbering newer acknowledged mutations. Rebuilt the 320px mobile candidate card stepper into a 2-row layout (Row 1: centered Star rating; Row 2: two-column grid with $\ge 50\times 44$px touch targets), dismiss buttons with 44px tap targets, and stopped keyboard event propagation on spoiler toggle buttons.
+**Business Rule:** Voting mutations must never execute across account/round generations; uncertain network mutations block write pipelines until reconciled; mobile steppers must never clip or violate $44\times 44$px touch bounds.
+**Reason:** Resolves Round 2 QA findings on queue lifecycle, optimistic race conditions, and 320px layout clipping.
+
+### Moderation State-Transition Rules, Pending Rounds & Staff Triggers (R05)
+**Decision:** Enhanced `disqualifyChallengeCandidateService` to:
+1. Include pending rounds (`inArray(challengeVotingRounds.status, ["open", "pending"])`) and strictly revalidate round status after acquiring monotonic locks ($1 \rightarrow 2 \rightarrow 3 \rightarrow 4$).
+2. Automatically remove disqualified candidates from `challengeVotingRoundCandidates` when in `submission_locked` phase with a pending round.
+3. Automatically resolve ties in `tiebreak_open` and `tie_pending` by deriving remaining eligible candidates from the original tied set; when 1 candidate remains, crown them `community_vote_winner` and advance challenge to `finished` or `jury_selection_open`.
+4. Capture audit snapshots (`jury_award.revoked_by_disqualification` / `challenge_result.revoked_by_disqualification`) when awards or results are revoked.
+5. Added `CandidateStaffDisqualifyButton.tsx` and wired direct staff moderation triggers on candidate cards in both active and archive challenge views.
+**Business Rule:** Disqualifications must never mutate closed rounds, must purge pending round eligibility before voting opens, and must automatically resolve single remaining tied candidates without human deadlock.
+**Reason:** Resolves Round 2 QA findings regarding race conditions between round finalization and candidate disqualification.
+
+### Shared Public Artwork Provenance & Beranda Protection (R07)
+**Decision:** Created centralized presentation helper `src/lib/presentation/provenance.ts` (`projectPublicArtworkProvenance`, `sanitizeSystemCaption`) shared across `/api/artworks` and Beranda (`src/app/page.tsx`). System captions that reference private/unlisted challenge titles are replaced with safe neutral text ("Peserta Challenge", "Juara Favorit Komunitas", "Penghargaan Juri: [Category]") while strictly preserving artist `customCaption` and `origin: "challenge"`. Filtered Beranda active challenge and Hall of Fame queries with `eq(challenges.isVisible, true)`.
+**Business Rule:** Non-staff public views must never leak hidden challenge titles via system captions or homepage queries, while preserving true challenge origin.
+**Reason:** Resolves Round 2 QA finding on provenance leakage and caption sanitization.
+
+### Draft Storage Invalidation & Deadline Enforcement (R04)
+**Decision:** Hardened `draftStorage.ts` by wrapping `window.localStorage` in a safe accessor that catches all browser `SecurityError` exceptions (e.g. sandboxed iframes, private browsing with storage disabled). In `ChallengeSubmissionModal.tsx`, added `submissionDeadline` check that immediately discards and ignores local drafts if the submission deadline has passed, and cancelled pending autosave timers on modal unmount, discard, and user switch.
+**Business Rule:** Draft submissions must never restore after a challenge deadline has passed, and localStorage access must never throw uncaught exceptions.
+**Reason:** Eliminates draft restoration after submission deadline and sandbox storage crashes.
+
+### Navigation Return Context Propagation (R09)
+**Decision:** Wired `from` parameter propagation across all caller components: `ArtworkCard.tsx` accepts `from?: string` and formats links with `?from=${encodeURIComponent(from)}`; `GalleryGrid.tsx` passes `currentPathWithQuery` to preserve tab/search state; `src/app/artists/[slug]/page.tsx` passes `/artists/${artist.slug}`; and `src/app/challenges/[slug]/page.tsx` passes `/challenges/${challenge.slug}`. `FocusedTaskShell` uses `getSafeReturnUrl(from, "/gallery")` with contextual labels ("Galeri", "Beranda", "Profil", "Challenge").
+**Business Rule:** Users returning from artwork detail pages must be guided back to their exact referring context without losing filter/search state.
+**Reason:** Closes the caller return journey and completes R09 acceptance criteria.
 
 
 
