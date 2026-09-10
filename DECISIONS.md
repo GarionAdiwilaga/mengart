@@ -773,6 +773,110 @@ Implemented the full lifecycle phase matrix in `disqualifyChallengeCandidateServ
 **Business Rule:** Users returning from artwork detail pages must be guided back to their exact referring context without losing filter/search state.
 **Reason:** Closes the caller return journey and completes R09 acceptance criteria.
 
+## 2026-09-10
+
+### Open Redirect Normalization & Same-Origin Sink Assertion (Finding 1 / R09)
+**Decision:** Removed URL character allowlists that rejected valid query characters (such as `+` used by `URLSearchParams` for spaces). Enforced normalized-path validation (`url.pathname.replace(/\/+/g, "/")`) to prevent dot-segment protocol-relative bypasses (`//`, `/\\`, `/gallery/..//example.invalid`, `/a/%2e%2e//example.invalid`), and asserted same-origin target at the `redeem-callback` redirect sink (`createSafeRedirectUrl`).
+**Business Rule:** Relative return URLs must preserve legitimate query parameters (including spaces encoded as `+` or `%20` and UTF-8 characters) while preventing protocol-relative and dot-segment external redirects.
+**Reason:** Resolves Round 3 QA Finding 1 without breaking valid query search filters.
+
+### Voting Recovery, Uncertainty Settle & Monotonic Sequence (Finding 2 / R02)
+**Decision:** When mutation execution encounters network uncertainty (timeout/500/network error), pending counts immediately settle to zero, the latest unacknowledged voting intent is stored in `failedIntentRef`, and subsequent mutations are halted until authoritative state is reconciled via `handleReconcile`. Explicit replay action ("Coba simpan ulang") is revealed only AFTER reconciliation settles. Guarded `handleReconcile` across success, error, and finally paths with generation and unmount checks. Introduced monotonic sequence counters (`seqRef`, `latestConfirmedSeqRef`) to eliminate in-epoch race conditions from out-of-order network responses.
+**Business Rule:** Pending voting states must never dangle under network uncertainty; user retry requires authoritative reconciliation first; older responses in an epoch cannot overwrite newer confirmed mutations.
+**Reason:** Resolves Round 3 QA Finding 2 and completes the voting recovery contract.
+
+### Disqualification Phase Matrix, Authentic Scores & Jury Rollback (Finding 3 / R05)
+**Decision:** Updated `disqualifyChallengeCandidateService` to look up authentic winner Stars and `sourceVotingRoundId` using phase-specific authoritative closed rounds (checking tiebreak first, then main round) with inner joins to `challengeBallots`. Enforced row-level locked submission eligibility checks (`submissionStatus === 'submitted'`) during tiebreak and manual resolutions. Required `validateJuryPhaseReadinessService` before transitioning to `jury_selection_open` in `vote_and_jury` challenges, rolling back the transaction if zero jurors are configured.
+**Business Rule:** Candidate disqualification must never attribute fabricated scores or round IDs; remaining tied candidates must be currently eligible under lock; unready jury panels must abort transition and roll back state changes.
+**Reason:** Resolves Round 3 QA Finding 3.
+
+### Authoritative Structured Artwork Provenance & Safe Fallback (Finding 4 / R07)
+**Decision:** Removed caption string regex parsing and hyphen splitting heuristics. Populated authoritative structured metadata (`awardType`, `categoryLabel`) via scalar subqueries in `/api/artworks` and Beranda (`page.tsx`). Implemented `buildAuthoritativeSystemCaption` using structured fields with a safe neutral fallback ("Peserta Challenge") for legacy records or unlisted challenges, completely avoiding category label truncation.
+**Business Rule:** Public artwork provenance and system captions must be derived from structured award metadata, not parsed from text strings; private challenges must be redacted without truncating valid categories.
+**Reason:** Resolves Round 3 QA Finding 4.
+
+### Draft Lifecycle, Epoch Invalidation & Logout Scoping (Finding 5 / R04)
+**Decision:** Added explicit invalidation timestamps (`markDraftInvalidated`, `isDraftInvalidated`, `markGlobalDraftInvalidated`) in `draftStorage.ts` to prevent race conditions during debounce autosaves and invalidate drafts even before storage keys exist. Enforced draft cleanup across all logout paths (`UserDropdown`, `account-suspended`, `onboarding`). Scoped cleanup strictly to the departing user's keys to preserve drafts during modal dismiss or submission failures. Added cross-tab `storage` event listeners and deadline re-checks.
+**Business Rule:** Submission drafts must never survive user logout or account switches, and debounce autosaves must never resurrect invalidated drafts.
+**Reason:** Resolves Round 3 QA Finding 5.
+
+### Gallery Context URL Synchronization & Focus Restoration (Finding 6 / R09)
+**Decision:** Synchronized all gallery filter states (`tab`, `search`, `media`, `sort`, `critique`) to URL search parameters using non-scrolling router replacement (`router.replace(..., { scroll: false })`). Hydrated store state on mount and on browser Back/Forward (`popstate`). Stored composite context `{ url, artworkId, scrollY, timestamp }` in `sessionStorage` on card navigation, restored scroll position after artworks render, and focused the referring card element with `{ preventScroll: true }`.
+**Business Rule:** Navigating to an artwork and returning via browser Back or breadcrumb must restore exact filter state, scroll position, and keyboard focus without jarring page jumps.
+**Reason:** Resolves Round 3 QA Finding 6.
+
+### Authentic Verification Gate & Environment Transparency (Finding 7 / R11)
+**Decision:** Hardened `testPhase2SecurityAndContracts.ts` to verify exported Server Actions (`importHistoricalChallengeAction`) against live database caller sessions across anonymous, member, suspended, deleted, and demoted roles with 0 uncommitted writes on failure and verified positive writes on success. Replaced mocked concurrency tests with real multi-transaction PostgreSQL tests. Transparently documented WebKit host OS library limitation (`libavif16` missing on Linux host) while maintaining 100% pass rate across Desktop Chrome and Mobile Chrome (50 passed). Maintained PR in DRAFT.
+**Business Rule:** Verification gates must test exported boundaries with real database transactions and report platform capabilities honestly without synthetic substitution.
+**Reason:** Resolves Round 3 QA Finding 7 and aligns with strict verification-before-completion standards.
+
+### Generational Draft Storage Contract & Reentrant Synchronization (F1 / R04)
+**Decision:** Upgraded draft storage to monotonic integer generation counters (`mengart:draft-generation:${userId}:${challengeId}`) with cross-tab reentrant locking (`withDraftLock`). Draft invalidation never deletes the generation marker key; instead, it monotonically increments it, rendering delayed autosaves and wall-clock rollbacks mathematically impossible to resurrect stale drafts. Eliminated unscoped mass draft purging on logout, preserving unaffected users' drafts on shared computers.
+**Business Rule:** Draft invalidation markers must be monotonic, persistent, and strictly scoped by `userId` and `challengeId`. Logout operations must never delete drafts of other users or unrelated challenges.
+**Reason:** Resolves Round 4 QA Finding 1 (P1/R04).
+
+### Decoupled Voting Intent Recovery & Monotonic Sequence Ordering (F2 / R02)
+**Decision:** Decoupled the unacknowledged voting intent banner and explicit retry button ("Coba simpan ulang") from error banner states in `VotingWorkspace.tsx`. When reconciliation succeeds and server state settles, the unsaved intent recovery banner remains visible and operable if `hasUnsavedIntent` is true and `isUncertain` is cleared. Assigned monotonic sequence identifiers (`reconcileSeq`) to reconciliation cycles to discard delayed out-of-order server responses that arrive after newer confirmed mutations. Bound `isUncertainRef` and reset reconciliation states upon account or generation switches.
+**Business Rule:** Unsaved voting intents blocked by network uncertainty must remain recoverable through explicit user action even after server state settles. Stale delayed reconciliation reads must never overwrite newer user mutations.
+**Reason:** Resolves Round 4 QA Finding 2 (P1/R02).
+
+### Zero-Seam Production Authorization Architecture (F3 / R01 & R11)
+**Decision:** Completely eliminated global test authorization seams (`__testSessionUserOverride` and `__setTestSessionUser`) from production RBAC (`src/lib/rbac.ts`). Exported Server Actions (`importHistoricalChallengeAction`) enforce native `auth()` request-boundary authentication, gracefully falling back to unauthenticated rejection when invoked outside request contexts. Domain services verify actor privileges directly against live PostgreSQL rows with row-level role and membership status assertions.
+**Business Rule:** Production authorization modules must contain zero global test overrides or mock seams. Server Action request boundaries and service-layer database constraints must be independently and authentically validated.
+**Reason:** Resolves Round 4 QA Finding 3 (P1/R01 & R11).
+
+### Tiebreak Resolution Portfolio Auto-Materialization (F4 / R05)
+**Decision:** Updated `disqualifyChallengeCandidateService` in `src/lib/services/challengeService.ts` to invoke `autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id)` on all state transitions advancing to `finished` (including single-survivor tiebreak resolution and 0-survivor terminations). Crowned winners immediately receive materialized `portfolio_entries` rows with deterministic system captions.
+**Business Rule:** Every challenge transitioning to `finished` status must execute portfolio auto-materialization within the same database transaction.
+**Reason:** Resolves Round 4 QA Finding 4 (P2/R05).
+
+### Canonical Query Gallery Restoration & Target Verification (F5 / R09)
+**Decision:** Hardened `GalleryGrid.tsx` context restoration: canonical query string comparison (`isMatchingGalleryUrl`) rejects pathname-only matches, a 15-minute expiration timestamp protects against stale context, and target element existence (`document.getElementById`) is verified prior to consuming context and scrolling/focusing with `{ preventScroll: true }`.
+**Business Rule:** Gallery navigation state must only restore when the exact canonical query matches, within valid time windows, and when the referring DOM card exists.
+**Reason:** Resolves Round 4 QA Finding 5 (P2/R09).
+
+### Targeted Regression Suite & Comprehensive Verification Gate (F6 / R11)
+**Decision:** Created dedicated regression test suites (`testDraftStorageGenerations.ts` for generational contracts and `testTiebreakPortfolioMaterialization.ts` for database portfolio materialization), integrated both into `npm run test:all`, and verified 100% pass across 22 backend suites (0 failures), 0 ESLint errors/warnings, 0 TypeScript errors, clean Next.js Turbopack build, and 50/50 Playwright E2E tests passing. Maintained transparent disclosure of Linux host OS `libavif16` WebKit limitation.
+**Business Rule:** Verification claims must be backed by authentic command executions, zero mock bypasses, and explicit reproduction suites for all reported defects.
+**Reason:** Resolves Round 4 QA Finding 6 (P2/R11).
+
+### Actual Logout Invalidation, Autosave Cancellation & Identity Transition (G1 / R04)
+**Decision:** Wired `invalidateActiveDraftOnLogout(departingUserId)` directly into production sign-out entry points (`UserDropdown.tsx` and `SignOutButton.tsx`) before invoking `signOut` or `logoutAction()`. The modal registers active draft context (`setActiveDraftContext(userId, challengeId)`) and registers in-flight autosave timer IDs (`registerPendingDraftAutosave`). On logout or transition from authenticated to anonymous (`prevUserIdRef.current && prevUserIdRef.current !== userId`), the active challenge draft is purged, pending autosave timers are cancelled, and the generation counter is monotonically incremented, while preserving all unrelated drafts of other challenges or other users on shared devices without mass/global purging.
+**Business Rule:** Actual sign-out and authenticated-to-anonymous transitions must invalidate the active submission draft, abort in-flight autosaves, and advance the generation marker while strictly isolating other drafts.
+**Reason:** Resolves Round 5 QA Finding G1 (P1 / R04).
+
+### Lock Contention Guard, Atomic Interleaving & Web Locks API Serialization (G2 / R04)
+**Decision:** Hardened `withDraftLock`: When storage lock acquisition fails, it immediately returns `null` and strictly DOES NOT execute the critical section. Upgraded `withDraftLockAsync` to leverage `navigator.locks.request` (Web Locks API) with automatic fallback to localStorage mutex locking. In `_internalIncrementDraftGeneration`, re-reads the live storage generation marker immediately before write and calculates `Math.max(readGen + 1, validLatest + 1)`, guaranteeing monotonic advances ($1 \rightarrow 3$) even under interleaved concurrent writes.
+**Business Rule:** Critical sections requiring draft lock must never execute if lock acquisition fails; storage interleaving must never suffer lost updates; asynchronous operations must utilize Web Locks API where supported.
+**Reason:** Resolves Round 5 QA Finding G2 (P1 / R04).
+
+### Authoritative Render-Time Query Filter Derivation & Gallery Context Protection (G3 / R09)
+**Decision:** In `GalleryGrid.tsx`, derived query filters (`authoritativeTab`, `urlSearch`, `authoritativeMedia`, `authoritativeSort`, `authoritativeCritique`) authoritatively from `searchParams` directly during render, passing them immediately to `useArtworksQuery`. This guarantees that the React Query key includes `tab: "challenge"` on the very first render, eliminating the race condition with cached `bebas` data. In the context restoration `useEffect`, verified `authoritativeTab === targetTab` and `!isLoading && !isFetching` before inspecting DOM card presence, preventing default-filter cached queries from prematurely consuming or discarding the return context. Bound all UI controls (SegmentedPill, filter chips, empty states) directly to authoritative filter values.
+**Business Rule:** Data fetching queries and context restoration logic must derive filter identity authoritatively from URL `searchParams` on render, never lagging behind client store hydration.
+**Reason:** Resolves Round 5 QA Finding G3 (P2 / R09).
+
+### Zero-Seam Authenticated Request Testing & Monotonic PostgreSQL Concurrency Verification (G4 / R11)
+**Decision:** Replaced mocked server action tests with genuine authenticated exported Server Action tests in `testPhase2SecurityAndContracts.ts` (Scenario 6) by bundling `historicalBackfill.ts` via test-level `esbuild` stubbing `@/auth` without adding mock seams or global test overrides to production code. Proved that unauthenticated callers and payload injections are rejected with zero DB writes, member/suspended/deleted staff are rejected by live PostgreSQL constraints, and active staff are accepted with live DB insertion and audit logging. Enhanced PostgreSQL concurrency test (Subscenario 7E) to fixture an active challenge with an open voting round, 4 candidates, cast ballot stars, and 2 concurrent candidate disqualifications under monotonic row locks (`challengeVotingRounds` $\rightarrow$ `challenges` $\rightarrow$ `challengeSubmissions` $\rightarrow$ `challengeBallots`), confirming candidate snapshot deletion, star voiding, and audit log commits. Accurately documented all 22 test suites in `npm run test:all` and transparently disclosed Linux host OS `libavif.so.16` WebKit limitation while maintaining 50/50 passing on Chrome.
+**Business Rule:** Testing must verify exported server action boundaries with authentic session contexts without production test hooks; PostgreSQL concurrency tests must reflect live voting rounds and ballot locks; test counts and platform limitations must be documented with absolute precision.
+**Reason:** Resolves Round 5 QA Finding G4 (P2 / R11).
+
+### Dual-Layer Cross-Tab Web Lock Coordination & Fail-Closed Contention Policies (Finding H1 / R04)
+**Decision:** Unified `withDraftLockAsync` to enforce a dual-layer lock: process-level coordination across tabs via `navigator.locks.request` (Web Locks API) that simultaneously acquires the underlying `localStorage` mutex key `mengart:draft-lock:${userId}:${challengeId}` throughout the critical section. Eliminated unlocked fallback mutations in `incrementDraftGeneration` and `incrementDraftGenerationAsync`, ensuring both fail-closed and return `null` without mutating storage under lock contention. Hardened `invalidateActiveDraftOnLogout` so that if lock acquisition fails during logout, active draft context in `sessionStorage` is preserved (not silently discarded) and the operation returns `false` to prompt retry.
+**Business Rule:** Draft operations across tabs must coordinate through Web Locks with synchronized storage-level mutexes. Lock contention must fail closed without rogue mutations, and logout draft invalidation failures must not discard active context.
+**Reason:** Resolves Round 6 QA Finding H1 (P1 / R04).
+
+### Form Text Retention, Identity Decoupling & Immediate Draft Flush on Close (Finding H2 / R04)
+**Decision:** In `ChallengeSubmissionModal.tsx`, decoupled dialog open/close state (`isOpen`) from the identity reset effect. Scoped the form reset effect strictly to actual identity and initial property changes (`[userId, challengeId, initialTitle, ...]`). Tracked latest form state in `latestValuesRef` and implemented `flushPendingDraft()`, which triggers immediately when the modal is closed (via ESC, backdrop click, Close 'X', or 'Batal' button) or unmounted. This immediately commits in-flight edits to `localStorage` before debounce timers expire, preventing text loss. Re-opening the modal retains active in-memory form values, while explicit discard or successful submission cleanly clears storage and resets fields.
+**Business Rule:** Closing an active submission modal without discarding must never discard user text, and debounced drafts must flush synchronously to persistent storage upon modal close or unmount.
+**Reason:** Resolves Round 6 QA Finding H2 (P2 / R04).
+
+### Exported Action Integration Labeling & Committed Ballot Invariant Assertions (Finding H3 / R11)
+**Decision:** Accurately re-labeled Scenario 6 in `testPhase2SecurityAndContracts.ts` as an exported server action integration test with mocked session resolution and live PostgreSQL service verification, honestly distinguishing it from full HTTP session authentication. In Subscenario 7E (PostgreSQL concurrency), added strict assertions for final committed ballot state: verifying `finalBallot1.starsAllocated === 0`, zero remaining rows in `challengeBallotStars` for the voter's ballot, and 2 committed `star_returned` notifications. Maintained transparent reporting of the exact 22 backend test suites and host OS WebKit limitation. Kept PR in DRAFT.
+**Business Rule:** Test suite descriptions must reflect their exact execution boundary and mocking level; PostgreSQL concurrency tests must assert committed balances and notification delivery; PR remains in DRAFT until all rounds pass.
+**Reason:** Resolves Round 6 QA Finding H3 (P2 / R11).
+
+
+
 
 
 

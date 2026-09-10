@@ -1,31 +1,48 @@
 # Handoff Context — Frontend UI/UX Overhaul (Blueprint v0.3)
 
-**Date:** 2026-09-09  
-**Current State:** Frontend UI/UX Overhaul (Blueprint v0.3) and all QA Audit Remediation items (R01–R12 + Round 2 QA Amendments 1–6) are 100% complete, deadlock-free, and verified with authentic automated tests.  
+**Date:** 2026-09-10  
+**Current State:** Frontend UI/UX Overhaul (Blueprint v0.3) and Round 6 QA Remediation items (Findings H1–H3) are 100% complete, verified with authentic automated tests, zero lint warnings, and zero type errors.  
 **Overall Status:** **100% COMPLETE & VERIFIED — PR MAINTAINED IN DRAFT**
 
 ---
 
-## 1. Completed Remediation Highlights (R01–R12 & Round 2 QA Amendments)
-- **R01 (P0 Auth Boundary):** `importHistoricalChallengeAction` takes zero actor overrides; internal service `historicalBackfillService.ts` queries live PostgreSQL DB (`users` table). Tested exported action boundary and internal service against anonymous, member, suspended, deleted, demoted callers and payload injection in `testPhase2SecurityAndContracts.ts` Scenario 6 with zero DB writes on failure.
-- **R02/R03/R12 (P1 Voting Queue, Lifecycle & Steppers):** `VotingWorkspace.tsx` uses FIFO promise queue with `.catch()` barrier, account/round generation tracking (`currentGen`), uncertainty lock on 500/timeout, and buffered server refreshes while busy. Multi-star steppers (`-` / `+`) enable stacking when `starsPerMember > 1`. 320px candidate card steppers rebuilt in 2-row layout with $\ge 50\times 44$px touch targets and zero clipping.
-- **R04 (P1 Scoped Draft Storage & Deadline Check):** `draftStorage.ts` isolates keys under `mengart_sub_draft:v1:${userId}:${challengeId}` with safe `getLocalStorage()` catching browser `SecurityError` exceptions. In `ChallengeSubmissionModal.tsx`, `submissionDeadline` check discards stale drafts if deadline passed; autosave timers cancelled on unmount, discard, and user switch.
-- **R05 (P1 Monotonic Disqualification Matrix & Staff Triggers):** Monotonic row-locking order ($1 \rightarrow 2 \rightarrow 3 \rightarrow 4$) across all mutations eliminates deadlocks. `disqualifyChallengeCandidateService` revalidates round status after locking, removes candidates from pending rounds in `submission_locked`, derives remaining tied candidates from original tied set in `tiebreak_open` / `tie_pending` (auto-crowning winner when 1 remains), and records audit snapshots for revoked awards/results. Created `CandidateStaffDisqualifyButton.tsx` on active and archive candidate cards.
-- **R06 (P1 AccessibleDialog Bounds):** `AccessibleDialog.tsx` merges `className` via `cn(...)` and clamps height to `max-h-[min(90vh,calc(100dvh-2rem))] overflow-y-auto`. Reachable at 375×667 and 320px without obstruction.
-- **R07 (P1 Safe Provenance Origin & Neutral Captions):** Created `src/lib/presentation/provenance.ts` (`projectPublicArtworkProvenance`) shared across `/api/artworks` and Beranda (`src/app/page.tsx`). System captions referencing hidden challenges replaced with safe neutral text ("Peserta Challenge", "Juara Favorit Komunitas", "Penghargaan Juri"). Artist `customCaption` and `origin: "challenge"` preserved. Homepage filtered by `isVisible`.
-- **R08 (P2 Synchronous Spoiler Reset):** `ArtworkMediaFrame` resets spoiler concealment synchronously on artwork identity change before render, pauses and resets video playback, and stops keyboard event bubbling on spoiler toggle.
-- **R09 (P2 Return URL Validator & Context Continuity):** Shared validator `getSafeReturnUrl` in `returnUrl.ts` with `hasControlChars` rejecting control characters, backslashes, protocol-relative attacks (`//`, `/\`), external schemes, and redirect loops. `from` query propagated across `ArtworkCard`, `GalleryGrid`, `artists/[slug]`, and `challenges/[slug]`.
-- **R10 (P2 Activity-First Beranda):** Beranda hierarchy highlights active challenge in 1st mobile viewport. Neutral Atelier copy ("Lihat karya", "Beri Star", "Komunitas seni visual", strictly "Komentar").
-- **R11 (P2 Authentic Testing Gate):** Action boundary negative tests on disposable DB fixtures. 20/20 backend test suites passed (100%). Playwright Desktop Chrome & Mobile Chrome 50/50 tests passed (100%). Transparent documentation of WebKit runner dependency (`libavif16`).
-- **R12 (P2 Touch Targets & Viewport Clamping):** Minimum $\ge 44 \times 44$px on all buttons, tabs, and steppers. `max-width: 100vw; overflow-x: hidden;` in `globals.css` eliminates horizontal scrolling on narrow viewports (320px).
+## 1. Completed Remediation Highlights (Round 6 QA Review H1–H3)
+- **Finding H1 (P1 / R04 - Dual-Layer Cross-Tab Lock Coordination & Fail-Closed Contention Policies):**
+  - Unified `withDraftLockAsync` in `draftStorage.ts` to coordinate across tabs via Web Locks API (`navigator.locks.request`) while simultaneously setting the localStorage mutex key `mengart:draft-lock:${userId}:${challengeId}` throughout the critical section. This guarantees mutual exclusion between Web Lock callers and non-Web-Lock / fallback storage callers.
+  - Converted all production draft operations in `ChallengeSubmissionModal.tsx` to async APIs (`saveSubmissionDraftAsync`, `loadSubmissionDraftAsync`, `clearSubmissionDraftAsync`).
+  - Removed unlocked fallback mutations in `incrementDraftGeneration` and `incrementDraftGenerationAsync`, ensuring both fail closed and return `null` without mutating storage when lock is contended.
+  - Made `clearSubmissionDraft` and `clearSubmissionDraftAsync` return `boolean` indicating lock acquisition success.
+  - Hardened `invalidateActiveDraftOnLogout` so that active draft context in `sessionStorage` is preserved (not silently wiped) if lock acquisition fails during logout, returning `false` to prompt retry.
+  - Verified in `testDraftStorageGenerations.ts` (Tests 13, 14, 15) and Playwright E2E Test 12.
+- **Finding H2 (P2 / R04 - Form Text Retention, Identity Decoupling & Immediate Draft Flush on Close):**
+  - Decoupled `isOpen` from the identity reset effect in `ChallengeSubmissionModal.tsx`, preventing premature form clearance upon modal close.
+  - Tracked latest form state in `latestValuesRef` and implemented `flushPendingDraft()`, which flushes in-flight text immediately to persistent storage when the modal is closed (via ESC, backdrop click, Close 'X', or 'Batal' button) or unmounted before debounce timers expire.
+  - Form retains in-memory text when reopening the modal without unmounting, and restores text from storage if unmounted.
+  - Preserved explicit draft discard and submission success resets via `clearSubmissionDraftAsync`.
+  - Verified in `ChallengeSubmissionModal.tsx` and Playwright E2E Test 11.
+- **Finding H3 (P2 / R11 - Exported Action Integration Labeling & Committed Ballot Invariant Assertions):**
+  - Accurately labeled Scenario 6 in `testPhase2SecurityAndContracts.ts` as an exported server action integration test with mocked session resolution and live PostgreSQL service verification, clearly distinguishing it from HTTP session authentication.
+  - Enhanced Subscenario 7E (PostgreSQL concurrency) to assert final committed ballot state: verifying `finalBallot1.starsAllocated === 0`, 0 remaining rows in `challengeBallotStars`, and 2 committed `star_returned` notifications.
+  - Maintained exact reporting of the 22 backend test suites and host OS WebKit limitation (`libavif16`).
+  - PR maintained in DRAFT.
 
 ---
 
 ## 2. Verification Gate Results
 - `npm run lint`: **0 errors, 0 warnings** (exit 0).
-- `npm run test:all`: **20/20 test suites passed** (100% pass, exit 0).
-- `npx playwright test` (Desktop Chrome & Mobile Chrome): **50/50 E2E tests passed** (100% pass, exit 0).
+- `npx tsc --noEmit`: **0 errors** (exit 0).
+- `npm run test:all`: **22/22 test suites passed** (100% pass, exit 0).
+- `npx playwright test --project="Desktop Chrome" --project="Mobile Chrome"`: **54/54 E2E tests passed** (100% pass, exit 0).
 - `npm run build`: **32/32 routes + worker bundle compiled cleanly** (Turbopack, exit 0).
-- Pull Request status: **Maintained in DRAFT per user instruction**.
+- WebKit Execution Status: **Documented as unverified due to host environment missing `libavif.so.16` library**; Desktop Chrome and Mobile Chrome 100% passing.
+- Pull Request status: **Maintained in DRAFT per user instruction awaiting final human review**.
+
+---
+
+## 3. QA Applicable Diff
+Full applicable patch diffs for the Round 6 remediation have been exported:
+- `qa-handoff-remediation-round6.patch` (full patch including binary assets)
+- `qa-handoff-code-only-round6.patch` (code-only patch excluding screenshots)
+
 
 

@@ -22,10 +22,15 @@ import { AtelierInput } from "@/components/ui/atoms/AtelierInput";
 import { AtelierTextarea } from "@/components/ui/atoms/AtelierTextarea";
 import { SubmissionRecoveryBanner } from "@/components/ui/molecules/SubmissionRecoveryBanner";
 import {
-  saveSubmissionDraft,
-  loadSubmissionDraft,
-  clearSubmissionDraft,
+  saveSubmissionDraftAsync,
+  loadSubmissionDraftAsync,
+  clearSubmissionDraftAsync,
+  getDraftGeneration,
   purgeLegacyDrafts,
+  setActiveDraftContext,
+  clearActiveDraftContext,
+  registerPendingDraftAutosave,
+  cancelPendingDraftAutosave,
 } from "@/lib/utils/draftStorage";
 
 interface ChallengeSubmissionModalProps {
@@ -66,9 +71,61 @@ export function ChallengeSubmissionModal({
   const [success, setSuccess] = useState(false);
 
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const isDraftActiveRef = useRef(true);
+  const isDraftActiveRef = useRef(false);
+  const prevUserIdRef = useRef<string | null>(userId ?? null);
+  const userIdRef = useRef(userId);
+  const isOpenRef = useRef(isOpen);
+  const activeGenerationRef = useRef<number>(1);
 
-  // Purge legacy unscoped drafts on mount
+  useEffect(() => {
+    userIdRef.current = userId;
+  }, [userId]);
+
+  useEffect(() => {
+    isOpenRef.current = isOpen;
+  }, [isOpen]);
+
+  const latestValuesRef = useRef({
+    title: initialTitle,
+    description: initialDescription,
+    softwareUsed: initialSoftware,
+    isSpoiler: initialSpoiler,
+  });
+
+  useEffect(() => {
+    latestValuesRef.current = { title, description, softwareUsed, isSpoiler };
+  }, [title, description, softwareUsed, isSpoiler]);
+
+  const flushPendingDraft = async () => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    const currentUid = userIdRef.current;
+    if (!currentUid || isRevision || !isDraftActiveRef.current) return;
+    if (submissionDeadline && new Date(submissionDeadline).getTime() <= Date.now()) return;
+
+    cancelPendingDraftAutosave(currentUid, challengeId);
+    const vals = latestValuesRef.current;
+    await saveSubmissionDraftAsync(
+      currentUid,
+      challengeId,
+      {
+        title: vals.title,
+        description: vals.description,
+        softwareUsed: vals.softwareUsed,
+        isSpoiler: vals.isSpoiler,
+      },
+      activeGenerationRef.current
+    );
+  };
+
+  const handleCloseModal = () => {
+    void flushPendingDraft();
+    setIsOpen(false);
+  };
+
+  // Purge legacy unscoped drafts on mount & flush on unmount
   useEffect(() => {
     purgeLegacyDrafts();
     return () => {
@@ -76,15 +133,49 @@ export function ChallengeSubmissionModal({
         clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = null;
       }
+      const currentUid = userIdRef.current;
+      if (isDraftActiveRef.current && currentUid && !isRevision) {
+        const vals = latestValuesRef.current;
+        const gen = activeGenerationRef.current;
+        void saveSubmissionDraftAsync(
+          currentUid,
+          challengeId,
+          {
+            title: vals.title,
+            description: vals.description,
+            softwareUsed: vals.softwareUsed,
+            isSpoiler: vals.isSpoiler,
+          },
+          gen
+        );
+      }
     };
-  }, []);
+  }, [challengeId, isRevision]);
 
-  // Handle identity change or form initialization
+  // Handle identity change or form initialization (decoupled from isOpen)
   useEffect(() => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
     }
+
+    // Account-switch / anonymous logout cleanup: purge stored drafts for old account on this specific challenge
+    if (prevUserIdRef.current && prevUserIdRef.current !== userId) {
+      void clearSubmissionDraftAsync(prevUserIdRef.current, challengeId);
+      if (!userId) {
+        clearActiveDraftContext();
+      }
+    }
+    prevUserIdRef.current = userId ?? null;
+    if (userId) {
+      activeGenerationRef.current = getDraftGeneration(userId, challengeId);
+      if (isOpenRef.current) {
+        setActiveDraftContext(userId, challengeId);
+      }
+    } else {
+      clearActiveDraftContext();
+    }
+
     isDraftActiveRef.current = false;
     setTitle(initialTitle);
     setDescription(initialDescription);
@@ -94,30 +185,75 @@ export function ChallengeSubmissionModal({
     setFile(null);
     setPreviewUrl(null);
     setError(null);
-  }, [userId, initialTitle, initialDescription, initialSoftware, initialSpoiler]);
+  }, [userId, challengeId, initialTitle, initialDescription, initialSoftware, initialSpoiler]);
 
   // Restore draft from localStorage on modal open if not a revision
   useEffect(() => {
     if (isOpen && !isRevision && userId) {
+      setActiveDraftContext(userId, challengeId);
+      activeGenerationRef.current = getDraftGeneration(userId, challengeId);
+
       // Validate deadline eligibility: if submission window expired, clear & do not restore
       if (submissionDeadline && new Date(submissionDeadline).getTime() <= Date.now()) {
-        clearSubmissionDraft(userId, challengeId);
+        void clearSubmissionDraftAsync(userId, challengeId);
+        clearActiveDraftContext();
         return;
       }
 
-      const savedDraft = loadSubmissionDraft(userId, challengeId);
-      if (savedDraft) {
-        if (savedDraft.title || savedDraft.description || savedDraft.softwareUsed) {
-          setTitle(savedDraft.title || "");
-          setDescription(savedDraft.description || "");
-          setSoftwareUsed(savedDraft.softwareUsed || "");
-          setIsSpoiler(Boolean(savedDraft.isSpoiler));
-          setIsRecovered(true);
-          isDraftActiveRef.current = true;
-        }
+      // If draft is already active in memory, keep in-memory state
+      if (isDraftActiveRef.current) {
+        return;
       }
+
+      let isCancelled = false;
+      void (async () => {
+        const savedDraft = await loadSubmissionDraftAsync(userId, challengeId);
+        if (isCancelled) return;
+        if (savedDraft) {
+          if (savedDraft.title || savedDraft.description || savedDraft.softwareUsed) {
+            setTitle(savedDraft.title || "");
+            setDescription(savedDraft.description || "");
+            setSoftwareUsed(savedDraft.softwareUsed || "");
+            setIsSpoiler(Boolean(savedDraft.isSpoiler));
+            setIsRecovered(true);
+            isDraftActiveRef.current = true;
+          }
+        }
+      })();
+
+      return () => {
+        isCancelled = true;
+      };
     }
   }, [isOpen, isRevision, userId, challengeId, submissionDeadline]);
+
+  // Cross-tab and same-tab invalidation listener
+  useEffect(() => {
+    const handleStorageOrInvalidation = () => {
+      if (!userId) return;
+      const currentGen = getDraftGeneration(userId, challengeId);
+      if (currentGen !== activeGenerationRef.current) {
+        if (saveTimeoutRef.current) {
+          clearTimeout(saveTimeoutRef.current);
+          saveTimeoutRef.current = null;
+        }
+        activeGenerationRef.current = currentGen;
+        isDraftActiveRef.current = false;
+        setTitle(initialTitle);
+        setDescription(initialDescription);
+        setSoftwareUsed(initialSoftware);
+        setIsSpoiler(initialSpoiler);
+        setIsRecovered(false);
+      }
+    };
+
+    window.addEventListener("storage", handleStorageOrInvalidation);
+    window.addEventListener("mengart_draft_invalidated", handleStorageOrInvalidation as EventListener);
+    return () => {
+      window.removeEventListener("storage", handleStorageOrInvalidation);
+      window.removeEventListener("mengart_draft_invalidated", handleStorageOrInvalidation as EventListener);
+    };
+  }, [userId, challengeId, initialTitle, initialDescription, initialSoftware, initialSpoiler]);
 
   const handleFieldChange = (
     field: "title" | "description" | "software" | "spoiler",
@@ -134,28 +270,55 @@ export function ChallengeSubmissionModal({
     if (field === "spoiler") setIsSpoiler(value);
 
     isDraftActiveRef.current = true;
+
     if (!isRevision && userId) {
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-      saveTimeoutRef.current = setTimeout(() => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        cancelPendingDraftAutosave(userId, challengeId);
+      }
+      const capturedUserId = userId;
+      const capturedChallengeId = challengeId;
+      const capturedGen = activeGenerationRef.current;
+
+      setActiveDraftContext(capturedUserId, capturedChallengeId);
+
+      const timer = setTimeout(async () => {
+        cancelPendingDraftAutosave(capturedUserId, capturedChallengeId);
         if (!isDraftActiveRef.current) return;
-        saveSubmissionDraft(userId, challengeId, {
-          title: nextTitle,
-          description: nextDesc,
-          softwareUsed: nextSoft,
-          isSpoiler: nextSpoiler,
-        });
+        // Re-check deadline before autosave write
+        if (submissionDeadline && new Date(submissionDeadline).getTime() <= Date.now()) {
+          return;
+        }
+        // Save with expected generation check: if invalidated during 500ms debounce, save is rejected
+        await saveSubmissionDraftAsync(
+          capturedUserId,
+          capturedChallengeId,
+          {
+            title: nextTitle,
+            description: nextDesc,
+            softwareUsed: nextSoft,
+            isSpoiler: nextSpoiler,
+          },
+          capturedGen
+        );
       }, 500);
+
+      saveTimeoutRef.current = timer;
+      registerPendingDraftAutosave(capturedUserId, capturedChallengeId, timer);
     }
   };
 
-  const handleDiscardDraft = () => {
+  const handleDiscardDraft = async () => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
     }
     isDraftActiveRef.current = false;
     if (userId) {
-      clearSubmissionDraft(userId, challengeId);
+      cancelPendingDraftAutosave(userId, challengeId);
+      await clearSubmissionDraftAsync(userId, challengeId);
+      clearActiveDraftContext();
+      activeGenerationRef.current = getDraftGeneration(userId, challengeId);
     }
     setTitle(initialTitle);
     setDescription(initialDescription);
@@ -175,9 +338,10 @@ export function ChallengeSubmissionModal({
     }
 
     setFile(selected);
-    setError(null);
-    if (selected.type.startsWith("image/")) {
-      setPreviewUrl(URL.createObjectURL(selected));
+    const mime = selected.type;
+    if (mime.startsWith("image/")) {
+      const url = URL.createObjectURL(selected);
+      setPreviewUrl(url);
     } else {
       setPreviewUrl(null);
     }
@@ -212,9 +376,16 @@ export function ChallengeSubmissionModal({
       const res = await submitArtworkToChallengeAction(formData);
       if (res.success) {
         // Clear draft on successful submission
-        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+        if (saveTimeoutRef.current) {
+          clearTimeout(saveTimeoutRef.current);
+          saveTimeoutRef.current = null;
+        }
+        isDraftActiveRef.current = false;
         if (userId) {
-          clearSubmissionDraft(userId, challengeId);
+          cancelPendingDraftAutosave(userId, challengeId);
+          await clearSubmissionDraftAsync(userId, challengeId);
+          clearActiveDraftContext();
+          activeGenerationRef.current = getDraftGeneration(userId, challengeId);
         }
         setSuccess(true);
         setTimeout(() => {
@@ -240,7 +411,16 @@ export function ChallengeSubmissionModal({
         {isRevision ? "Kirim Revisi Karya" : "Kirim Karya"}
       </AtelierButton>
 
-      <Dialog open={isOpen} onOpenChange={(open) => !open && setIsOpen(false)}>
+      <Dialog
+        open={isOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            handleCloseModal();
+          } else {
+            setIsOpen(true);
+          }
+        }}
+      >
         <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto p-6 sm:p-8">
           <DialogHeader>
             <DialogTitle>
@@ -404,7 +584,7 @@ export function ChallengeSubmissionModal({
                 <AtelierButton
                   type="button"
                   variant="ghost"
-                  onClick={() => setIsOpen(false)}
+                  onClick={handleCloseModal}
                   disabled={isLoading}
                 >
                   Batal

@@ -1014,6 +1014,25 @@ export async function startTiebreakService(
     throw new Error("Tidak ditemukan seri pada peringkat 1 babak utama.");
   }
 
+  // Intersect authoritative tied set with currently eligible submissions under lock
+  const eligibleTiedCandidates = await dbOrTx
+    .select({ id: challengeSubmissions.id })
+    .from(challengeSubmissions)
+    .where(
+      and(
+        inArray(challengeSubmissions.id, mainTally.tiedSubmissionIds),
+        eq(challengeSubmissions.submissionStatus, "submitted")
+      )
+    )
+    .for("update");
+
+  const eligibleTiedIds: string[] = eligibleTiedCandidates.map((c: any) => c.id as string);
+  if (eligibleTiedIds.length < 2) {
+    throw new Error(
+      `Hanya tersisa ${eligibleTiedIds.length} kandidat yang memenuhi syarat. Babak tiebreak membutuhkan minimal 2 kandidat.`
+    );
+  }
+
   // 5. Validate Deadline
   const now = new Date();
   let resolvedDeadline: Date;
@@ -1041,7 +1060,7 @@ export async function startTiebreakService(
 
   // 7. Freeze Tied Candidates into challenge_voting_round_candidates
   await dbOrTx.insert(challengeVotingRoundCandidates).values(
-    mainTally.tiedSubmissionIds.map((subId: string) => ({
+    eligibleTiedIds.map((subId: string) => ({
       votingRoundId: tiebreakRound.id,
       submissionId: subId,
     }))
@@ -1053,7 +1072,7 @@ export async function startTiebreakService(
     actor,
     challengeId,
     "tiebreak_open",
-    `Mulai babak tiebreak untuk ${mainTally.tiedSubmissionIds.length} karya seri hingga ${resolvedDeadline.toISOString()}`
+    `Mulai babak tiebreak untuk ${eligibleTiedIds.length} karya seri hingga ${resolvedDeadline.toISOString()}`
   );
 
   // 9. Write Audit Log
@@ -1065,7 +1084,7 @@ export async function startTiebreakService(
     reason: `Membuka babak tiebreak dengan deadline ${resolvedDeadline.toISOString()}`,
     metadata: {
       tiebreakRoundId: tiebreakRound.id,
-      tiedSubmissionIds: mainTally.tiedSubmissionIds,
+      tiedSubmissionIds: eligibleTiedIds,
       deadline: resolvedDeadline.toISOString(),
     },
   });
@@ -1074,7 +1093,7 @@ export async function startTiebreakService(
     success: true,
     votingRoundId: tiebreakRound.id,
     deadline: resolvedDeadline,
-    tiedCandidatesCount: mainTally.tiedSubmissionIds.length,
+    tiedCandidatesCount: eligibleTiedIds.length,
   };
 }
 
@@ -1158,6 +1177,27 @@ export async function resolveTieManuallyService(
   if (!tiedSubmissionIds.includes(submissionId)) {
     throw new Error(
       "Karya yang dipilih bukan merupakan salah satu dari kandidat resmi yang seri pada babak ini."
+    );
+  }
+
+  // Verify chosen candidate is currently eligible (not disqualified) under row-level lock
+  const [chosenSubmission] = await dbOrTx
+    .select({
+      id: challengeSubmissions.id,
+      submissionStatus: challengeSubmissions.submissionStatus,
+    })
+    .from(challengeSubmissions)
+    .where(
+      and(
+        eq(challengeSubmissions.id, submissionId),
+        eq(challengeSubmissions.challengeId, challenge.id)
+      )
+    )
+    .for("update");
+
+  if (!chosenSubmission || chosenSubmission.submissionStatus !== "submitted") {
+    throw new Error(
+      "Karya yang dipilih telah didiskualifikasi atau tidak memenuhi syarat untuk dimenangkan."
     );
   }
 

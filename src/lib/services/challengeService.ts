@@ -1369,12 +1369,8 @@ export async function disqualifyChallengeCandidateService(
           );
 
         if (remainingTiebreakCandidates.length === 1) {
-          // Exactly 1 tied candidate remains: they win the tiebreak!
+          // Exactly 1 candidate remains in the tied set: they win!
           const singleTieWinner = remainingTiebreakCandidates[0];
-          await tx
-            .update(challengeVotingRounds)
-            .set({ status: "closed", updatedAt: new Date() })
-            .where(eq(challengeVotingRounds.id, activeRound.id));
 
           await tx
             .delete(challengeResults)
@@ -1385,16 +1381,85 @@ export async function disqualifyChallengeCandidateService(
               )
             );
 
+          // Close active tiebreak round
+          await tx
+            .update(challengeVotingRounds)
+            .set({ status: "closed", updatedAt: new Date() })
+            .where(eq(challengeVotingRounds.id, activeRound.id));
+
+          // Look up winner's stars: check tiebreak round first, fallback to main round
+          const [tbStarRow] = await tx
+            .select({
+              totalStars: sql<number>`coalesce(sum(${challengeBallotStars.starsCount}), 0)::int`,
+            })
+            .from(challengeBallotStars)
+            .innerJoin(
+              challengeBallots,
+              eq(challengeBallots.id, challengeBallotStars.ballotId)
+            )
+            .where(
+              and(
+                eq(challengeBallots.votingRoundId, activeRound.id),
+                eq(challengeBallotStars.submissionId, singleTieWinner.id)
+              )
+            );
+
+          let winnerStars = Number(tbStarRow?.totalStars || 0);
+          let authoritativeRoundId = activeRound.id;
+
+          if (winnerStars === 0) {
+            const [mainRound] = await tx
+              .select({ id: challengeVotingRounds.id })
+              .from(challengeVotingRounds)
+              .where(
+                and(
+                  eq(challengeVotingRounds.challengeId, challenge.id),
+                  eq(challengeVotingRounds.roundType, "main"),
+                  eq(challengeVotingRounds.status, "closed")
+                )
+              )
+              .limit(1);
+            if (mainRound) {
+              const [mainStarRow] = await tx
+                .select({
+                  totalStars: sql<number>`coalesce(sum(${challengeBallotStars.starsCount}), 0)::int`,
+                })
+                .from(challengeBallotStars)
+                .innerJoin(
+                  challengeBallots,
+                  eq(challengeBallots.id, challengeBallotStars.ballotId)
+                )
+                .where(
+                  and(
+                    eq(challengeBallots.votingRoundId, mainRound.id),
+                    eq(challengeBallotStars.submissionId, singleTieWinner.id)
+                  )
+                );
+              winnerStars = Number(mainStarRow?.totalStars || 0);
+              authoritativeRoundId = mainRound.id;
+            }
+          }
+
           const isPublished = challenge.awardMode === "vote_only";
           await tx.insert(challengeResults).values({
             challengeId: challenge.id,
             submissionId: singleTieWinner.id,
             finalRank: 1,
             awardType: "community_vote_winner",
-            totalCommunityStars: 0,
+            totalCommunityStars: winnerStars,
             resolutionMethod: "disqualification_tie_resolution",
+            sourceVotingRoundId: authoritativeRoundId,
             isPublished,
           });
+
+          if (challenge.awardMode === "vote_and_jury") {
+            const readiness = await validateJuryPhaseReadinessService(tx, challenge.id);
+            if (!readiness.ready) {
+              throw new Error(
+                `Transisi ke 'jury_selection_open' diblokir: ${readiness.reason}. Konfigurasikan panel juri terlebih dahulu.`
+              );
+            }
+          }
 
           const nextStatus = challenge.awardMode === "vote_only" ? "finished" : "jury_selection_open";
           await tx
@@ -1412,16 +1477,29 @@ export async function disqualifyChallengeCandidateService(
             .set({ status: "closed", updatedAt: new Date() })
             .where(eq(challengeVotingRounds.id, activeRound.id));
 
+          if (challenge.awardMode === "vote_and_jury") {
+            const readiness = await validateJuryPhaseReadinessService(tx, challenge.id);
+            if (!readiness.ready) {
+              throw new Error(
+                `Transisi ke 'jury_selection_open' diblokir: ${readiness.reason}. Konfigurasikan panel juri terlebih dahulu.`
+              );
+            }
+          }
+
           const nextStatus = challenge.awardMode === "vote_only" ? "finished" : "jury_selection_open";
           await tx
             .update(challenges)
             .set({ status: nextStatus, updatedAt: new Date() })
             .where(eq(challenges.id, challenge.id));
+
+          if (nextStatus === "finished") {
+            await autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id);
+          }
         }
       } else if (challenge.status === "tie_pending") {
         // In tie_pending, derive remaining candidates from the original authoritative tied set
         const [latestClosedRound] = await tx
-          .select({ id: challengeVotingRounds.id })
+          .select({ id: challengeVotingRounds.id, roundType: challengeVotingRounds.roundType })
           .from(challengeVotingRounds)
           .where(
             and(
@@ -1448,7 +1526,8 @@ export async function disqualifyChallengeCandidateService(
                   inArray(challengeSubmissions.id, tiedIds),
                   eq(challengeSubmissions.submissionStatus, "submitted")
                 )
-              );
+              )
+              .for("update");
 
             if (remainingTiedCandidates.length === 1) {
               // Exactly 1 candidate remains in the tied set: they win!
@@ -1463,16 +1542,79 @@ export async function disqualifyChallengeCandidateService(
                   )
                 );
 
+              // Look up authoritative Stars for singleTieWinner
+              const [starRow] = await tx
+                .select({
+                  totalStars: sql<number>`coalesce(sum(${challengeBallotStars.starsCount}), 0)::int`,
+                })
+                .from(challengeBallotStars)
+                .innerJoin(
+                  challengeBallots,
+                  eq(challengeBallots.id, challengeBallotStars.ballotId)
+                )
+                .where(
+                  and(
+                    eq(challengeBallots.votingRoundId, latestClosedRound.id),
+                    eq(challengeBallotStars.submissionId, singleTieWinner.id)
+                  )
+                );
+
+              let winnerStars = Number(starRow?.totalStars || 0);
+              let authoritativeRoundId = latestClosedRound.id;
+
+              if (winnerStars === 0 && latestClosedRound.roundType === "tiebreak") {
+                const [mainRound] = await tx
+                  .select({ id: challengeVotingRounds.id })
+                  .from(challengeVotingRounds)
+                  .where(
+                    and(
+                      eq(challengeVotingRounds.challengeId, challenge.id),
+                      eq(challengeVotingRounds.roundType, "main"),
+                      eq(challengeVotingRounds.status, "closed")
+                    )
+                  )
+                  .limit(1);
+                if (mainRound) {
+                  const [mainStarRow] = await tx
+                    .select({
+                      totalStars: sql<number>`coalesce(sum(${challengeBallotStars.starsCount}), 0)::int`,
+                    })
+                    .from(challengeBallotStars)
+                    .innerJoin(
+                      challengeBallots,
+                      eq(challengeBallots.id, challengeBallotStars.ballotId)
+                    )
+                    .where(
+                      and(
+                        eq(challengeBallots.votingRoundId, mainRound.id),
+                        eq(challengeBallotStars.submissionId, singleTieWinner.id)
+                      )
+                    );
+                  winnerStars = Number(mainStarRow?.totalStars || 0);
+                  authoritativeRoundId = mainRound.id;
+                }
+              }
+
               const isPublished = challenge.awardMode === "vote_only";
               await tx.insert(challengeResults).values({
                 challengeId: challenge.id,
                 submissionId: singleTieWinner.id,
                 finalRank: 1,
                 awardType: "community_vote_winner",
-                totalCommunityStars: 0,
+                totalCommunityStars: winnerStars,
                 resolutionMethod: "disqualification_tie_resolution",
+                sourceVotingRoundId: authoritativeRoundId,
                 isPublished,
               });
+
+              if (challenge.awardMode === "vote_and_jury") {
+                const readiness = await validateJuryPhaseReadinessService(tx, challenge.id);
+                if (!readiness.ready) {
+                  throw new Error(
+                    `Transisi ke 'jury_selection_open' diblokir: ${readiness.reason}. Konfigurasikan panel juri terlebih dahulu.`
+                  );
+                }
+              }
 
               const nextStatus = challenge.awardMode === "vote_only" ? "finished" : "jury_selection_open";
               await tx
@@ -1484,12 +1626,24 @@ export async function disqualifyChallengeCandidateService(
                 await autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id);
               }
             } else if (remainingTiedCandidates.length === 0) {
-              // 0 tied candidates remain
+              if (challenge.awardMode === "vote_and_jury") {
+                const readiness = await validateJuryPhaseReadinessService(tx, challenge.id);
+                if (!readiness.ready) {
+                  throw new Error(
+                    `Transisi ke 'jury_selection_open' diblokir: ${readiness.reason}. Konfigurasikan panel juri terlebih dahulu.`
+                  );
+                }
+              }
+
               const nextStatus = challenge.awardMode === "vote_only" ? "finished" : "jury_selection_open";
               await tx
                 .update(challenges)
                 .set({ status: nextStatus, updatedAt: new Date() })
                 .where(eq(challenges.id, challenge.id));
+
+              if (nextStatus === "finished") {
+                await autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id);
+              }
             }
           }
         }
@@ -1536,7 +1690,7 @@ export async function disqualifyChallengeCandidateService(
               finalRank: 1,
               awardType: "community_vote_winner",
               totalCommunityStars: 0,
-              resolutionMethod: "automatic_single_submission",
+              resolutionMethod: "single_submission_auto_winner",
               isPublished: true,
             });
 
@@ -1547,6 +1701,13 @@ export async function disqualifyChallengeCandidateService(
 
             await autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id);
           } else if (challenge.awardMode === "vote_and_jury") {
+            const readiness = await validateJuryPhaseReadinessService(tx, challenge.id);
+            if (!readiness.ready) {
+              throw new Error(
+                `Transisi ke 'jury_selection_open' diblokir: ${readiness.reason}. Konfigurasikan panel juri terlebih dahulu.`
+              );
+            }
+
             await tx
               .delete(challengeResults)
               .where(
@@ -1562,7 +1723,7 @@ export async function disqualifyChallengeCandidateService(
               finalRank: 1,
               awardType: "community_vote_winner",
               totalCommunityStars: 0,
-              resolutionMethod: "automatic_single_submission",
+              resolutionMethod: "single_submission_auto_winner",
               isPublished: false,
             });
 

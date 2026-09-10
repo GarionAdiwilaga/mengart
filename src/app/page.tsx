@@ -209,6 +209,18 @@ export default async function HomePage() {
       challengeDeletedAt: challenges.deletedAt,
       systemCaption: portfolioEntries.systemCaption,
       customCaption: portfolioEntries.customCaption,
+      awardType: sql<string | null>`(
+        SELECT cr.award_type FROM challenge_results cr
+        WHERE cr.submission_id = ${challengeSubmissions.id} AND cr.is_published = true
+        ORDER BY CASE WHEN cr.award_type = 'community_vote_winner' THEN 1 ELSE 2 END
+        LIMIT 1
+      )`,
+      categoryLabel: sql<string | null>`(
+        SELECT cr.category_label FROM challenge_results cr
+        WHERE cr.submission_id = ${challengeSubmissions.id} AND cr.is_published = true
+        ORDER BY CASE WHEN cr.award_type = 'community_vote_winner' THEN 1 ELSE 2 END
+        LIMIT 1
+      )`,
     })
     .from(artworks)
     .innerJoin(profiles, eq(profiles.userId, artworks.userId))

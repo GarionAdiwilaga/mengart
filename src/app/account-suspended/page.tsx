@@ -2,6 +2,7 @@ import { getCurrentUser } from "@/lib/rbac";
 import { redirect } from "next/navigation";
 import { ShieldAlert, LogOut, MessageSquare } from "lucide-react";
 import { logoutAction } from "@/app/actions/auth";
+import { SignOutButton } from "@/components/auth/SignOutButton";
 
 export const metadata = {
   title: "Akun Ditangguhkan | Mengart Atelier",
@@ -58,15 +59,10 @@ export default async function AccountSuspendedPage() {
           </div>
 
           {/* Sign Out Action */}
-          <form action={logoutAction} className="w-full">
-            <button
-              type="submit"
-              className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-sm font-medium text-zinc-200 hover:text-white transition-all cursor-pointer"
-            >
-              <LogOut className="h-4 w-4 text-zinc-400" />
-              <span>Keluar dari Akun</span>
-            </button>
-          </form>
+          <SignOutButton className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-sm font-medium text-zinc-200 hover:text-white transition-all cursor-pointer">
+            <LogOut className="h-4 w-4 text-zinc-400" />
+            <span>Keluar dari Akun</span>
+          </SignOutButton>
         </div>
       </div>
     </div>

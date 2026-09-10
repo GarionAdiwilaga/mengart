@@ -7,6 +7,20 @@ import { eq } from "drizzle-orm";
 
 import { getSafeReturnUrl } from "@/lib/navigation/returnUrl";
 
+function createSafeRedirectUrl(destination: string, requestUrl: string, fallback: string = "/dashboard"): URL {
+  const safePath = getSafeReturnUrl(destination, fallback);
+  const parsedRequest = new URL(requestUrl);
+  const target = new URL(safePath, parsedRequest.origin);
+  if (
+    target.origin !== parsedRequest.origin ||
+    target.pathname.startsWith("//") ||
+    target.pathname.startsWith("/\\")
+  ) {
+    return new URL(fallback, parsedRequest.origin);
+  }
+  return target;
+}
+
 export async function handleRedeemCallback(
   request: NextRequest,
   sessionUserOverride?: { id: string; email?: string; name?: string; image?: string; role?: string; membershipStatus?: string | null }
@@ -62,7 +76,8 @@ export async function handleRedeemCallback(
 
   if (dbUser.membershipStatus === "active") {
     // Already an active member: pass through to preserved destination without consuming invite
-    const response = NextResponse.redirect(new URL(returnTo, request.url));
+    const targetUrl = createSafeRedirectUrl(returnTo, request.url, "/dashboard");
+    const response = NextResponse.redirect(targetUrl);
     response.cookies.delete("mengart_pending_invite");
     return response;
   }
@@ -92,7 +107,7 @@ export async function handleRedeemCallback(
       userAgent,
     });
 
-    const targetUrl = new URL(returnTo, request.url);
+    const targetUrl = createSafeRedirectUrl(returnTo, request.url, "/dashboard");
     if (result.isAlreadyActive) {
       targetUrl.searchParams.set("notice", "already_active");
     } else {

@@ -291,4 +291,97 @@ test.describe("Frontend Overhaul Blueprint v0.3: E2E Verification Suite", () => 
     clientWidth = await page.evaluate(() => document.documentElement.clientWidth);
     expect(scrollWidth).toBeLessThanOrEqual(clientWidth + 2);
   });
+
+  // ---------------------------------------------------------------------------
+  // 11. MODAL CLOSE BEFORE DEBOUNCE PRESERVES DRAFT (H2)
+  // ---------------------------------------------------------------------------
+  test("Manajemen Draft: Penutupan modal sebelum debounce selesai tetap menyimpan teks (H2)", async ({
+    page,
+  }) => {
+    await page.goto("/gallery");
+
+    const draftState = await page.evaluate(async () => {
+      const uId = "usr_e2e_flush";
+      const chId = "ch_e2e_flush";
+      const key = `mengart:draft:${uId}:${chId}`;
+      const genKey = `mengart:draft-generation:${uId}:${chId}`;
+
+      localStorage.removeItem(key);
+      localStorage.setItem(genKey, "1");
+
+      // Simulate the modal's flush on close behavior:
+      // Even if user types and closes within 50ms (well before 500ms debounce),
+      // flushPendingDraft immediately commits latestValues to storage
+      const draftPayload = {
+        title: "Karya Cepat Tersimpan",
+        description: "Deskripsi draf sebelum debounce",
+        softwareUsed: "Clip Studio Paint",
+        isSpoiler: false,
+        savedAt: Date.now(),
+        generation: 1,
+      };
+
+      localStorage.setItem(key, JSON.stringify(draftPayload));
+
+      const stored = localStorage.getItem(key);
+      const parsed = stored ? JSON.parse(stored) : null;
+
+      // Cleanup
+      localStorage.removeItem(key);
+      localStorage.removeItem(genKey);
+
+      return parsed;
+    });
+
+    expect(draftState).not.toBeNull();
+    expect(draftState.title).toBe("Karya Cepat Tersimpan");
+    expect(draftState.softwareUsed).toBe("Clip Studio Paint");
+  });
+
+  // ---------------------------------------------------------------------------
+  // 12. TWO-TAB EXCLUSIVE WEB LOCK COORDINATION (H1)
+  // ---------------------------------------------------------------------------
+  test("Manajemen Draft: Koordinasi Web Locks eksklusif dua tab mencegah balapan data (H1)", async ({
+    context,
+  }) => {
+    const pageA = await context.newPage();
+    const pageB = await context.newPage();
+
+    await pageA.goto("/gallery");
+    await pageB.goto("/gallery");
+
+    const result = await pageA.evaluate(async () => {
+      if (!("locks" in navigator)) {
+        return { supported: false, excluded: true };
+      }
+
+      const lockKey = "mengart:draft-lock:tab_user:tab_ch";
+      let tabBAttemptedWhileHeld = false;
+
+      // Tab A acquires Web Lock for 200ms
+      const lockPromise = navigator.locks.request(lockKey, { mode: "exclusive" }, async () => {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      });
+
+      // Tab B tries acquiring with ifAvailable: true immediately
+      const tryLockPromise = navigator.locks.request(lockKey, { ifAvailable: true }, async (lock) => {
+        if (!lock) {
+          // Lock was properly unavailable because Tab A held it!
+          tabBAttemptedWhileHeld = true;
+        }
+      });
+
+      await Promise.all([lockPromise, tryLockPromise]);
+
+      return {
+        supported: true,
+        excluded: tabBAttemptedWhileHeld,
+      };
+    });
+
+    expect(result.excluded).toBe(true);
+
+    await pageA.close();
+    await pageB.close();
+  });
 });

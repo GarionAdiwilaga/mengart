@@ -85,7 +85,14 @@ export function getSafeReturnUrl(
   // Normalized path after WHATWG normalization (resolves dot segments like /gallery/../login -> /login)
   const normalizedPath = parsed.pathname.toLowerCase();
 
-  if (!normalizedPath.startsWith("/")) {
+  // Reject paths that do not start with a single slash or morph into protocol-relative paths
+  if (
+    !normalizedPath.startsWith("/") ||
+    normalizedPath.startsWith("//") ||
+    normalizedPath.startsWith("/\\") ||
+    parsed.pathname.startsWith("//") ||
+    parsed.pathname.startsWith("/\\")
+  ) {
     return fallback;
   }
 
@@ -97,5 +104,6 @@ export function getSafeReturnUrl(
   }
 
   // Return canonical relative path + search query (stripping hash/fragment)
+  // Preserves legitimate search query parameters including +, %20, and encoded terms
   return parsed.pathname + parsed.search;
 }

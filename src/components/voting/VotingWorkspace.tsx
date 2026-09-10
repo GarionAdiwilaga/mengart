@@ -87,10 +87,13 @@ export function VotingWorkspace({
     ...initialAllocations,
   });
 
-  // User and Round Generation tracking for clean invalidation
-  const currentGen = `${userId || "anon"}:${votingRoundId}`;
-  const generationRef = useRef(currentGen);
+  // Monotonic epoch tracking across user and round lifecycle changes
+  const epochCounterRef = useRef(0);
+  const currentGenStr = `${userId || "anon"}:${votingRoundId}`;
+  const lastGenStrRef = useRef(currentGenStr);
+  const epochRef = useRef(0);
   const seqRef = useRef(0);
+  const latestConfirmedSeqRef = useRef(0);
   const pendingCountRef = useRef(0);
 
   // Local optimistic allocations
@@ -104,6 +107,8 @@ export function VotingWorkspace({
   const [isUncertain, setIsUncertain] = useState(false);
   const isUncertainRef = useRef(false);
   const [isReconciling, setIsReconciling] = useState(false);
+  const isReconcilingRef = useRef(false);
+  const [hasUnsavedIntent, setHasUnsavedIntent] = useState(false);
 
   // Failed intent storage for explicit retry
   const failedIntentRef = useRef<{ [submissionId: string]: number } | null>(null);
@@ -145,9 +150,12 @@ export function VotingWorkspace({
 
   // Invalidate pending queue operations and sync state immediately on account or round generation change
   useEffect(() => {
-    const newGen = `${userId || "anon"}:${votingRoundId}`;
-    if (generationRef.current !== newGen) {
-      generationRef.current = newGen;
+    const newGenStr = `${userId || "anon"}:${votingRoundId}`;
+    if (lastGenStrRef.current !== newGenStr) {
+      lastGenStrRef.current = newGenStr;
+      epochRef.current = ++epochCounterRef.current;
+      seqRef.current = 0;
+      latestConfirmedSeqRef.current = 0;
       pendingCountRef.current = 0;
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       confirmedAllocationsRef.current = { ...initialAllocations };
@@ -160,7 +168,12 @@ export function VotingWorkspace({
       setIsUncertain(false);
       isUncertainRef.current = false;
       failedIntentRef.current = null;
+      setHasUnsavedIntent(false);
       busyPendingRefreshRef.current = null;
+      setIsReconciling(false);
+      isReconcilingRef.current = false;
+      setIsResetting(false);
+      setIsResetModalOpen(false);
     }
   }, [userId, votingRoundId, initialAllocations, maxStars]);
 
@@ -193,6 +206,8 @@ export function VotingWorkspace({
 
       // Uncertainty gate: pause subsequent writes while outcome is unresolved
       if (isUncertainRef.current) {
+        failedIntentRef.current = targetAllocations;
+        setHasUnsavedIntent(true);
         setErrorMessage(
           "Status alokasi suara sebelumnya belum pasti karena gangguan jaringan. Harap periksa status suara terlebih dahulu."
         );
@@ -200,7 +215,7 @@ export function VotingWorkspace({
         return;
       }
 
-      const opGen = generationRef.current;
+      const opEpoch = epochRef.current;
       const opSeq = ++seqRef.current;
       pendingCountRef.current++;
 
@@ -221,9 +236,19 @@ export function VotingWorkspace({
       // 2. Chain onto FIFO Promise Queue
       queueRef.current = queueRef.current
         .then(async () => {
-          // Invalidation check: skip if unmounted or account/round generation changed
-          if (isUnmountedRef.current || generationRef.current !== opGen) {
+          // Invalidation check: skip if unmounted or epoch changed (without modifying new epoch's pending count)
+          if (isUnmountedRef.current || epochRef.current !== opEpoch) {
+            return;
+          }
+
+          // Pre-execution uncertainty gate: block queued writes if earlier mutation failed with uncertainty
+          if (isUncertainRef.current) {
             pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+            failedIntentRef.current = targetAllocations;
+            setHasUnsavedIntent(true);
+            if (pendingCountRef.current === 0) {
+              setSaveStatus("error");
+            }
             return;
           }
 
@@ -247,8 +272,7 @@ export function VotingWorkspace({
               votes: activeVotes,
             });
           } catch (err: any) {
-            if (isUnmountedRef.current || generationRef.current !== opGen) {
-              pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+            if (isUnmountedRef.current || epochRef.current !== opEpoch) {
               return;
             }
 
@@ -278,6 +302,7 @@ export function VotingWorkspace({
               setSaveStatus("error");
               setErrorMessage(msg);
               failedIntentRef.current = targetAllocations;
+              setHasUnsavedIntent(!isPermanent);
 
               // Rollback optimistic state ONLY if this was the latest enqueued operation
               if (opSeq === seqRef.current) {
@@ -297,20 +322,24 @@ export function VotingWorkspace({
                 "Koneksi terputus saat menyimpan suara. Harap periksa status suara untuk memastikan alokasi tersimpan."
               );
               failedIntentRef.current = targetAllocations;
+              setHasUnsavedIntent(true);
             }
             return;
           }
 
-          if (isUnmountedRef.current || generationRef.current !== opGen) {
-            pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+          if (isUnmountedRef.current || epochRef.current !== opEpoch) {
             return;
           }
 
           pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
 
           if (res?.success) {
-            confirmedAllocationsRef.current = targetAllocations;
+            if (opSeq >= latestConfirmedSeqRef.current) {
+              latestConfirmedSeqRef.current = opSeq;
+              confirmedAllocationsRef.current = targetAllocations;
+            }
             failedIntentRef.current = null;
+            setHasUnsavedIntent(false);
             setIsPermanentError(false);
             isUncertainRef.current = false;
             setIsUncertain(false);
@@ -327,7 +356,7 @@ export function VotingWorkspace({
               setSaveStatus("saved");
               if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
               saveTimeoutRef.current = setTimeout(() => {
-                if (!isUnmountedRef.current && pendingCountRef.current === 0) {
+                if (!isUnmountedRef.current && pendingCountRef.current === 0 && epochRef.current === opEpoch) {
                   setSaveStatus("idle");
                 }
               }, 2500);
@@ -346,20 +375,30 @@ export function VotingWorkspace({
     [isLoggedIn, maxStars, roundDeadline, votingRoundId]
   );
 
-  // Retry failed intent
+  // Retry failed intent (explicit action allowed only when NOT in an unresolved uncertain state)
   const handleRetryFailedIntent = () => {
-    if (!failedIntentRef.current || isPermanentError) return;
-    isUncertainRef.current = false;
-    setIsUncertain(false);
-    enqueueSave(failedIntentRef.current);
+    if (!failedIntentRef.current || isPermanentError || isUncertainRef.current) return;
+    const retryTarget = { ...failedIntentRef.current };
+    enqueueSave(retryTarget);
   };
 
-  // Reconcile ballot status with server
+  // Reconcile ballot status with server with full epoch & error/finally guards
   const handleReconcile = async () => {
     setIsReconciling(true);
+    isReconcilingRef.current = true;
     setErrorMessage(null);
+    const opEpoch = epochRef.current;
+    const reconcileSeq = ++seqRef.current;
     try {
       const roundData = await reconcileBallotAction(votingRoundId);
+      if (isUnmountedRef.current || epochRef.current !== opEpoch) return;
+
+      if (reconcileSeq < latestConfirmedSeqRef.current) {
+        // Stale reconciliation read! A newer mutation was already confirmed.
+        return;
+      }
+      latestConfirmedSeqRef.current = Math.max(latestConfirmedSeqRef.current, reconcileSeq);
+
       if (roundData?.votingRound?.id && roundData.votingRound.id !== votingRoundId) {
         throw new Error("ID babak voting tidak sesuai dengan babak aktif.");
       }
@@ -376,20 +415,48 @@ export function VotingWorkspace({
       setAllocations(serverAllocations);
       const serverTotal = Object.values(serverAllocations).reduce((a, b) => a + b, 0);
       setRemainingStars(maxStars - serverTotal);
-      failedIntentRef.current = null;
+
+      // Uncertainty resolved authoritatively
       isUncertainRef.current = false;
       setIsUncertain(false);
       setIsPermanentError(false);
+
+      // Settle failed intent if server state already matches it
+      if (failedIntentRef.current) {
+        const intentKeys = Object.keys(failedIntentRef.current).filter(
+          (k) => (failedIntentRef.current![k] || 0) > 0
+        );
+        const serverKeys = Object.keys(serverAllocations).filter(
+          (k) => (serverAllocations[k] || 0) > 0
+        );
+        const match =
+          intentKeys.length === serverKeys.length &&
+          intentKeys.every((k) => failedIntentRef.current![k] === serverAllocations[k]);
+        if (match) {
+          failedIntentRef.current = null;
+          setHasUnsavedIntent(false);
+        } else {
+          setHasUnsavedIntent(true);
+        }
+      } else {
+        setHasUnsavedIntent(false);
+      }
+
       setSaveStatus("saved");
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
-        if (!isUnmountedRef.current) setSaveStatus("idle");
+        if (!isUnmountedRef.current && epochRef.current === opEpoch) setSaveStatus("idle");
       }, 2000);
     } catch (err: any) {
+      if (isUnmountedRef.current || epochRef.current !== opEpoch) return;
       setErrorMessage(err?.message || "Gagal memeriksa status suara.");
       setSaveStatus("error");
     } finally {
-      setIsReconciling(false);
+      if (!isUnmountedRef.current && epochRef.current === opEpoch) {
+        setIsReconciling(false);
+        isReconcilingRef.current = false;
+        pendingCountRef.current = 0;
+      }
     }
   };
 
@@ -515,50 +582,95 @@ export function VotingWorkspace({
     enqueueSave(nextAllocations);
   };
 
-  // Reset ballot inside serialized queue
+  // Reset ballot inside serialized queue with full uncertainty barrier and epoch isolation
   const handleConfirmReset = async () => {
+    if (isUncertainRef.current) {
+      setErrorMessage(
+        "Tidak dapat mereset saat alokasi suara belum pasti karena gangguan jaringan. Harap periksa status suara terlebih dahulu."
+      );
+      setSaveStatus("error");
+      setIsResetModalOpen(false);
+      return;
+    }
+
     setIsResetting(true);
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    const opGen = generationRef.current;
+    const opEpoch = epochRef.current;
+    const opSeq = ++seqRef.current;
+    pendingCountRef.current++;
 
     queueRef.current = queueRef.current
       .then(async () => {
-        if (isUnmountedRef.current || generationRef.current !== opGen) return;
+        if (isUnmountedRef.current || epochRef.current !== opEpoch) return;
+
+        if (isUncertainRef.current) {
+          pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+          setIsResetting(false);
+          setIsResetModalOpen(false);
+          return;
+        }
 
         setSaveStatus("saving");
         try {
           await resetBallotAction({ votingRoundId });
-          if (isUnmountedRef.current || generationRef.current !== opGen) return;
+          if (isUnmountedRef.current || epochRef.current !== opEpoch) return;
 
-          confirmedAllocationsRef.current = {};
+          pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+          if (opSeq >= latestConfirmedSeqRef.current) {
+            latestConfirmedSeqRef.current = opSeq;
+            confirmedAllocationsRef.current = {};
+          }
           failedIntentRef.current = null;
+          setHasUnsavedIntent(false);
           isUncertainRef.current = false;
           setIsUncertain(false);
+          setIsPermanentError(false);
           setAllocations({});
           setRemainingStars(maxStars);
           setSaveStatus("saved");
           setIsResetModalOpen(false);
           if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
           saveTimeoutRef.current = setTimeout(() => {
-            if (!isUnmountedRef.current) setSaveStatus("idle");
+            if (!isUnmountedRef.current && epochRef.current === opEpoch && pendingCountRef.current === 0) {
+              setSaveStatus("idle");
+            }
           }, 2000);
         } catch (err: any) {
-          if (isUnmountedRef.current || generationRef.current !== opGen) return;
-          setSaveStatus("error");
-          setErrorMessage(err?.message || "Gagal mereset suara.");
+          if (isUnmountedRef.current || epochRef.current !== opEpoch) return;
+          pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+          setIsResetModalOpen(false);
+          const msg = err?.message || "Gagal mereset suara.";
+
+          const isConfirmedRejection =
+            msg.includes("sedang tidak dibuka") ||
+            msg.includes("telah berakhir") ||
+            msg.includes("ditangguhkan") ||
+            msg.includes("Akses ditolak");
+
+          if (isConfirmedRejection) {
+            setSaveStatus("error");
+            setErrorMessage(msg);
+          } else {
+            // Uncertain outcome on reset
+            isUncertainRef.current = true;
+            setIsUncertain(true);
+            setSaveStatus("error");
+            setErrorMessage(
+              "Koneksi terputus saat mereset suara. Harap periksa status suara untuk memastikan alokasi."
+            );
+            failedIntentRef.current = {};
+            setHasUnsavedIntent(true);
+          }
         }
       })
       .catch((err) => {
         console.error("Voting reset queue error:", err);
+      })
+      .finally(() => {
+        if (!isUnmountedRef.current && epochRef.current === opEpoch) {
+          setIsResetting(false);
+        }
       });
-
-    try {
-      await queueRef.current;
-    } finally {
-      if (!isUnmountedRef.current) {
-        setIsResetting(false);
-      }
-    }
   };
 
   // Keyboard navigation for focus inspection
@@ -606,11 +718,11 @@ export function VotingWorkspace({
             <span>{errorMessage}</span>
           </div>
           <div className="flex items-center gap-2 self-end sm:self-auto">
-            {!isPermanentError && failedIntentRef.current && (
+            {!isPermanentError && !isUncertain && hasUnsavedIntent && (
               <button
                 type="button"
                 onClick={handleRetryFailedIntent}
-                className="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs font-sans transition-colors cursor-pointer min-h-[36px]"
+                className="px-3 py-2 min-h-[44px] min-w-[44px] rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs font-sans transition-colors cursor-pointer flex items-center justify-center"
               >
                 Coba simpan ulang
               </button>
@@ -619,15 +731,48 @@ export function VotingWorkspace({
               type="button"
               onClick={handleReconcile}
               disabled={isReconciling}
-              className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-zinc-200 font-sans text-xs transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
+              className="px-3 py-2 min-h-[44px] min-w-[44px] rounded-lg bg-white/10 hover:bg-white/15 text-zinc-200 font-sans text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${isReconciling ? "animate-spin" : ""}`} />
-              <span>Periksa status suara</span>
+              <span>{isReconciling ? "Memeriksa..." : "Periksa status suara"}</span>
             </button>
             <button
               type="button"
               onClick={() => setErrorMessage(null)}
               aria-label="Tutup pesan kesalahan"
+              className="h-11 w-11 min-h-[44px] min-w-[44px] rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white flex items-center justify-center cursor-pointer"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Independent Unsaved Intent Recovery Banner (F2 / R02) */}
+      {!errorMessage && hasUnsavedIntent && !isUncertain && !isPermanentError && (
+        <div
+          role="alert"
+          className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs font-sans flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md"
+        >
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
+            <span>Status suara terverifikasi di server. Anda memiliki pilihan suara yang belum tersimpan.</span>
+          </div>
+          <div className="flex items-center gap-2 self-end sm:self-auto">
+            <button
+              type="button"
+              onClick={handleRetryFailedIntent}
+              className="px-3 py-2 min-h-[44px] min-w-[44px] rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs font-sans transition-colors cursor-pointer flex items-center justify-center"
+            >
+              Coba simpan ulang
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                failedIntentRef.current = null;
+                setHasUnsavedIntent(false);
+              }}
+              aria-label="Abaikan suara belum tersimpan"
               className="h-11 w-11 min-h-[44px] min-w-[44px] rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white flex items-center justify-center cursor-pointer"
             >
               <X className="h-4 w-4" />

@@ -12,9 +12,10 @@ interface ArtworkCardProps {
   artwork: ArtworkListItem;
   currentUserRole?: string;
   from?: string;
+  onNavigate?: (artworkId: string) => void;
 }
 
-export function ArtworkCard({ artwork, currentUserRole, from }: ArtworkCardProps) {
+export function ArtworkCard({ artwork, currentUserRole, from, onNavigate }: ArtworkCardProps) {
   const [isRevealed, setIsRevealed] = useState(false);
   const isVideo = artwork.mediaType === "video";
   const isObscured = Boolean(artwork.isSpoiler && !isRevealed);
@@ -22,16 +23,24 @@ export function ArtworkCard({ artwork, currentUserRole, from }: ArtworkCardProps
     ? `/artworks/${artwork.slug}?from=${encodeURIComponent(from)}`
     : `/artworks/${artwork.slug}`;
 
+  const handleCardClick = () => {
+    onNavigate?.(artwork.id);
+  };
+
   return (
     <motion.div
+      id={`artwork-card-${artwork.id}`}
+      tabIndex={-1}
+      data-artwork-id={artwork.id}
       initial={{ opacity: 0, y: 15 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2 }}
-      className="group relative glass-panel rounded-3xl overflow-hidden flex flex-col border border-white/10 hover:border-amber-500/30 transition-all duration-300 shadow-lg hover:shadow-2xl hover:shadow-amber-500/5"
+      className="group relative glass-panel rounded-3xl overflow-hidden flex flex-col border border-white/10 hover:border-amber-500/30 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all duration-300 shadow-lg hover:shadow-2xl hover:shadow-amber-500/5"
     >
       {/* Media Container with 4:3 Aspect Frame */}
       <Link
         href={artworkHref}
+        onClick={handleCardClick}
         className="relative aspect-[4/3] bg-black/40 overflow-hidden block"
       >
         {artwork.thumbnailStorageKey ? (
@@ -135,6 +144,7 @@ export function ArtworkCard({ artwork, currentUserRole, from }: ArtworkCardProps
 
           <Link
             href={artworkHref}
+            onClick={handleCardClick}
             className="font-display font-bold text-base text-[#f6f2e9] hover:text-amber-300 transition-colors line-clamp-1"
           >
             {artwork.title}
