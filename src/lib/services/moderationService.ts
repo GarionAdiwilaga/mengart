@@ -113,3 +113,67 @@ export async function resolveReportService(
     return { success: true, reportId };
   });
 }
+
+/**
+ * Authoritative Canonical Domain Service for Direct Staff Artwork Takedown
+ * Enforces active staff authorization (loaded inside transaction), locks target artwork row FOR UPDATE,
+ * sets publicationStatus to 'hidden', and records an immutable audit log.
+ */
+export async function takedownArtworkDirectService(
+  dbOrTx: any,
+  params: {
+    actorUserId: string;
+    artworkId: string;
+    reason: string;
+  }
+) {
+  const { actorUserId, artworkId, reason } = params;
+  if (!reason || reason.trim().length < 5) {
+    throw new Error("Alasan penegakan take down wajib diisi minimal 5 karakter.");
+  }
+
+  return await dbOrTx.transaction(async (tx: any) => {
+    // 1. Verify actor active staff role inside transaction
+    const actor = await assertModeratorOrAdminActor(tx, actorUserId);
+
+    // 2. Fetch and lock target artwork row FOR UPDATE
+    const [artwork] = await tx
+      .select()
+      .from(artworks)
+      .where(eq(artworks.id, artworkId))
+      .for("update");
+
+    if (!artwork) {
+      throw new Error("Karya tidak ditemukan.");
+    }
+
+    if (artwork.deletedAt) {
+      throw new Error("Karya telah dihapus.");
+    }
+
+    // 3. Update publicationStatus to "hidden"
+    await tx
+      .update(artworks)
+      .set({
+        publicationStatus: "hidden",
+        updatedAt: new Date(),
+      })
+      .where(eq(artworks.id, artworkId));
+
+    // 4. Record audit log
+    await tx.insert(auditLogs).values({
+      actorId: actor.id,
+      action: "artwork.takedown",
+      targetType: "artwork",
+      targetId: artwork.id,
+      reason: reason.trim(),
+      metadata: {
+        previousPublicationStatus: artwork.publicationStatus,
+        ownerUserId: artwork.userId,
+      },
+    });
+
+    return { success: true, artworkId };
+  });
+}
+

@@ -11,9 +11,13 @@ export const ADMIN_MEMBERSHIP_ADVISORY_LOCK_KEY = 4281729;
  * Get current authenticated user session or null
  */
 export async function getCurrentUser() {
-  const session = await auth();
-  if (!session?.user || !session.user.id) return null;
-  return session.user;
+  try {
+    const session = await auth();
+    if (!session?.user || !session.user.id) return null;
+    return session.user;
+  } catch (_e) {
+    return null;
+  }
 }
 
 /**
@@ -28,7 +32,7 @@ export async function requireAuth(redirectTo: string = "/login") {
     redirect("/onboarding");
   }
   if (user.membershipStatus === "suspended") {
-    redirect("/dashboard?error=AccountSuspended");
+    redirect("/account-suspended");
   }
   if (user.membershipStatus === "deleted") {
     redirect("/login?error=AccountDeleted");

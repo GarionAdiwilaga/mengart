@@ -294,13 +294,204 @@
 - **QA-P0-020** (Pruning GIF & WebM from PostgreSQL enum and UI pickers, Watermark comment purge, Artwork Spoiler viewing UX completion): RESOLVED & VERIFIED
 - **QA-P1-007** (Pause/resume deadline validation with round deadlines): RESOLVED & VERIFIED
 - **QA-P1-008** (RESULTS_REVOKED status, notice banner, snapshot audit & flow): RESOLVED & VERIFIED
+- **QA-P0-021** (Historical Challenge Backfill Reconciliation with Blueprint 2.2.2 schema invariants, dynamic jury awards, and portfolio auto-promotion): RESOLVED & VERIFIED
+- **QA-P0-022** (System-Wide Feature Hardening, Query Leakage Prevention, WhatsApp Privacy Guard, Candidate Spoiler Presentation, and Type Purity): RESOLVED & VERIFIED
 
 ## Current Branch
-`main` (Authoritative Production Launch SHA: `15591d1844b20a3da66ca7693ec2557fc9a58406`)
+`overhaul_frontend_atomic_design`
 
 ## Current Focus
-- Comprehensive production `README.md` created, lint and production builds verified, and all commits pushed to GitHub `origin/main`.
-- Repository is 100% production-ready, clean, and officially launched.
+- Active Phase: **Frontend UI/UX Overhaul — Blueprint v0.3 (Mobile-First, Atomic Design, Flow Continuity & Contract Repair)**.
+- **Phase 2: Security & Backend Contract Repairs (A01–A08):** **COMPLETED & 100% VERIFIED**
+  - [A01] Secured `getChallengeVotingData` via server-side session identity derivation.
+  - [A02] Stripped `masterStorageKey` from public home queries and restricted to owners/admins.
+  - [A03] Enforced active membership status and active public profile joins on `/artists/[slug]`, `/commissions`, and soft-deleted/invisible guards on `getChallengeBySlug`.
+  - [A04] Implemented `takedownArtworkDirectService` and `takedownArtworkDirectAction` with mandatory $\ge 5$ char reason and audit log `artwork.takedown`. Wired `ArtworkAdminMenu.tsx`.
+  - [A05] Implemented `disqualifyChallengeCandidateService` and `disqualifyChallengeCandidateAction` with Star refund deduction from ballots, notifications (`star_returned`, `moderation`), and audit logging.
+  - [A06] Created `/account-suspended` route and redirected suspended accounts away from `/dashboard` loop.
+  - [A07] Harmonized `description` and `caption` across actions and modals, added `isSpoiler` toggle, and updated UI terminology from "Kritik" to "Komentar".
+  - [A08] Created `src/lib/presentation/witaTime.ts` with canonical WITA conversions and updated `ChallengeCreateForm.tsx`.
+  - Automated test suite `src/lib/__tests__/testPhase2SecurityAndContracts.ts` verified (100% pass across all scenarios).
+  - All 19 test suites in `npm run test:all` passing cleanly. `npm run lint` (0 errors), `npm run build` (32/32 routes + worker compiled cleanly).
+- **Phase 3: Atomic Design Foundations & Navigation Shells:** **COMPLETED & 100% VERIFIED**
+  - Built Atelier Atoms (`AtelierButton`, `AtelierBadge`, `SegmentedPill`, `AtelierInput`, `AtelierTextarea`, `TimestampWITA`, `StatusDot`).
+  - Built Atelier Molecules (`ArtworkMediaFrame`, `MetadataRow`, `StarAllocationCounter`, `SubmissionRecoveryBanner`, `FilterPills`, `ConfirmModal`).
+  - Built Atelier Layout Shells (`CommunityShell`, `StudioShell`, `FocusedTaskShell`).
+  - Reconfigured persistent navigation: 4 destinations (**Beranda, Challenge, Galeri, Studio**), central upload FAB, and contextual hidden bottom nav on focused tasks.
+- **Phase 4: Challenge & Voting Journey Rebuild:** **COMPLETED & 100% VERIFIED**
+  - Rebuilt `ChallengeSubmissionModal.tsx` with local storage draft recovery, `SubmissionRecoveryBanner`, and atomic inputs.
+  - Rebuilt `VotingWorkspace.tsx` with 2-column mobile overview, uncropped aspect ratios, upfront public total stars, direct Star buttons, single-star movement `ConfirmModal`, multi-star budget exhaustion guidance, immediate server save, and full focus detail modal.
+  - Rebuilt `challenges/[slug]/voting/page.tsx` wrapped in `FocusedTaskShell` with sticky thumb `StarAllocationCounter`.
+  - Rebuilt `challenges/[slug]/page.tsx` with presentation flow (concluded challenges highlight brief -> official results/podium -> participant archive; active challenges show submission window -> rules -> gallery).
+  - Rebuilt `challenges/page.tsx` with `CommunityShell`, `AtelierBadge`, `TimestampWITA`, category tabs, and clean Atelier Vernacular copy.
+  - Linter (`npm run lint`), compilation (`npm run build`), and test suite (`npm run test:all`) all passing 100% (exit 0).
+- **Phase 5: Connected Discovery (Gallery & Artwork Detail Rebuild):** **COMPLETED & 100% VERIFIED**
+  - Updated `src/app/api/artworks/route.ts` with `tab` (`bebas` | `challenge`) and `sort` (`latest` | `oldest`) filtering, left-joined `challengeSubmissions` and `challenges` to expose `challengeTitle`, `challengeSlug`, and `effectiveCaption` with 100% backward compatibility for tests.
+  - Updated `src/hooks/useArtworks.ts` and `src/stores/useGalleryFilterStore.ts` with URL-synced tabs and challenge metadata.
+  - Rebuilt `src/components/gallery/ArtworkCard.tsx` with challenge provenance badge, resolved caption, and "Komentar Terbuka" badge.
+  - Rebuilt `src/components/gallery/GalleryGrid.tsx` with top `SegmentedPill` `[ Karya Bebas | Karya Challenge ]`, media chips, sorting, and commissions discovery link.
+  - Rebuilt `src/app/artworks/[slug]/page.tsx` wrapped in `FocusedTaskShell` with contextual back navigation, software badges, absolute WITA timestamp, and `ArtworkFocusedBottomBar`.
+  - Rebuilt `src/components/artworks/CritiqueSection.tsx` with natural "Komentar" vernacular, comment author editing/soft-deletion, and staff hide/restore moderation.
+  - Wrapped `src/app/artists/page.tsx` and `src/app/artists/[slug]/page.tsx` in `CommunityShell`.
+- **Phase 6: Creator Studio (Public Profile, Portfolio & Commissions):** **COMPLETED & 100% VERIFIED**
+  - Rebuilt `src/app/dashboard/page.tsx` with `StudioShell` into the "Pratinjau" landing (owner public profile preview banner, artist identity card, specialties/software tags, portfolio showcase with visibility badges, commission packages with turnaround days, and scope rules Do/Don't lists).
+  - Rebuilt `src/app/me/portfolio/page.tsx` wrapped in `StudioShell` with upload trigger, custom caption editing, visibility toggle, and soft-delete.
+  - Rebuilt `src/app/me/commissions/page.tsx` wrapped in `StudioShell` with service package management and scope rules editor.
+  - Rebuilt `src/app/me/profile/page.tsx` wrapped in `StudioShell` with public profile preview link and settings form.
+  - Linter (`npm run lint`), compilation (`npm run build`), and test suite (`npm run test:all`) all passing 100% (exit 0).
+- **Phase 7: Commission Hub Polish & Discovery Flow:** **COMPLETED & 100% VERIFIED**
+  - Wrapped `src/app/commissions/page.tsx` in `CommunityShell` with Atelier badges, responsive search bar, and empty states.
+  - Implemented mobile-first font sizes (`text-base sm:text-xs`) to prevent iOS Safari auto-zoom.
+  - Displayed waitlist slot availability indicators (`waitlistCurrentSlots` / `waitlistMaxSlots`).
+  - Added artist contact consent guard: verified `waConsentGiven` and phone number before generating direct WhatsApp order links, falling back to artist profile.
+  - Polished `src/components/commissions/CommissionServiceModal.tsx` inputs and selects with zoom-prevention styles.
+- **Phase 8: Cross-Device Verification, Playwright E2E & Final Polish:** **COMPLETED & 100% VERIFIED**
+  - Created `e2e/frontend-overhaul-v03.spec.ts` covering persistent 4-destination navigation, $\ge 44$px touch targets, provenance tab switching, "Komentar Terbuka" chip & vernacular assertions, mobile zoom prevention, and protected studio redirection.
+  - 20/20 Playwright E2E tests passed cleanly across mobile and desktop browser projects.
+  - 19/19 backend, security, and invariant test suites in `npm run test:all` passed cleanly (100%).
+  - Clean ESLint (`npm run lint`: 0 errors, 0 warnings).
+  - Production Next.js Turbopack build (`npm run build`: 32/32 routes + worker bundle compiled cleanly).
+- **Phase 9: Independent QA Audit Remediation (R01–R12):** **COMPLETED & 100% VERIFIED**
+  - **[R01 - P0] Authorization Boundary Hardening:** Decoupled `importHistoricalChallengeAction` from actor overrides; created server-only `historicalBackfillService.ts` with live database status validation (`role IN ('admin', 'moderator')`, `membershipStatus === 'active'`, `!deletedAt`). Negative tests in `testPhase2SecurityAndContracts.ts` verified against anonymous, member, suspended, deleted, and demoted callers + payload injection.
+  - **[R02/R03 - P1] Serialized Voting Queue & Multi-Star Steppers:** Implemented component-local FIFO serialized promise queue with `.catch()` boundary in `VotingWorkspace.tsx`. Confirmed allocations separate from pending and failed intent; transient failures roll back and save failed intent for retry; uncertain writes trigger `reconcileBallotAction`. Multi-star steppers (`-` / `+`) enable stacking when `starsPerMember > 1`.
+  - **[R04 - P1] Scoped Draft Lifecycle & Storage Isolation:** Created `draftStorage.ts` scoping draft keys to `mengart_sub_draft:v1:${userId}:${challengeId}` and purging legacy unscoped keys. Draft storage and in-memory state cleared on deliberate discard, successful submission, and user logout/account switch (`UserDropdown.tsx`); text preserved on submission failure; restored data validated.
+  - **[R05 - P1] Disqualification Phase Matrix & Monotonic Database Locking:** Enforced monotonic row-level lock order ($1 \rightarrow 2 \rightarrow 3 \rightarrow 4$: `challengeVotingRounds` $\rightarrow$ `challenges` $\rightarrow$ `challengeSubmissions` $\rightarrow$ `challengeBallots`) across all mutation services. Handled full phase matrix in `disqualifyChallengeCandidateService`: closed-round snapshots and ballots preserved; only open-round ballots refunded and voided; finished challenges rejected without prior revocation; audit log persists `voidedAllocations`. Added "Diskualifikasi karya" workflow in `ArtworkAdminMenu.tsx`.
+  - **[R06 - P1] AccessibleDialog Mobile Bounds & Layout:** Merged `className` via `cn(...)` in `AccessibleDialog.tsx` and clamped content to `max-h-[min(90vh,calc(100dvh-2rem))] overflow-y-auto`. Verified reachable close and submit controls at 375×667 and 320px.
+  - **[R07 - P1] Safe Provenance Origin & Active Staff Auth:** Updated `/api/artworks` with live active staff DB query. Added safe origin discriminator `origin: "challenge" | "independent"`. Redacted `challengeTitle` and `challengeSlug` to `null` for hidden/deleted challenges when viewed by non-staff without reclassifying provenance as "Karya bebas".
+  - **[R08 - P2] Synchronous Artwork Spoiler & Video Reset:** Synchronously reset spoiler concealment in `ArtworkMediaFrame` on artwork identity changes before render (`artworkId || src`), paused and reset video playback, and decoupled media card click from interactive controls.
+  - **[R09 - P2] Validated Return Journey & Continuity:** Created `getSafeReturnUrl` in `returnUrl.ts` rejecting backslashes, protocol-relative paths (`//`, `/\`), external schemes, and redirect loops (`/login`, `/account-suspended`, `/onboarding`). Passed and validated `?from=...` through artwork detail, login, and invite redemption. Redirected suspended users directly to `/account-suspended?error=AccountSuspended`.
+  - **[R10 - P2] Activity-First Beranda Priority & Natural Vocabulary:** Restructured Beranda hierarchy (Compact Header $\rightarrow$ Active Challenge in 1st mobile viewport $\rightarrow$ Past Winners $\rightarrow$ General Artworks $\rightarrow$ Spotlight $\rightarrow$ Commissions $\rightarrow$ About). Enforced natural neutral vocabulary ("Lihat karya", "Beri Star", "Komunitas seni visual", "Karya bebas", "Karya challenge", strictly "Komentar").
+  - **[R11 - P2] Comprehensive Verification & Authentic Testing:** Verified all 8 security and invariant scenarios in `testPhase2SecurityAndContracts.ts`. Verified 20/20 backend test suites in `npm run test:all`. Configured Playwright with multi-device coverage (Desktop Chrome, Mobile Chrome Pixel 5, Mobile Safari iPhone 12). 50/50 Playwright tests passed across Desktop Chrome & Mobile Chrome. Documented WebKit host system dependency gap (`libavif16` requirement for native headless WebKit execution) transparently.
+- **Round 2 Independent QA Remediation (Amendments 1–6):** **COMPLETED & 100% VERIFIED**
+  - **[Amendment 1 / R02, R03, R12] Voting Lifecycle, Generations & Uncertainty Barrier:** Added account/round generation tracking (`currentGen = "${userId || 'anon'}:${votingRoundId}"`) in `VotingWorkspace.tsx`, immediately dropping stale queued mutations on user or round switch. Implemented uncertainty lock barrier on network/500/timeout errors that pauses mutation flow until verified. Buffered incoming server refreshes while busy to prevent older snapshots from clobbering newer mutations. Rebuilt 320px candidate card steppers into a 2-row layout with $\ge 50\times 44$px touch targets, 44px dismiss controls, and stopped keyboard event bubbling on spoiler toggle buttons.
+  - **[Amendment 2 / R05] Moderation State-Transitions & Staff Triggers:** Enhanced `disqualifyChallengeCandidateService` to query open & pending rounds with strict post-lock status revalidation preserving lock hierarchy ($1 \rightarrow 2 \rightarrow 3 \rightarrow 4$). In `submission_locked`, automatically removed candidate from pending round candidates. In `tiebreak_open` and `tie_pending`, derived remaining tied candidates from original tied set, resolving the tie to `community_vote_winner` when 1 candidate remains. Persisted audit snapshots for revoked jury awards and results. Created `CandidateStaffDisqualifyButton.tsx` and wired staff disqualification triggers on both active and archive candidate cards.
+  - **[Amendment 3 / R07] Shared Public Artwork Provenance:** Built `src/lib/presentation/provenance.ts` (`projectPublicArtworkProvenance`, `sanitizeSystemCaption`) shared across `/api/artworks` and Beranda (`src/app/page.tsx`). Sanitized system captions referencing private challenge titles to safe neutral text while preserving artist `customCaption` and `origin: "challenge"`. Added `eq(challenges.isVisible, true)` filter to homepage queries.
+  - **[Amendment 4 / R04] Draft Storage Hardening & Deadline Enforcement:** Wrapped `window.localStorage` in `getLocalStorage()` catching browser `SecurityError`s. In `ChallengeSubmissionModal.tsx`, added `submissionDeadline` prop and check that discards/skips stale drafts if the deadline has passed. Cancelled pending autosave timers on unmount, discard, and user switch.
+  - **[Amendment 5 / R09, R10] Navigation Return Context & Terminology:** Added `from` parameter propagation across `ArtworkCard.tsx`, `GalleryGrid.tsx`, `src/app/artists/[slug]/page.tsx`, and `src/app/challenges/[slug]/page.tsx`. Cleaned UI vocabulary ("galeri karya seni visual", "portofolio anggota", "Kirim Karya", "Kirim Revisi Karya"). Hardened `returnUrl.ts` with `hasControlChars` to eliminate regex linter errors while rejecting control characters.
+  - **[Amendment 6 / R11] Authentic Verification Gate & Multi-Viewport Suite:** Updated `testPhase2SecurityAndContracts.ts` Scenarios 5, 6, 7 with authentic boundary calls: reader boundary `getChallengeVotingData` isolation, exported Server Action `importHistoricalChallengeAction` negative tests with zero DB writes, and full disqualification phase matrix (open round, closed round, pending round in locked phase, single-candidate tie resolution in tiebreak, audit log verification).
+
+- **Round 3 Independent QA Remediation (Findings 1–7):** **COMPLETED & 100% VERIFIED**
+  - **[Finding 1 / R09 - Open Redirect]:** Replaced regex allowlists with pathname normalization (`replace(/\/+/g, "/")`) preventing dot-segment protocol-relative bypasses (`/gallery/..//example.invalid`, `/a/%2e%2e//example.invalid`) while allowing legitimate search queries with `+` and `%20`. Redirect sink in `redeem-callback/route.ts` asserts same-origin target before redirecting.
+  - **[Finding 2 / R02 - Voting Recovery & Uncertainty]:** Settle pending allocations to zero when network uncertainty is detected; preserve latest unacknowledged intent in `failedIntentRef`; halt subsequent mutations until reconciled; require explicit user replay ("Coba simpan ulang") only after reconciliation succeeds; guard `handleReconcile` across success, error, and finally paths; prevent out-of-order in-epoch response overwrites with monotonic `seqRef` and `latestConfirmedSeqRef`.
+  - **[Finding 3 / R05 - Moderation Phase Matrix & Authentic Scores]:** Phase-specific closed round queries (checking tiebreak first, then main) look up authentic Star counts and `sourceVotingRoundId` with inner joins to `challengeBallots`. Row-level locked eligibility checks enforce `submissionStatus === 'submitted'`. Transition to `jury_selection_open` validates jury panel readiness (`validateJuryPhaseReadinessService`), rolling back the transaction if zero jurors are configured.
+  - **[Finding 4 / R07 - Structured Artwork Provenance]:** Replaced regex and hyphen splitting with authoritative structured metadata (`awardType`, `categoryLabel`) in `/api/artworks` and Beranda (`page.tsx`). Implemented `buildAuthoritativeSystemCaption` with a safe, neutral fallback ("Peserta Challenge") for legacy records or unlisted challenges without category truncation risks.
+  - **[Finding 5 / R04 - Draft Invalidation & Logout Scoping]:** Added explicit invalidation timestamps (`markDraftInvalidated`, `isDraftInvalidated`, `markGlobalDraftInvalidated`) in `draftStorage.ts` to invalidate drafts before keys exist and cancel autosave debounce timers. Extended draft cleanup across all logout paths (`UserDropdown`, `account-suspended`, `onboarding`), scoping cleanup to the previous user without clearing active drafts on modal dismiss or submission failures.
+  - **[Finding 6 / R09 - Gallery Context Restoration]:** Serialized complete filter state (`tab`, `search`, `media`, `sort`, `critique`) into the URL search params with non-scrolling replacement (`router.replace(..., { scroll: false })`). Hydrated on mount and browser Back/Forward (`popstate`). Stored composite `{ url, artworkId, scrollY, timestamp }` context in `sessionStorage` on card navigation; restored scroll position and focused referring card with `{ preventScroll: true }` after artworks render.
+- **Round 4 Independent QA Remediation (Findings F1–F6):** **COMPLETED & 100% VERIFIED**
+  - **[F1 - P1 / R04] Generational Draft Storage Contract & Reentrant Synchronization:**
+    - Upgraded draft storage to monotonic integer generation counters (`mengart:draft-generation:${userId}:${challengeId}`).
+    - Generation marker keys are persistent and never deleted on draft clearance; clearance monotonically increments generation counter to reject in-flight debounce autosaves and delayed callbacks.
+    - Mathematical immunity to wall-clock rollbacks (monotonic integer comparison `expectedGeneration === currentGen`).
+    - Cross-tab reentrant locking (`withDraftLock`) with attempt bounds and context-safe lock tracker.
+    - Scoped cleanup strictly by `(userId, challengeId)`, eliminating mass unscoped draft purging on logout.
+    - Automatic migration from legacy v1 format (`mengart_sub_draft:v1:...`) to modern format (`mengart:draft:...`).
+    - Dedicated test suite `testDraftStorageGenerations.ts` verifies 7/7 generational contracts.
+  - **[F2 - P1 / R02] Decoupled Voting Intent Recovery & Monotonic Sequence Ordering:**
+    - Decoupled unsaved intent recovery banner and explicit retry action ("Coba simpan ulang") from `errorMessage && saveStatus === "error"`.
+    - Retry button remains visible and operable after server reconciliation succeeds whenever unacknowledged user mutations exist.
+    - Explicit `hasUnsavedIntent` state tracking and monotonic sequence ordering (`reconcileSeq < latestConfirmedSeqRef.current`) discarding stale delayed reconciliation snapshots that arrive after newer confirmed mutations.
+    - Bound `isUncertainRef` and reset reconciliation states on generation switch.
+  - **[F3 - P1 / R01 & R11] Zero-Seam Production Authorization Architecture:**
+    - Completely eliminated `__testSessionUserOverride` and `__setTestSessionUser` from production RBAC (`src/lib/rbac.ts`).
+    - Server Action `importHistoricalChallengeAction` verifies request boundary authentication natively using `getCurrentUser()`.
+    - `getCurrentUser()` gracefully catches out-of-request scope calls returning `null` (unauthenticated).
+    - Scenario 6 in `testPhase2SecurityAndContracts.ts` tests native action boundary (unauthenticated call rejected, payload injection rejected with 0 DB writes) and validates service against real PostgreSQL rows (member, suspended, deleted, demoted staff, positive staff write).
+  - **[F4 - P2 / R05] Tiebreak Resolution Portfolio Auto-Materialization:**
+    - In `disqualifyChallengeCandidateService` (`src/lib/services/challengeService.ts`), added `await autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id)` on all transitions to `finished` (single-survivor tiebreak and 0-survivor terminations).
+    - Materializes `portfolio_entries` rows for winning submissions with deterministic system captions.
+    - Verified via dedicated PostgreSQL regression suite `testTiebreakPortfolioMaterialization.ts`.
+  - **[F5 - P2 / R09] Canonical Query Gallery Restoration & Target Verification:**
+    - Hardened `GalleryGrid.tsx`: canonical query string comparison (`isMatchingGalleryUrl`) rejects pathname-only matches.
+    - 15-minute expiration timestamp protects against stale saved context.
+    - Referring card existence (`document.getElementById`) is verified prior to consuming context and focusing with `{ preventScroll: true }`.
+  - **[F6 - P2 / R11] Targeted Regression Suites & Verification Gate:**
+    - Dedicated test suites added for F1 (`testDraftStorageGenerations.ts`) and F4 (`testTiebreakPortfolioMaterialization.ts`).
+    - Integrated into `npm run test:all` (22/22 suites passing, 100%).
+    - ESLint clean (0 errors, 0 warnings).
+    - TypeScript clean (`npx tsc --noEmit`: exit 0).
+    - Production build clean (`npm run build`: 32/32 routes + worker bundle).
+    - Playwright E2E clean (50/50 passing on Desktop Chrome & Mobile Chrome).
+    - Linux host OS WebKit limitation (`libavif.so.16`) transparently documented.
+    - PR maintained in DRAFT.
+
+- **Round 5 Independent QA Remediation (Findings G1–G4):** **COMPLETED & 100% VERIFIED**
+  - **[G1 - P1 / R04] Actual Logout Invalidation, Autosave Cancellation & Identity Transition:**
+    - Wired `invalidateActiveDraftOnLogout(departingUserId)` into all production sign-out entry points (`UserDropdown.tsx` and `SignOutButton.tsx`) before `signOut` or `logoutAction()`.
+    - Active draft context registered on modal mount/open (`setActiveDraftContext(userId, challengeId)`) and in-flight autosave timer IDs tracked (`registerPendingDraftAutosave`).
+    - Handled identity transitions from authenticated to anonymous (`prevUserIdRef.current && prevUserIdRef.current !== userId`), purging active draft and advancing generation.
+    - Preserved unaffected drafts of other challenges and other users on shared devices without mass/global purging.
+    - Verified via dedicated automated tests (Tests 10 & 11 in `testDraftStorageGenerations.ts`).
+  - **[G2 - P1 / R04] Storage Lock Contention Guard, Atomic Interleaving & Web Locks API Serialization:**
+    - Fixed `withDraftLock`: When lock acquisition fails, returns `null` immediately and strictly DOES NOT execute the critical section.
+    - Added `withDraftLockAsync` using `navigator.locks.request` (Web Locks API) with automatic localStorage mutex fallback.
+    - Fixed `_internalIncrementDraftGeneration`: Reads live storage generation immediately before writing and computes `Math.max(readGen + 1, validLatest + 1)`, guaranteeing monotonic advances ($1 \rightarrow 3$) under interleaved writes.
+    - Verified via Tests 8, 9, and 12 in `testDraftStorageGenerations.ts` (12/12 passing).
+  - **[G3 - P2 / R09] Authoritative Render-Time Query Filter Derivation & Gallery Context Protection:**
+    - In `GalleryGrid.tsx`, derived query filters (`authoritativeTab`, `urlSearch`, `authoritativeMedia`, `authoritativeSort`, `authoritativeCritique`) authoritatively from `searchParams` on render, passing them directly to `useArtworksQuery`.
+    - Guarantees React Query cache key matches `tab: "challenge"` on the very first mount, eliminating the cache race condition with default `bebas` data.
+    - In context restoration `useEffect`, verified `authoritativeTab === targetTab` and `!isLoading && !isFetching` before inspecting DOM or concluding absence, preventing premature context consumption or deletion.
+    - Bound all UI controls (SegmentedPill, chips, empty state) directly to authoritative filter values.
+  - **[G4 - P2 / R11] Zero-Seam Authenticated Request Testing & Monotonic Concurrency Verification:**
+    - Verified exported Server Action (`importHistoricalChallengeAction`) boundary with genuine authenticated sessions via test-level `esbuild` stubbing without production test seams.
+    - Proved rejection of unauthenticated callers and payload injections with 0 DB writes, rejection of member/suspended/deleted roles, and verified positive staff write with live audit log verification in PostgreSQL.
+    - Enhanced PostgreSQL concurrency test (Subscenario 7E) to fixture an active challenge with an open voting round, 4 candidates, cast ballot stars, and 2 concurrent candidate disqualifications under monotonic row locks, asserting candidate snapshot deletion, star voiding, and audit logging.
+    - Accurately documented all 22 test suites in `npm run test:all` and transparently disclosed Linux host OS `libavif.so.16` WebKit limitation while maintaining 50/50 passing on Chrome.
+    - Maintained PR in DRAFT.
+
+- **Round 6 Independent QA Remediation (Findings H1–H3):** **COMPLETED & 100% VERIFIED**
+  - **[H1 - P1 / R04] Dual-Layer Cross-Tab Lock Coordination & Fail-Closed Contention Policies:**
+    - Upgraded `withDraftLockAsync` to enforce a dual-layer lock: process-level exclusive coordination via `navigator.locks.request` (Web Locks API) that synchronously sets the localStorage mutex key `mengart:draft-lock:${userId}:${challengeId}` throughout the critical section, eliminating cross-tab interleaving between Web Lock callers and fallback storage callers.
+    - Converted all production draft operations in `ChallengeSubmissionModal.tsx` to async APIs (`saveSubmissionDraftAsync`, `loadSubmissionDraftAsync`, `clearSubmissionDraftAsync`).
+    - Removed unlocked fallback mutations in `incrementDraftGeneration` and `incrementDraftGenerationAsync`, ensuring both fail closed and return `null` on lock contention without mutating storage.
+    - Made `clearSubmissionDraft` and `clearSubmissionDraftAsync` return `boolean` indicating lock acquisition success.
+    - Hardened `invalidateActiveDraftOnLogout` so that active draft context in `sessionStorage` is preserved (not silently wiped) if lock acquisition fails during logout, returning `false` to prompt retry.
+    - Verified via Tests 13, 14, and 15 in `testDraftStorageGenerations.ts` and Test 12 in `e2e/frontend-overhaul-v03.spec.ts`.
+  - **[H2 - P2 / R04] Form Text Retention, Identity Decoupling & Immediate Draft Flush on Close:**
+    - Decoupled modal open/close state (`isOpen`) from the identity reset effect in `ChallengeSubmissionModal.tsx`, preventing premature form clearance upon modal close.
+    - Tracked latest form state in `latestValuesRef` and implemented `flushPendingDraft()`, which flushes in-flight text immediately to `localStorage` when the modal is closed (via ESC, backdrop click, Close 'X', or 'Batal' button) or unmounted before debounce timers expire.
+    - Retained active in-memory form values when reopening the modal, and restored text from storage if unmounted.
+    - Preserved explicit draft discard and submission success resets via `clearSubmissionDraftAsync`.
+    - Verified via Test 11 in `e2e/frontend-overhaul-v03.spec.ts`.
+  - **[H3 - P2 / R11] Exported Action Integration Labeling & Committed Ballot Invariant Assertions:**
+    - Accurately labeled Scenario 6 in `testPhase2SecurityAndContracts.ts` as an exported server action integration test with mocked session resolution and live PostgreSQL service verification, clearly distinguishing it from HTTP session authentication.
+    - Enhanced Subscenario 7E (PostgreSQL concurrency) to assert final committed ballot state: verifying `finalBallot1.starsAllocated === 0`, 0 remaining rows in `challengeBallotStars`, and 2 committed `star_returned` notifications.
+    - Maintained exact reporting of the 22 backend test suites and host OS WebKit limitation (`libavif16`).
+    - PR maintained in DRAFT.
+
+- **Final QA Review Remediation (External QA Findings QA-01–QA-05):** **COMPLETED & 100% VERIFIED**
+  - **[QA-01 - Process Risk / Reproducibility]:** Fully documented and independently reproduced all verification commands in clean environment: `npx tsc --noEmit` (0 errors), `npm run lint` (0 errors, 0 warnings), `npm run test:all` (22/22 suites passed, 100%), `npx playwright test --project="Desktop Chrome" --project="Mobile Chrome"` (56/56 passed, 100%), and `npm run build` (32/32 routes + worker bundle compiled cleanly).
+  - **[QA-02 - Residual Risk / Storage Lock Acquisition]:** Expanded `withDraftLockAsync` acquisition window from 100ms to 250ms with 25 attempts and introduced an explicit `await new Promise((r) => setTimeout(r, 10))` async yield delay between attempts, preventing sub-millisecond tight loop failure. Added retry backoff (50ms) to `invalidateActiveDraftOnLogout` and 100ms backoff on lock contention for debounced autosave.
+  - **[QA-03 - Residual Risk / Synchronous Draft Flush & Teardown]:** Upgraded `flushPendingDraft` to execute synchronous `saveSubmissionDraft` immediately, guaranteeing persistent `localStorage` write in the current call tick before unmount or teardown, alongside async coordination with retry. Added `pagehide` and `visibilitychange` window event listeners to flush pending draft values immediately if tab is closed or navigated away. Added Playwright E2E Test 13 verifying draft survival across modal close and immediate page reload.
+  - **[QA-04 - Coverage Gap / Web Locks Fallback & Storage Errors]:** Added Tests 16–19 to `testDraftStorageGenerations.ts`: (16) Web Locks absent fallback to storage mutex, (17) Web Locks throwing DOMException fallback, (18) delayed Web Locks concurrent tab serialization, and (19) storage `QuotaExceededError`/`SecurityError` safe fail-closed behavior (returns `false` without crashing).
+  - **[QA-05 - Coverage Gap / PostgreSQL Refund Idempotency & Rollback]:** Added Subscenario 7F (repeat disqualification idempotency check asserting rejection with `"Submisi telah didiskualifikasi sebelumnya."`, 0 additional notifications in PostgreSQL, and 0 star leakage) and Subscenario 7G (crash-after-debit transaction rollback check asserting simulated mid-transaction crashes cleanly rollback all ballot star debits, restore allocation breakdown rows, and leave 0 notifications) to `testPhase2SecurityAndContracts.ts`.
 
 ## Overall Status
-- **GO — PRODUCTION LAUNCH COMPLETE** (All Release Gates A–H, Phase 9 Legacy Cleanup, Baseline Revisions, and Production Documentation Pushed to Origin).
+- **FRONTEND UI/UX OVERHAUL (BLUEPRINT v0.3) & FINAL QA REVIEW (QA-01–QA-05) — 100% COMPLETE & VERIFIED**
+  - Baseline Backend & Gates A–H: 100% Verified.
+  - Master Engineering Plan: Approved and locked.
+  - Grill-Me Interview: 100% Complete & Decisions Appended.
+  - Phases 2–8: **COMPLETED & 100% VERIFIED**.
+  - QA Remediation (R01–R12, Amendments 1–6, Findings 1–7, Findings F1–F6, Findings G1–G4, Findings H1–H3, Findings QA-01–QA-05): **COMPLETED & 100% VERIFIED**.
+  - All 22 backend test suites (`npm run test:all`): **22/22 PASSED (100%)**.
+  - Playwright E2E suites (`Desktop Chrome` & `Mobile Chrome`): **56/56 PASSED (100%)**.
+  - ESLint (`npm run lint`): **0 errors, 0 warnings**.
+  - TypeScript (`npx tsc --noEmit`): **0 errors (exit 0)**.
+  - Next.js Turbopack build (`npm run build`): **32/32 routes + worker bundle compiled cleanly**.
+  - PR Status: **READY FOR PR (DRAFT LIFTED — APPROVED BY QA)**.
+
+### Traceable Acceptance & Closure Matrix (Final QA Review QA-01–QA-05)
+| Finding | Topic | Status | Evidence / Verification Gate |
+|---|---|---|---|
+| **QA-01** | Process Risk / Clean Environment Reproduction | **CLOSED** | All 5 commands executed cleanly: `tsc --noEmit` (exit 0), `npm run lint` (exit 0), `npm run test:all` (22/22 passed), `npx playwright test` (56/56 passed on Desktop & Mobile Chrome), `npm run build` (exit 0). |
+| **QA-02** | Lock Contention Window & Backoff Retries | **CLOSED** | Expanded `withDraftLockAsync` window to 250ms with 10ms async delays; backoff retry in `invalidateActiveDraftOnLogout` (50ms) and autosave (100ms); verified in `draftStorage.ts` and `ChallengeSubmissionModal.tsx`. |
+| **QA-03** | Immediate Synchronous Draft Flush & Teardown Safety | **CLOSED** | `flushPendingDraft` calls synchronous `saveSubmissionDraft` immediately; added `pagehide`/`visibilitychange` listeners; verified in `ChallengeSubmissionModal.tsx` and Playwright E2E Test 13. |
+| **QA-04** | Web Locks Fallback Coordination & Quota Safety | **CLOSED** | Verified Web Locks absent, throwing DOMException, delayed concurrent tab serialization, and safe fail-closed behavior on QuotaExceededError/SecurityError in `testDraftStorageGenerations.ts` (Tests 16–19). |
+| **QA-05** | PostgreSQL Refund Idempotency & Rollback Integrity | **CLOSED** | Verified repeat disqualification idempotency (0 duplicate notifications, 0 star leakage) in Subscenario 7F, and crash-after-debit transaction rollback (0 star leakage, 0 orphan notifications) in Subscenario 7G in `testPhase2SecurityAndContracts.ts`. |
+
+
+
+
+
+
+
+

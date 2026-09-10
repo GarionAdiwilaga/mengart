@@ -12,7 +12,7 @@ import {
 } from "@/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { resolveReportService } from "@/lib/services/moderationService";
+import { resolveReportService, takedownArtworkDirectService } from "@/lib/services/moderationService";
 import { checkRateLimit } from "@/lib/rateLimit";
 
 export async function createReportAction(formData: FormData) {
@@ -222,3 +222,30 @@ export async function deleteMonthlySpotlightAction(spotlightId: string, reason: 
   revalidatePath("/admin/spotlight");
   return { success: true };
 }
+
+export async function takedownArtworkDirectAction(artworkId: string, reason: string) {
+  const user = await requireModerator("/dashboard");
+
+  // Rate Limiting (Operational Staff Action, Fail-Open with logging)
+  const rl = await checkRateLimit(`report_resolve:${user.id}`, {
+    limit: 30,
+    windowSeconds: 60,
+    criticality: "fail_open",
+  });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak tindakan moderasi dalam waktu singkat.");
+  }
+
+  const result = await takedownArtworkDirectService(db, {
+    actorUserId: user.id,
+    artworkId,
+    reason,
+  });
+
+  revalidatePath("/");
+  revalidatePath("/gallery");
+  revalidatePath("/artworks");
+  revalidatePath("/admin/moderation");
+  return result;
+}
+

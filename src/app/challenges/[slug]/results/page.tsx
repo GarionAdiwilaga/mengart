@@ -13,13 +13,19 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
+import { auth } from "@/auth";
+
 interface ResultsPageProps {
   params: Promise<{ slug: string }>;
 }
 
 export default async function ChallengeResultsPage({ params }: ResultsPageProps) {
   const { slug } = await params;
-  const challenge = await getChallengeBySlug(slug);
+  const session = await auth();
+  const isStaff = Boolean(
+    session?.user?.role === "admin" || session?.user?.role === "moderator"
+  );
+  const challenge = await getChallengeBySlug(slug, { allowInvisible: isStaff });
 
   if (!challenge) {
     notFound();

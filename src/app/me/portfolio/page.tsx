@@ -1,12 +1,13 @@
 import { requireAuth } from "@/lib/rbac";
 import { db } from "@/db";
 import { artworks, artworkVersions, profiles, portfolioEntries } from "@/db/schema";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, isNull } from "drizzle-orm";
 import Link from "next/link";
 import { ArrowLeft, Image as ImageIcon, Sparkles, Film, Clock, ExternalLink } from "lucide-react";
 import { UploadArtworkModal } from "@/components/portfolio/UploadArtworkModal";
 import { DeleteArtworkButton } from "@/components/portfolio/DeleteArtworkButton";
 import { PortfolioItemActions } from "@/components/portfolio/PortfolioItemActions";
+import { StudioShell } from "@/components/layout/shells/StudioShell";
 
 export default async function PortfolioManagerPage() {
   const user = await requireAuth("/login");
@@ -19,9 +20,11 @@ export default async function PortfolioManagerPage() {
 
   if (!profile) {
     return (
-      <main className="min-h-screen p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-6">
-        <p className="text-zinc-400 text-sm font-mono">Profil tidak ditemukan.</p>
-      </main>
+      <StudioShell headerTitle="Studio Portofolio">
+        <div className="glass-panel p-12 rounded-3xl text-center flex flex-col items-center gap-3">
+          <p className="text-zinc-400 font-mono text-sm">Profil tidak ditemukan.</p>
+        </div>
+      </StudioShell>
     );
   }
 
@@ -55,33 +58,15 @@ export default async function PortfolioManagerPage() {
       )
     )
     .leftJoin(artworkVersions, eq(artworkVersions.id, artworks.currentVersionId))
-    .where(eq(artworks.userId, user.id))
+    .where(and(eq(artworks.userId, user.id), isNull(artworks.deletedAt)))
     .orderBy(desc(artworks.createdAt));
 
   return (
-    <main className="p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-8 flex-1">
-      {/* Studio Header Action Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-6">
-        <div className="flex flex-col gap-2">
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center gap-1.5 text-xs font-mono text-zinc-400 hover:text-amber-400 transition-colors"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Dashboard
-          </Link>
-          <h1 className="font-display font-extrabold text-3xl text-[#f6f2e9] tracking-tight">
-            Vault Portofolio Saya
-          </h1>
-          <p className="text-sm text-zinc-400">
-            Kelola arsip master, versi publik terlindungi, dan karya showcase profil Anda.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <UploadArtworkModal />
-        </div>
-      </div>
-
+    <StudioShell
+      headerTitle="Vault Portofolio Saya"
+      headerSubtitle="Kelola arsip master, versi publik terlindungi, dan kurasi etalase profil Anda."
+      rightAction={<UploadArtworkModal />}
+    >
       {/* Artworks List */}
       {artworksList.length === 0 ? (
         <div className="glass-panel p-12 rounded-3xl flex flex-col items-center justify-center text-center gap-4">
@@ -195,6 +180,6 @@ export default async function PortfolioManagerPage() {
           })}
         </div>
       )}
-    </main>
+    </StudioShell>
   );
 }

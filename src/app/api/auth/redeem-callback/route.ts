@@ -5,6 +5,22 @@ import { db } from "@/db";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 
+import { getSafeReturnUrl } from "@/lib/navigation/returnUrl";
+
+function createSafeRedirectUrl(destination: string, requestUrl: string, fallback: string = "/dashboard"): URL {
+  const safePath = getSafeReturnUrl(destination, fallback);
+  const parsedRequest = new URL(requestUrl);
+  const target = new URL(safePath, parsedRequest.origin);
+  if (
+    target.origin !== parsedRequest.origin ||
+    target.pathname.startsWith("//") ||
+    target.pathname.startsWith("/\\")
+  ) {
+    return new URL(fallback, parsedRequest.origin);
+  }
+  return target;
+}
+
 export async function handleRedeemCallback(
   request: NextRequest,
   sessionUserOverride?: { id: string; email?: string; name?: string; image?: string; role?: string; membershipStatus?: string | null }
@@ -31,6 +47,10 @@ export async function handleRedeemCallback(
     "127.0.0.1";
   const userAgent = request.headers.get("user-agent") || undefined;
 
+  const rawReturnTo =
+    request.nextUrl.searchParams.get("returnTo") || request.nextUrl.searchParams.get("from");
+  const returnTo = getSafeReturnUrl(rawReturnTo, "/dashboard");
+
   // 1. Refresh live user record from DB
   const [dbUser] = await db
     .select({
@@ -49,14 +69,15 @@ export async function handleRedeemCallback(
   }
 
   if (dbUser.membershipStatus === "suspended") {
-    const response = NextResponse.redirect(new URL("/dashboard?error=AccountSuspended", request.url));
+    const response = NextResponse.redirect(new URL("/account-suspended?error=AccountSuspended", request.url));
     response.cookies.delete("mengart_pending_invite");
     return response;
   }
 
   if (dbUser.membershipStatus === "active") {
-    // Already an active member: pass through to dashboard without consuming invite
-    const response = NextResponse.redirect(new URL("/dashboard", request.url));
+    // Already an active member: pass through to preserved destination without consuming invite
+    const targetUrl = createSafeRedirectUrl(returnTo, request.url, "/dashboard");
+    const response = NextResponse.redirect(targetUrl);
     response.cookies.delete("mengart_pending_invite");
     return response;
   }
@@ -67,7 +88,11 @@ export async function handleRedeemCallback(
 
   if (!pendingCode || pendingCode.trim().length === 0) {
     // No invite provided: navigate to onboarding to enter invite code manually
-    const response = NextResponse.redirect(new URL("/onboarding", request.url));
+    const onboardingUrl = new URL("/onboarding", request.url);
+    if (rawReturnTo) {
+      onboardingUrl.searchParams.set("returnTo", returnTo);
+    }
+    const response = NextResponse.redirect(onboardingUrl);
     response.cookies.delete("mengart_pending_invite");
     return response;
   }
@@ -82,7 +107,7 @@ export async function handleRedeemCallback(
       userAgent,
     });
 
-    const targetUrl = new URL("/dashboard", request.url);
+    const targetUrl = createSafeRedirectUrl(returnTo, request.url, "/dashboard");
     if (result.isAlreadyActive) {
       targetUrl.searchParams.set("notice", "already_active");
     } else {
@@ -95,6 +120,9 @@ export async function handleRedeemCallback(
   } catch (error: any) {
     const targetUrl = new URL("/onboarding", request.url);
     targetUrl.searchParams.set("error", error?.message || "Gagal mengaktifkan undangan.");
+    if (rawReturnTo) {
+      targetUrl.searchParams.set("returnTo", returnTo);
+    }
 
     const response = NextResponse.redirect(targetUrl);
     response.cookies.delete("mengart_pending_invite");

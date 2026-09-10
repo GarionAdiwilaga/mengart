@@ -1,36 +1,64 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import type { CandidateArtwork } from "@/lib/voting";
-import { castOrUpdateBallotAction, resetBallotAction } from "@/app/actions/voting";
-import { BallotReviewDock } from "./BallotReviewDock";
+import { useState, useCallback, useEffect, useRef } from "react";
+import Image from "next/image";
 import {
   Star,
-  LayoutGrid,
-  Maximize2,
+  Eye,
+  AlertCircle,
+  X,
+  RotateCcw,
   ChevronLeft,
   ChevronRight,
-  Columns2,
-  Info,
-  CheckCircle2,
-  AlertCircle,
-  Image as ImageIcon,
-  User,
   Sparkles,
+  Plus,
+  Minus,
+  RefreshCw,
 } from "lucide-react";
-import Link from "next/link";
+import { castOrUpdateBallotAction, resetBallotAction, reconcileBallotAction } from "@/app/actions/voting";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/AccessibleDialog";
+import { AtelierButton } from "@/components/ui/atoms/AtelierButton";
+import { AtelierBadge } from "@/components/ui/atoms/AtelierBadge";
+import { ArtworkMediaFrame } from "@/components/ui/molecules/ArtworkMediaFrame";
+import { StarAllocationCounter } from "@/components/ui/molecules/StarAllocationCounter";
+import { ConfirmModal } from "@/components/ui/molecules/ConfirmModal";
+
+export interface CandidateArtwork {
+  submissionId: string;
+  artworkId: string;
+  artistUserId: string;
+  artistName: string;
+  title: string;
+  description?: string | null;
+  softwareUsed?: string | null;
+  mediaType: string;
+  publicStorageKey?: string | null;
+  thumbnailStorageKey?: string | null;
+  totalStars: number;
+  isSpoiler: boolean;
+  isSelfSubmission?: boolean;
+}
 
 interface VotingWorkspaceProps {
   challengeId: string;
   challengeTitle: string;
-  challengeSlug: string;
+  challengeSlug?: string;
   votingRoundId: string;
   roundType?: "main" | "tiebreak";
+  roundDeadline?: Date | string | null;
+  starsPerMember?: number;
+  maxStars?: number;
+  initialAllocations?: { [submissionId: string]: number };
+  initialRemainingStars?: number;
   candidates: CandidateArtwork[];
-  initialAllocations: { [submissionId: string]: number };
-  maxStars: number;
-  initialRemainingStars: number;
-  isLoggedIn: boolean;
+  userId?: string | null;
+  isLoggedIn?: boolean;
 }
 
 export function VotingWorkspace({
@@ -38,110 +66,631 @@ export function VotingWorkspace({
   challengeTitle,
   challengeSlug,
   votingRoundId,
-  roundType = "main",
-  candidates,
-  initialAllocations,
-  maxStars,
+  roundType,
+  roundDeadline,
+  starsPerMember = 1,
+  maxStars: explicitMaxStars,
+  initialAllocations = {},
   initialRemainingStars,
-  isLoggedIn,
+  candidates,
+  userId,
+  isLoggedIn = false,
 }: VotingWorkspaceProps) {
-  const [viewMode, setViewMode] = useState<"grid" | "focus" | "compare">("grid");
+  const maxStars = explicitMaxStars ?? starsPerMember ?? 1;
+  const computedInitialRemaining =
+    initialRemainingStars !== undefined
+      ? initialRemainingStars
+      : maxStars - Object.values(initialAllocations).reduce((a, b) => a + b, 0);
+
+  // Authoritative server-confirmed snapshot
+  const confirmedAllocationsRef = useRef<{ [submissionId: string]: number }>({
+    ...initialAllocations,
+  });
+
+  // Monotonic epoch tracking across user and round lifecycle changes
+  const epochCounterRef = useRef(0);
+  const currentGenStr = `${userId || "anon"}:${votingRoundId}`;
+  const lastGenStrRef = useRef(currentGenStr);
+  const epochRef = useRef(0);
+  const seqRef = useRef(0);
+  const latestConfirmedSeqRef = useRef(0);
+  const pendingCountRef = useRef(0);
+
+  // Local optimistic allocations
   const [allocations, setAllocations] = useState<{ [submissionId: string]: number }>(
     initialAllocations
   );
-  const [remainingStars, setRemainingStars] = useState(initialRemainingStars);
+  const [remainingStars, setRemainingStars] = useState(computedInitialRemaining);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isPermanentError, setIsPermanentError] = useState(false);
+  const [isUncertain, setIsUncertain] = useState(false);
+  const isUncertainRef = useRef(false);
+  const [isReconciling, setIsReconciling] = useState(false);
+  const isReconcilingRef = useRef(false);
+  const [hasUnsavedIntent, setHasUnsavedIntent] = useState(false);
+
+  // Failed intent storage for explicit retry
+  const failedIntentRef = useRef<{ [submissionId: string]: number } | null>(null);
+  const busyPendingRefreshRef = useRef<{
+    allocations: Record<string, number>;
+    remaining: number;
+  } | null>(null);
+
+  // Focus detail view state
+  const [focusedCandidate, setFocusedCandidate] = useState<CandidateArtwork | null>(null);
   const [focusIndex, setFocusIndex] = useState(0);
-  const [compareIndexA, setCompareIndexA] = useState(0);
-  const [compareIndexB, setCompareIndexB] = useState(candidates.length > 1 ? 1 : 0);
 
-  const [isLoading, setIsLoading] = useState(false);
-  const [feedback, setFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  // Single-star movement modal state
+  const [moveStarModal, setMoveStarModal] = useState<{
+    isOpen: boolean;
+    fromCandidate: CandidateArtwork | null;
+    toCandidate: CandidateArtwork | null;
+  }>({
+    isOpen: false,
+    fromCandidate: null,
+    toCandidate: null,
+  });
 
-  // Recalculate remaining stars whenever allocations change
-  const updateStars = useCallback((submissionId: string, delta: number) => {
-    if (!isLoggedIn) {
-      setFeedback({ type: "error", text: "Silakan masuk terlebih dahulu untuk menggunakan hak suara Stars." });
+  // Reset confirmation modal state
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+
+  // Serialized FIFO Promise Queue to ensure database write ordering
+  const queueRef = useRef<Promise<void>>(Promise.resolve());
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isUnmountedRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      isUnmountedRef.current = true;
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, []);
+
+  // Invalidate pending queue operations and sync state immediately on account or round generation change
+  useEffect(() => {
+    const newGenStr = `${userId || "anon"}:${votingRoundId}`;
+    if (lastGenStrRef.current !== newGenStr) {
+      lastGenStrRef.current = newGenStr;
+      epochRef.current = ++epochCounterRef.current;
+      seqRef.current = 0;
+      latestConfirmedSeqRef.current = 0;
+      pendingCountRef.current = 0;
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      confirmedAllocationsRef.current = { ...initialAllocations };
+      setAllocations(initialAllocations);
+      const total = Object.values(initialAllocations).reduce((a, b) => a + b, 0);
+      setRemainingStars(maxStars - total);
+      setSaveStatus("idle");
+      setErrorMessage(null);
+      setIsPermanentError(false);
+      setIsUncertain(false);
+      isUncertainRef.current = false;
+      failedIntentRef.current = null;
+      setHasUnsavedIntent(false);
+      busyPendingRefreshRef.current = null;
+      setIsReconciling(false);
+      isReconcilingRef.current = false;
+      setIsResetting(false);
+      setIsResetModalOpen(false);
+    }
+  }, [userId, votingRoundId, initialAllocations, maxStars]);
+
+  // Synchronize refreshed server props when mounted
+  useEffect(() => {
+    // If the queue is busy processing writes, do not overwrite optimistic state with stale refresh
+    if (pendingCountRef.current > 0) {
+      busyPendingRefreshRef.current = {
+        allocations: initialAllocations,
+        remaining: computedInitialRemaining,
+      };
       return;
     }
 
-    const candidate = candidates.find((c) => c.submissionId === submissionId);
-    if (candidate?.isSelfSubmission) {
-      setFeedback({ type: "error", text: "Self-voting tidak diperbolehkan dalam aturan atelier." });
-      return;
-    }
+    // Queue is idle: safely synchronize confirmed server allocations
+    confirmedAllocationsRef.current = { ...initialAllocations };
+    setAllocations(initialAllocations);
+    setRemainingStars(computedInitialRemaining);
+  }, [initialAllocations, computedInitialRemaining]);
 
-    const currentCount = allocations[submissionId] || 0;
-    const newCount = currentCount + delta;
+  // Enqueue serialized save operation
+  const enqueueSave = useCallback(
+    (targetAllocations: { [submissionId: string]: number }) => {
+      if (!isLoggedIn) {
+        setErrorMessage("Silakan masuk terlebih dahulu untuk memberikan suara Star.");
+        setSaveStatus("error");
+        setIsPermanentError(true);
+        return;
+      }
 
-    if (newCount < 0) return;
-    if (delta > 0 && remainingStars <= 0) {
-      setFeedback({ type: "error", text: `Seluruh ${maxStars} Stars telah Anda alokasikan.` });
-      return;
-    }
+      // Uncertainty gate: pause subsequent writes while outcome is unresolved
+      if (isUncertainRef.current) {
+        failedIntentRef.current = targetAllocations;
+        setHasUnsavedIntent(true);
+        setErrorMessage(
+          "Status alokasi suara sebelumnya belum pasti karena gangguan jaringan. Harap periksa status suara terlebih dahulu."
+        );
+        setSaveStatus("error");
+        return;
+      }
 
-    const newAllocations = { ...allocations, [submissionId]: newCount };
-    const newTotalAllocated = Object.values(newAllocations).reduce((a, b) => a + b, 0);
+      const opEpoch = epochRef.current;
+      const opSeq = ++seqRef.current;
+      pendingCountRef.current++;
 
-    if (newTotalAllocated > maxStars) return;
+      // 1. Optimistic UI update
+      setAllocations(targetAllocations);
+      const newTotal = Object.values(targetAllocations).reduce((a, b) => a + b, 0);
+      setRemainingStars(maxStars - newTotal);
+      setSaveStatus("saving");
+      setErrorMessage(null);
 
-    setAllocations(newAllocations);
-    setRemainingStars(maxStars - newTotalAllocated);
-    setFeedback(null);
-  }, [isLoggedIn, candidates, allocations, remainingStars, maxStars]);
+      // Clear any pending transition back to idle
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
 
-  const handleReset = async () => {
-    if (!confirm("Reset seluruh alokasi Stars Anda untuk babak voting ini?")) return;
-    setIsLoading(true);
-    try {
-      await resetBallotAction({ votingRoundId });
-      setAllocations({});
-      setRemainingStars(maxStars);
-      setFeedback({ type: "success", text: "Alokasi Stars berhasil direset." });
-    } catch (err: any) {
-      setFeedback({ type: "error", text: err?.message || "Gagal mereset suara." });
-    } finally {
-      setIsLoading(false);
-    }
+      const activeVotes = Object.entries(targetAllocations)
+        .filter(([_, count]) => count > 0)
+        .map(([submissionId, starsCount]) => ({ submissionId, starsCount }));
+
+      // 2. Chain onto FIFO Promise Queue
+      queueRef.current = queueRef.current
+        .then(async () => {
+          // Invalidation check: skip if unmounted or epoch changed (without modifying new epoch's pending count)
+          if (isUnmountedRef.current || epochRef.current !== opEpoch) {
+            return;
+          }
+
+          // Pre-execution uncertainty gate: block queued writes if earlier mutation failed with uncertainty
+          if (isUncertainRef.current) {
+            pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+            failedIntentRef.current = targetAllocations;
+            setHasUnsavedIntent(true);
+            if (pendingCountRef.current === 0) {
+              setSaveStatus("error");
+            }
+            return;
+          }
+
+          // Check client-side deadline closure
+          if (roundDeadline && new Date() >= new Date(roundDeadline)) {
+            pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+            setSaveStatus("error");
+            setErrorMessage("Batas waktu voting untuk babak ini telah berakhir.");
+            setIsPermanentError(true);
+            return;
+          }
+
+          // When this mutation actually runs, reset status & clear idle timers
+          setSaveStatus("saving");
+          if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+
+          let res: any;
+          try {
+            res = await castOrUpdateBallotAction({
+              votingRoundId,
+              votes: activeVotes,
+            });
+          } catch (err: any) {
+            if (isUnmountedRef.current || epochRef.current !== opEpoch) {
+              return;
+            }
+
+            pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+            const msg: string = err?.message || "Gagal menyimpan alokasi suara.";
+
+            const isConfirmedRejection =
+              msg.includes("Karya sendiri") ||
+              msg.includes("sedang tidak dibuka") ||
+              msg.includes("telah berakhir") ||
+              msg.includes("ditangguhkan") ||
+              msg.includes("melebihi alokasi") ||
+              msg.includes("didiskualifikasi") ||
+              msg.includes("tidak terdaftar") ||
+              msg.includes("Format") ||
+              msg.includes("Akses ditolak");
+
+            if (isConfirmedRejection) {
+              const isPermanent =
+                msg.includes("Karya sendiri") ||
+                msg.includes("sedang tidak dibuka") ||
+                msg.includes("telah berakhir") ||
+                msg.includes("ditangguhkan") ||
+                msg.includes("didiskualifikasi");
+
+              setIsPermanentError(isPermanent);
+              setSaveStatus("error");
+              setErrorMessage(msg);
+              failedIntentRef.current = targetAllocations;
+              setHasUnsavedIntent(!isPermanent);
+
+              // Rollback optimistic state ONLY if this was the latest enqueued operation
+              if (opSeq === seqRef.current) {
+                setAllocations(confirmedAllocationsRef.current);
+                const rolledBackTotal = Object.values(confirmedAllocationsRef.current).reduce(
+                  (a, b) => a + b,
+                  0
+                );
+                setRemainingStars(maxStars - rolledBackTotal);
+              }
+            } else {
+              // UNCERTAIN OUTCOME: Network error, timeout, or 500
+              isUncertainRef.current = true;
+              setIsUncertain(true);
+              setSaveStatus("error");
+              setErrorMessage(
+                "Koneksi terputus saat menyimpan suara. Harap periksa status suara untuk memastikan alokasi tersimpan."
+              );
+              failedIntentRef.current = targetAllocations;
+              setHasUnsavedIntent(true);
+            }
+            return;
+          }
+
+          if (isUnmountedRef.current || epochRef.current !== opEpoch) {
+            return;
+          }
+
+          pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+
+          if (res?.success) {
+            if (opSeq >= latestConfirmedSeqRef.current) {
+              latestConfirmedSeqRef.current = opSeq;
+              confirmedAllocationsRef.current = targetAllocations;
+            }
+            failedIntentRef.current = null;
+            setHasUnsavedIntent(false);
+            setIsPermanentError(false);
+            isUncertainRef.current = false;
+            setIsUncertain(false);
+
+            // If this is the latest enqueued operation, update allocations & remainingStars
+            if (opSeq === seqRef.current) {
+              setAllocations(targetAllocations);
+              const total = Object.values(targetAllocations).reduce((a, b) => a + b, 0);
+              setRemainingStars(maxStars - total);
+            }
+
+            // Only transition to "saved" if no newer work is pending in queue
+            if (pendingCountRef.current === 0) {
+              setSaveStatus("saved");
+              if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+              saveTimeoutRef.current = setTimeout(() => {
+                if (!isUnmountedRef.current && pendingCountRef.current === 0 && epochRef.current === opEpoch) {
+                  setSaveStatus("idle");
+                }
+              }, 2500);
+
+              // Queue is now idle: discard stale refresh buffer
+              busyPendingRefreshRef.current = null;
+            } else {
+              setSaveStatus("saving");
+            }
+          }
+        })
+        .catch((err) => {
+          console.error("Voting queue execution error:", err);
+        });
+    },
+    [isLoggedIn, maxStars, roundDeadline, votingRoundId]
+  );
+
+  // Retry failed intent (explicit action allowed only when NOT in an unresolved uncertain state)
+  const handleRetryFailedIntent = () => {
+    if (!failedIntentRef.current || isPermanentError || isUncertainRef.current) return;
+    const retryTarget = { ...failedIntentRef.current };
+    enqueueSave(retryTarget);
   };
 
-  const handleSubmit = async () => {
-    setIsLoading(true);
-    setFeedback(null);
-
-    const activeList = Object.entries(allocations)
-      .filter(([_, count]) => count > 0)
-      .map(([submissionId, starsCount]) => ({ submissionId, starsCount }));
-
+  // Reconcile ballot status with server with full epoch & error/finally guards
+  const handleReconcile = async () => {
+    setIsReconciling(true);
+    isReconcilingRef.current = true;
+    setErrorMessage(null);
+    const opEpoch = epochRef.current;
+    const reconcileSeq = ++seqRef.current;
     try {
-      const res = await castOrUpdateBallotAction({ votingRoundId, votes: activeList });
-      if (res.success) {
-        setFeedback({
-          type: "success",
-          text: "Suara berhasil disimpan! Anda tetap dapat mengubah alokasi hingga batas waktu voting berakhir.",
+      const roundData = await reconcileBallotAction(votingRoundId);
+      if (isUnmountedRef.current || epochRef.current !== opEpoch) return;
+
+      if (reconcileSeq < latestConfirmedSeqRef.current) {
+        // Stale reconciliation read! A newer mutation was already confirmed.
+        return;
+      }
+      latestConfirmedSeqRef.current = Math.max(latestConfirmedSeqRef.current, reconcileSeq);
+
+      if (roundData?.votingRound?.id && roundData.votingRound.id !== votingRoundId) {
+        throw new Error("ID babak voting tidak sesuai dengan babak aktif.");
+      }
+
+      const serverAllocations: Record<string, number> = {};
+      if (roundData?.candidates) {
+        roundData.candidates.forEach((c: any) => {
+          if (c.userAllocatedStars && c.userAllocatedStars > 0) {
+            serverAllocations[c.submissionId] = c.userAllocatedStars;
+          }
         });
       }
+      confirmedAllocationsRef.current = serverAllocations;
+      setAllocations(serverAllocations);
+      const serverTotal = Object.values(serverAllocations).reduce((a, b) => a + b, 0);
+      setRemainingStars(maxStars - serverTotal);
+
+      // Uncertainty resolved authoritatively
+      isUncertainRef.current = false;
+      setIsUncertain(false);
+      setIsPermanentError(false);
+
+      // Settle failed intent if server state already matches it
+      if (failedIntentRef.current) {
+        const intentKeys = Object.keys(failedIntentRef.current).filter(
+          (k) => (failedIntentRef.current![k] || 0) > 0
+        );
+        const serverKeys = Object.keys(serverAllocations).filter(
+          (k) => (serverAllocations[k] || 0) > 0
+        );
+        const match =
+          intentKeys.length === serverKeys.length &&
+          intentKeys.every((k) => failedIntentRef.current![k] === serverAllocations[k]);
+        if (match) {
+          failedIntentRef.current = null;
+          setHasUnsavedIntent(false);
+        } else {
+          setHasUnsavedIntent(true);
+        }
+      } else {
+        setHasUnsavedIntent(false);
+      }
+
+      setSaveStatus("saved");
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = setTimeout(() => {
+        if (!isUnmountedRef.current && epochRef.current === opEpoch) setSaveStatus("idle");
+      }, 2000);
     } catch (err: any) {
-      setFeedback({ type: "error", text: err?.message || "Gagal menyimpan suara." });
+      if (isUnmountedRef.current || epochRef.current !== opEpoch) return;
+      setErrorMessage(err?.message || "Gagal memeriksa status suara.");
+      setSaveStatus("error");
     } finally {
-      setIsLoading(false);
+      if (!isUnmountedRef.current && epochRef.current === opEpoch) {
+        setIsReconciling(false);
+        isReconcilingRef.current = false;
+        pendingCountRef.current = 0;
+      }
     }
   };
 
-  // Keyboard navigation for Focus Deck
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (viewMode === "focus") {
-        if (e.key === "ArrowLeft") {
-          setFocusIndex((prev) => (prev > 0 ? prev - 1 : candidates.length - 1));
-        } else if (e.key === "ArrowRight") {
-          setFocusIndex((prev) => (prev < candidates.length - 1 ? prev + 1 : 0));
-        } else if (e.key === "1") {
-          const cur = candidates[focusIndex];
-          if (cur) updateStars(cur.submissionId, 1);
+  // Increment Star allocation for multi-star budgets
+  const handleIncrementStar = (targetCandidate: CandidateArtwork) => {
+    if (!isLoggedIn) {
+      setErrorMessage("Silakan masuk terlebih dahulu untuk memberikan suara Star.");
+      setSaveStatus("error");
+      setIsPermanentError(true);
+      return;
+    }
+
+    if (targetCandidate.isSelfSubmission) {
+      setErrorMessage("Star tidak dapat diberikan untuk karya sendiri.");
+      setSaveStatus("error");
+      setIsPermanentError(true);
+      return;
+    }
+
+    if (remainingStars <= 0) {
+      setErrorMessage(
+        `Semua ${maxStars} Star sudah kamu gunakan. Kurangi alokasi dari karya lain terlebih dahulu.`
+      );
+      setSaveStatus("error");
+      setIsPermanentError(false);
+      return;
+    }
+
+    const currentCount = allocations[targetCandidate.submissionId] || 0;
+    const nextCount = currentCount + 1;
+    const nextAllocations = { ...allocations, [targetCandidate.submissionId]: nextCount };
+    enqueueSave(nextAllocations);
+  };
+
+  // Decrement Star allocation for multi-star budgets
+  const handleDecrementStar = (targetCandidate: CandidateArtwork) => {
+    if (!isLoggedIn) return;
+    const currentCount = allocations[targetCandidate.submissionId] || 0;
+    if (currentCount <= 0) return;
+
+    const nextCount = currentCount - 1;
+    const nextAllocations = { ...allocations };
+    if (nextCount === 0) {
+      delete nextAllocations[targetCandidate.submissionId];
+    } else {
+      nextAllocations[targetCandidate.submissionId] = nextCount;
+    }
+    enqueueSave(nextAllocations);
+  };
+
+  // Single-star tap toggle (for maxStars === 1)
+  const handleToggleStar = useCallback(
+    (targetCandidate: CandidateArtwork) => {
+      if (!isLoggedIn) {
+        setErrorMessage("Silakan masuk terlebih dahulu untuk memberikan suara Star.");
+        setSaveStatus("error");
+        setIsPermanentError(true);
+        return;
+      }
+
+      if (targetCandidate.isSelfSubmission) {
+        setErrorMessage("Star tidak dapat diberikan untuk karya sendiri.");
+        setSaveStatus("error");
+        setIsPermanentError(true);
+        return;
+      }
+
+      const currentCount = allocations[targetCandidate.submissionId] || 0;
+
+      // If already allocated, remove Star
+      if (currentCount > 0) {
+        const nextAllocations = { ...allocations };
+        delete nextAllocations[targetCandidate.submissionId];
+        enqueueSave(nextAllocations);
+        return;
+      }
+
+      // If not yet allocated and budget remaining, allocate 1 Star
+      if (remainingStars > 0) {
+        const nextAllocations = { ...allocations, [targetCandidate.submissionId]: 1 };
+        enqueueSave(nextAllocations);
+        return;
+      }
+
+      // If remainingStars === 0 and maxStars === 1 -> Open confirmation modal to move star
+      if (maxStars === 1) {
+        const currentVotedSubId = Object.keys(allocations).find((id) => allocations[id] > 0);
+        const currentVotedCandidate = candidates.find(
+          (c) => c.submissionId === currentVotedSubId
+        );
+
+        if (
+          currentVotedCandidate &&
+          currentVotedCandidate.submissionId !== targetCandidate.submissionId
+        ) {
+          setMoveStarModal({
+            isOpen: true,
+            fromCandidate: currentVotedCandidate,
+            toCandidate: targetCandidate,
+          });
+          return;
         }
       }
+
+      setErrorMessage(
+        `Alokasi ${maxStars} Star telah digunakan. Kurangi alokasi dari karya lain terlebih dahulu.`
+      );
+      setSaveStatus("error");
+      setIsPermanentError(false);
     },
-    [viewMode, candidates, focusIndex, updateStars]
+    [isLoggedIn, allocations, remainingStars, maxStars, candidates, enqueueSave]
+  );
+
+  // Confirm moving single Star
+  const handleConfirmMoveStar = () => {
+    if (!moveStarModal.toCandidate) return;
+
+    const nextAllocations: { [submissionId: string]: number } = {
+      [moveStarModal.toCandidate.submissionId]: 1,
+    };
+
+    setMoveStarModal({ isOpen: false, fromCandidate: null, toCandidate: null });
+    enqueueSave(nextAllocations);
+  };
+
+  // Reset ballot inside serialized queue with full uncertainty barrier and epoch isolation
+  const handleConfirmReset = async () => {
+    if (isUncertainRef.current) {
+      setErrorMessage(
+        "Tidak dapat mereset saat alokasi suara belum pasti karena gangguan jaringan. Harap periksa status suara terlebih dahulu."
+      );
+      setSaveStatus("error");
+      setIsResetModalOpen(false);
+      return;
+    }
+
+    setIsResetting(true);
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    const opEpoch = epochRef.current;
+    const opSeq = ++seqRef.current;
+    pendingCountRef.current++;
+
+    queueRef.current = queueRef.current
+      .then(async () => {
+        if (isUnmountedRef.current || epochRef.current !== opEpoch) return;
+
+        if (isUncertainRef.current) {
+          pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+          setIsResetting(false);
+          setIsResetModalOpen(false);
+          return;
+        }
+
+        setSaveStatus("saving");
+        try {
+          await resetBallotAction({ votingRoundId });
+          if (isUnmountedRef.current || epochRef.current !== opEpoch) return;
+
+          pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+          if (opSeq >= latestConfirmedSeqRef.current) {
+            latestConfirmedSeqRef.current = opSeq;
+            confirmedAllocationsRef.current = {};
+          }
+          failedIntentRef.current = null;
+          setHasUnsavedIntent(false);
+          isUncertainRef.current = false;
+          setIsUncertain(false);
+          setIsPermanentError(false);
+          setAllocations({});
+          setRemainingStars(maxStars);
+          setSaveStatus("saved");
+          setIsResetModalOpen(false);
+          if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+          saveTimeoutRef.current = setTimeout(() => {
+            if (!isUnmountedRef.current && epochRef.current === opEpoch && pendingCountRef.current === 0) {
+              setSaveStatus("idle");
+            }
+          }, 2000);
+        } catch (err: any) {
+          if (isUnmountedRef.current || epochRef.current !== opEpoch) return;
+          pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+          setIsResetModalOpen(false);
+          const msg = err?.message || "Gagal mereset suara.";
+
+          const isConfirmedRejection =
+            msg.includes("sedang tidak dibuka") ||
+            msg.includes("telah berakhir") ||
+            msg.includes("ditangguhkan") ||
+            msg.includes("Akses ditolak");
+
+          if (isConfirmedRejection) {
+            setSaveStatus("error");
+            setErrorMessage(msg);
+          } else {
+            // Uncertain outcome on reset
+            isUncertainRef.current = true;
+            setIsUncertain(true);
+            setSaveStatus("error");
+            setErrorMessage(
+              "Koneksi terputus saat mereset suara. Harap periksa status suara untuk memastikan alokasi."
+            );
+            failedIntentRef.current = {};
+            setHasUnsavedIntent(true);
+          }
+        }
+      })
+      .catch((err) => {
+        console.error("Voting reset queue error:", err);
+      })
+      .finally(() => {
+        if (!isUnmountedRef.current && epochRef.current === opEpoch) {
+          setIsResetting(false);
+        }
+      });
+  };
+
+  // Keyboard navigation for focus inspection
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (!focusedCandidate) return;
+
+      if (e.key === "ArrowLeft") {
+        const nextIdx = focusIndex > 0 ? focusIndex - 1 : candidates.length - 1;
+        setFocusIndex(nextIdx);
+        setFocusedCandidate(candidates[nextIdx]);
+      } else if (e.key === "ArrowRight") {
+        const nextIdx = focusIndex < candidates.length - 1 ? focusIndex + 1 : 0;
+        setFocusIndex(nextIdx);
+        setFocusedCandidate(candidates[nextIdx]);
+      } else if (e.key === "Escape") {
+        setFocusedCandidate(null);
+      }
+    },
+    [focusedCandidate, focusIndex, candidates]
   );
 
   useEffect(() => {
@@ -149,423 +698,435 @@ export function VotingWorkspace({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
-  const activeFocusCandidate = candidates[focusIndex];
-  const compareA = candidates[compareIndexA];
-  const compareB = candidates[compareIndexB];
+  const openDetailFocus = (cand: CandidateArtwork, index: number) => {
+    setFocusIndex(index);
+    setFocusedCandidate(cand);
+  };
+
+  const totalAllocated = maxStars - remainingStars;
 
   return (
-    <div className="flex flex-col gap-6 pb-28">
-      {/* Top Toolbar (Mode Switcher + Candidate Counter) */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 glass-panel p-4 rounded-2xl border border-white/10">
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-mono uppercase text-zinc-400">TAMPILAN VOTING:</span>
-          <div className="flex items-center gap-1 p-1 rounded-xl bg-white/5 border border-white/10 text-xs font-mono">
-            <button
-              onClick={() => setViewMode("grid")}
-              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
-                viewMode === "grid"
-                  ? "bg-amber-500 text-black font-bold shadow-md"
-                  : "text-zinc-400 hover:text-white"
-              }`}
-            >
-              <LayoutGrid className="h-3.5 w-3.5" />
-              <span>Balanced Grid</span>
-            </button>
-
-            <button
-              onClick={() => setViewMode("focus")}
-              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
-                viewMode === "focus"
-                  ? "bg-amber-500 text-black font-bold shadow-md"
-                  : "text-zinc-400 hover:text-white"
-              }`}
-            >
-              <Maximize2 className="h-3.5 w-3.5" />
-              <span>Focus Deck</span>
-            </button>
-
-            {candidates.length >= 2 ? (
+    <div className="w-full flex flex-col gap-6 pb-28">
+      {/* Top Guidance / Error Banner with Retry & Reconciliation */}
+      {errorMessage && saveStatus === "error" && (
+        <div
+          role="alert"
+          className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs font-sans flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md"
+        >
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+          <div className="flex items-center gap-2 self-end sm:self-auto">
+            {!isPermanentError && !isUncertain && hasUnsavedIntent && (
               <button
-                onClick={() => setViewMode("compare")}
-                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
-                  viewMode === "compare"
-                    ? "bg-amber-500 text-black font-bold shadow-md"
-                    : "text-zinc-400 hover:text-white"
-                }`}
+                type="button"
+                onClick={handleRetryFailedIntent}
+                className="px-3 py-2 min-h-[44px] min-w-[44px] rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs font-sans transition-colors cursor-pointer flex items-center justify-center"
               >
-                <Columns2 className="h-3.5 w-3.5" />
-                <span>Side-by-Side</span>
+                Coba simpan ulang
               </button>
-            ) : null}
+            )}
+            <button
+              type="button"
+              onClick={handleReconcile}
+              disabled={isReconciling}
+              className="px-3 py-2 min-h-[44px] min-w-[44px] rounded-lg bg-white/10 hover:bg-white/15 text-zinc-200 font-sans text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isReconciling ? "animate-spin" : ""}`} />
+              <span>{isReconciling ? "Memeriksa..." : "Periksa status suara"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setErrorMessage(null)}
+              aria-label="Tutup pesan kesalahan"
+              className="h-11 w-11 min-h-[44px] min-w-[44px] rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white flex items-center justify-center cursor-pointer"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
         </div>
+      )}
 
-        <div className="flex items-center gap-2 text-xs font-mono text-zinc-400">
-          <span>{candidates.length} Karya Terdaftar</span>
-          <span>•</span>
-          <span className="text-amber-400">Anti-Bias Random Shuffle Aktif</span>
-        </div>
-      </div>
-
-      {/* Feedback Banner */}
-      {feedback ? (
+      {/* Independent Unsaved Intent Recovery Banner (F2 / R02) */}
+      {!errorMessage && hasUnsavedIntent && !isUncertain && !isPermanentError && (
         <div
-          className={`p-4 rounded-2xl border text-xs flex items-center gap-3 animate-in fade-in ${
-            feedback.type === "success"
-              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
-              : "bg-red-500/10 border-red-500/30 text-red-300"
-          }`}
+          role="alert"
+          className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs font-sans flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md"
         >
-          {feedback.type === "success" ? (
-            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
-          ) : (
-            <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
-          )}
-          <span>{feedback.text}</span>
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
+            <span>Status suara terverifikasi di server. Anda memiliki pilihan suara yang belum tersimpan.</span>
+          </div>
+          <div className="flex items-center gap-2 self-end sm:self-auto">
+            <button
+              type="button"
+              onClick={handleRetryFailedIntent}
+              className="px-3 py-2 min-h-[44px] min-w-[44px] rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs font-sans transition-colors cursor-pointer flex items-center justify-center"
+            >
+              Coba simpan ulang
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                failedIntentRef.current = null;
+                setHasUnsavedIntent(false);
+              }}
+              aria-label="Abaikan suara belum tersimpan"
+              className="h-11 w-11 min-h-[44px] min-w-[44px] rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white flex items-center justify-center cursor-pointer"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
-      ) : null}
+      )}
 
-      {/* VIEW MODE 1: BALANCED ATELIER GRID */}
-      {viewMode === "grid" ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-          {candidates.map((cand, idx) => {
-            const assigned = allocations[cand.submissionId] || 0;
-            const thumbUrl = cand.thumbnailStorageKey
-              ? `/api/media/public/${cand.thumbnailStorageKey}`
-              : null;
+      {/* 2-Column Mobile Overview Grid (Grill-Me & Blueprint v0.3) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">
+        {candidates.map((cand, index) => {
+          const candidateVoteCount = allocations[cand.submissionId] || 0;
+          const isVoted = candidateVoteCount > 0;
+          const mediaUrl = cand.publicStorageKey
+            ? `/api/media/public/${cand.publicStorageKey}`
+            : cand.thumbnailStorageKey
+            ? `/api/media/public/${cand.thumbnailStorageKey}`
+            : "";
 
-            return (
+          return (
+            <div
+              key={cand.submissionId}
+              className={`glass-panel rounded-2xl overflow-hidden flex flex-col justify-between border transition-all ${
+                isVoted
+                  ? "border-amber-500/50 bg-amber-500/[0.03] shadow-lg shadow-amber-500/10"
+                  : "border-white/10 hover:border-white/20"
+              }`}
+            >
+              {/* Media Frame (Aspect Ratio Preserved Uncropped) */}
               <div
-                key={cand.submissionId}
-                className={`glass-panel rounded-2xl overflow-hidden flex flex-col justify-between transition-all duration-200 ${
-                  assigned > 0
-                    ? "border-amber-500/60 shadow-lg shadow-amber-500/10 ring-1 ring-amber-500/50"
-                    : "border-white/10 hover:border-white/20"
-                }`}
+                role="button"
+                tabIndex={0}
+                onClick={() => openDetailFocus(cand, index)}
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    openDetailFocus(cand, index);
+                  }
+                }}
+                aria-label={`Buka detail karya ${cand.title}`}
+                className="relative aspect-[4/3] bg-black/60 overflow-hidden cursor-pointer group flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-amber-500/50"
               >
-                {/* Artwork Thumbnail (Uniform Aspect Ratio for Fairness) */}
-                <div
-                  onClick={() => {
-                    setFocusIndex(idx);
-                    setViewMode("focus");
-                  }}
-                  className="aspect-[4/3] bg-black/40 relative overflow-hidden flex items-center justify-center cursor-pointer group"
-                >
-                  {thumbUrl ? (
-                    <img
-                      src={thumbUrl}
-                      alt={cand.title}
-                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                    />
-                  ) : (
-                    <ImageIcon className="h-8 w-8 text-zinc-700" />
-                  )}
+                {mediaUrl ? (
+                  <ArtworkMediaFrame
+                    src={mediaUrl}
+                    alt={cand.title}
+                    isSpoiler={cand.isSpoiler}
+                    fill
+                    showPlayIndicator={cand.mediaType === "video"}
+                  />
+                ) : (
+                  <div className="h-full w-full flex items-center justify-center text-zinc-600 font-mono text-xs">
+                    Karya
+                  </div>
+                )}
 
-                  {/* Star Badge Overlay */}
-                  {assigned > 0 ? (
-                    <div className="absolute top-3 right-3 px-2.5 py-1 rounded-full bg-amber-500 text-black font-mono font-extrabold text-xs flex items-center gap-1 shadow-lg">
-                      <Star className="h-3.5 w-3.5 fill-black text-black" />
-                      <span>{assigned} Stars</span>
-                    </div>
-                  ) : null}
-
-                  {cand.isSelfSubmission ? (
-                    <div className="absolute top-3 left-3 px-2 py-0.5 rounded-md bg-black/80 text-zinc-400 font-mono text-[10px] border border-white/10">
-                      Karya Anda
-                    </div>
-                  ) : null}
+                {/* Candidate Order Node */}
+                <div className="absolute top-2 left-2 z-10">
+                  <AtelierBadge variant="default" size="sm">
+                    #{index + 1}
+                  </AtelierBadge>
                 </div>
 
-                {/* Candidate Info & Star Assigner Pills */}
-                <div className="p-4 flex flex-col gap-3">
-                  <div>
-                    <h4
-                      className="font-display font-bold text-sm text-[#f6f2e9] truncate"
-                      title={cand.title}
-                    >
-                      {cand.title}
-                    </h4>
-                    <Link
-                      href={`/artists/${cand.artistSlug}`}
-                      className="text-xs text-zinc-400 hover:text-white transition-colors truncate block mt-0.5"
-                    >
-                      oleh {cand.artistName}
-                    </Link>
-                  </div>
+                {/* Public Aggregate Total Stars */}
+                <div className="absolute top-2 right-2 z-10">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/75 backdrop-blur-md border border-white/15 text-[11px] font-mono font-medium text-amber-300">
+                    <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
+                    <span>{cand.totalStars}</span>
+                  </span>
+                </div>
 
-                  {/* Star Assignment Pill Bar */}
-                  <div className="pt-3 border-t border-white/5 flex items-center justify-between">
-                    {cand.isSelfSubmission ? (
-                      <span className="text-[11px] font-mono text-zinc-500 italic">
-                        Self-voting dilarang
-                      </span>
-                    ) : (
-                      <>
-                        <span className="text-xs font-mono text-zinc-400">
-                          {assigned > 0 ? `${assigned} Bintang` : "Beri Star:"}
-                        </span>
-
-                        <div className="flex items-center gap-1.5">
-                          {assigned > 0 ? (
-                            <button
-                              onClick={() => updateStars(cand.submissionId, -1)}
-                              className="h-7 w-7 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-300 font-bold text-xs flex items-center justify-center transition-colors cursor-pointer"
-                            >
-                              -
-                            </button>
-                          ) : null}
-
-                          <button
-                            onClick={() => updateStars(cand.submissionId, 1)}
-                            disabled={remainingStars <= 0}
-                            className={`px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all flex items-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
-                              assigned > 0
-                                ? "bg-amber-500 text-black shadow-md shadow-amber-500/20"
-                                : "bg-white/5 hover:bg-amber-500/20 text-zinc-300 hover:text-amber-300 border border-white/10"
-                            }`}
-                          >
-                            <Star className={`h-3.5 w-3.5 ${assigned > 0 ? "fill-black" : ""}`} />
-                            <span>+1</span>
-                          </button>
-                        </div>
-                      </>
-                    )}
+                {/* Hover Inspect Cue */}
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+                  <div className="px-3 py-1.5 rounded-xl bg-black/70 text-xs font-sans text-white flex items-center gap-1.5 backdrop-blur-sm">
+                    <Eye className="h-3.5 w-3.5" />
+                    <span>Periksa Detail</span>
                   </div>
                 </div>
               </div>
-            );
-          })}
-        </div>
-      ) : null}
 
-      {/* VIEW MODE 2: FOCUS DECK */}
-      {viewMode === "focus" && activeFocusCandidate ? (
-        <div className="flex flex-col gap-4">
-          <div className="glass-panel p-6 rounded-3xl flex flex-col lg:flex-row gap-6 items-center">
-            {/* Main Full Artwork Preview */}
-            <div className="w-full lg:w-3/4 max-h-[65vh] aspect-[16/10] bg-black/60 rounded-2xl overflow-hidden relative flex items-center justify-center border border-white/10">
-              <img
+              {/* Card Meta & Voting Control */}
+              <div className="p-3 sm:p-4 flex flex-col gap-2.5">
+                <div className="flex flex-col min-w-0">
+                  <h4
+                    onClick={() => openDetailFocus(cand, index)}
+                    className="font-display font-bold text-xs sm:text-sm text-[#f6f2e9] truncate cursor-pointer hover:text-amber-300 transition-colors"
+                  >
+                    {cand.title}
+                  </h4>
+                  <span className="text-[11px] text-zinc-400 font-sans truncate">
+                    oleh {cand.artistName}
+                  </span>
+                </div>
+
+                {/* Multi-Star Stepper or Single-Star Toggle */}
+                {maxStars > 1 ? (
+                  <div className="w-full flex flex-col gap-1.5 bg-white/[0.04] p-1.5 rounded-xl border border-white/10">
+                    <div className="flex items-center justify-center gap-1 py-0.5 text-xs font-mono font-bold text-[#f6f2e9]">
+                      <Star
+                        className={`h-3.5 w-3.5 ${
+                          candidateVoteCount > 0 ? "fill-amber-400 text-amber-400" : "text-zinc-500"
+                        }`}
+                      />
+                      <span>{candidateVoteCount} Star</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5 w-full">
+                      <button
+                        type="button"
+                        disabled={cand.isSelfSubmission || candidateVoteCount <= 0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDecrementStar(cand);
+                        }}
+                        aria-label={`Kurangi Star untuk ${cand.title}`}
+                        className="w-full h-11 min-h-[44px] rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center text-zinc-200 transition-colors cursor-pointer"
+                      >
+                        <Minus className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={cand.isSelfSubmission || remainingStars <= 0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleIncrementStar(cand);
+                        }}
+                        aria-label={`Tambah Star untuk ${cand.title}`}
+                        className="w-full h-11 min-h-[44px] rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors cursor-pointer"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={cand.isSelfSubmission}
+                    onClick={() => handleToggleStar(cand)}
+                    aria-label={
+                      cand.isSelfSubmission
+                        ? "Karya sendiri, tidak dapat dipilih"
+                        : isVoted
+                        ? "Cabut Star"
+                        : "Beri Star"
+                    }
+                    className={`w-full py-2 min-h-[44px] rounded-xl flex items-center justify-center gap-1.5 text-xs font-sans font-medium transition-all duration-150 cursor-pointer border ${
+                      cand.isSelfSubmission
+                        ? "bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed"
+                        : isVoted
+                        ? "bg-amber-500 text-black border-amber-400 font-bold shadow-md shadow-amber-500/20 active:scale-98"
+                        : "bg-white/[0.04] hover:bg-amber-500/15 text-zinc-300 hover:text-amber-300 border-white/10 hover:border-amber-500/30 active:scale-98"
+                    }`}
+                  >
+                    <Star
+                      className={`h-4 w-4 ${
+                        isVoted ? "fill-black text-black" : "text-amber-400"
+                      }`}
+                    />
+                    <span>
+                      {cand.isSelfSubmission
+                        ? "Karya Sendiri"
+                        : isVoted
+                        ? "Star Diberikan"
+                        : "Beri Star"}
+                    </span>
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Detail Focus Modal (Focused Inspection Mode) */}
+      {focusedCandidate && (
+        <Dialog
+          open={!!focusedCandidate}
+          onOpenChange={(open) => !open && setFocusedCandidate(null)}
+        >
+          <DialogContent className="max-w-4xl p-4 sm:p-6 max-h-[95vh] overflow-y-auto">
+            <DialogHeader className="border-b-0 pb-0">
+              <div className="flex items-center justify-between w-full pr-8">
+                <div className="flex items-center gap-2">
+                  <AtelierBadge variant="amber" size="sm">
+                    Karya #{focusIndex + 1} dari {candidates.length}
+                  </AtelierBadge>
+                  <span className="text-xs font-mono text-zinc-400">
+                    {challengeTitle}
+                  </span>
+                </div>
+              </div>
+            </DialogHeader>
+
+            {/* Large Artwork Canvas */}
+            <div className="relative w-full max-h-[65vh] rounded-2xl overflow-hidden bg-black/60 flex items-center justify-center my-2">
+              <ArtworkMediaFrame
                 src={
-                  activeFocusCandidate.publicStorageKey
-                    ? `/api/media/public/${activeFocusCandidate.publicStorageKey}`
-                    : `/api/media/public/${activeFocusCandidate.thumbnailStorageKey}`
+                  focusedCandidate.publicStorageKey
+                    ? `/api/media/public/${focusedCandidate.publicStorageKey}`
+                    : `/api/media/public/${focusedCandidate.thumbnailStorageKey}`
                 }
-                alt={activeFocusCandidate.title}
-                className="max-h-full max-w-full object-contain"
+                alt={focusedCandidate.title}
+                isSpoiler={focusedCandidate.isSpoiler}
+                mediaType={focusedCandidate.mediaType as any}
+                priority
               />
 
               {/* Prev / Next Arrows */}
               <button
-                onClick={() =>
-                  setFocusIndex((prev) => (prev > 0 ? prev - 1 : candidates.length - 1))
-                }
-                className="absolute left-4 p-3 rounded-2xl bg-black/60 hover:bg-black/80 text-white backdrop-blur-md transition-colors cursor-pointer"
+                type="button"
+                onClick={() => {
+                  const nextIdx =
+                    focusIndex > 0 ? focusIndex - 1 : candidates.length - 1;
+                  setFocusIndex(nextIdx);
+                  setFocusedCandidate(candidates[nextIdx]);
+                }}
+                className="absolute left-3 top-1/2 -translate-y-1/2 p-2.5 rounded-full bg-black/60 hover:bg-black/90 text-white backdrop-blur-md border border-white/15 transition-all min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer"
+                aria-label="Karya Sebelumnya"
               >
-                <ChevronLeft className="h-6 w-6" />
+                <ChevronLeft className="h-5 w-5" />
               </button>
-
               <button
-                onClick={() =>
-                  setFocusIndex((prev) => (prev < candidates.length - 1 ? prev + 1 : 0))
-                }
-                className="absolute right-4 p-3 rounded-2xl bg-black/60 hover:bg-black/80 text-white backdrop-blur-md transition-colors cursor-pointer"
+                type="button"
+                onClick={() => {
+                  const nextIdx =
+                    focusIndex < candidates.length - 1 ? focusIndex + 1 : 0;
+                  setFocusIndex(nextIdx);
+                  setFocusedCandidate(candidates[nextIdx]);
+                }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-2.5 rounded-full bg-black/60 hover:bg-black/90 text-white backdrop-blur-md border border-white/15 transition-all min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer"
+                aria-label="Karya Berikutnya"
               >
-                <ChevronRight className="h-6 w-6" />
+                <ChevronRight className="h-5 w-5" />
               </button>
             </div>
 
-            {/* Candidate Metadata & Focus Assigner */}
-            <div className="w-full lg:w-1/4 flex flex-col justify-between gap-6 p-2">
-              <div className="flex flex-col gap-3">
-                <span className="text-[10px] font-mono uppercase text-amber-400">
-                  KANDIDAT #{focusIndex + 1} DARI {candidates.length}
-                </span>
-
-                <h3 className="font-display font-extrabold text-2xl text-[#f6f2e9]">
-                  {activeFocusCandidate.title}
-                </h3>
-
-                <Link
-                  href={`/artists/${activeFocusCandidate.artistSlug}`}
-                  className="text-sm text-zinc-300 hover:text-amber-400 font-semibold transition-colors inline-flex items-center gap-1.5"
-                >
-                  <User className="h-4 w-4 text-amber-400" />
-                  <span>{activeFocusCandidate.artistName}</span>
-                </Link>
-
-                {activeFocusCandidate.softwareUsed ? (
-                  <span className="text-xs font-mono text-zinc-400">
-                    Software: {activeFocusCandidate.softwareUsed}
+            {/* Info & Voting Bar in Focus View */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-3 border-t border-white/10">
+              <div className="flex flex-col">
+                <DialogTitle className="text-xl">
+                  {focusedCandidate.title}
+                </DialogTitle>
+                <DialogDescription className="text-zinc-300 text-xs mt-0.5">
+                  Karya oleh{" "}
+                  <span className="text-[#f6f2e9] font-medium">
+                    {focusedCandidate.artistName}
                   </span>
-                ) : null}
-
-                {activeFocusCandidate.description ? (
-                  <p className="text-xs text-zinc-300 font-sans leading-relaxed mt-2 p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                    {activeFocusCandidate.description}
-                  </p>
-                ) : null}
+                  {focusedCandidate.softwareUsed && (
+                    <span className="ml-2 font-mono text-zinc-500">
+                      · Software: {focusedCandidate.softwareUsed}
+                    </span>
+                  )}
+                </DialogDescription>
               </div>
 
-              {/* Star Allocation Box */}
-              <div className="p-4 rounded-2xl bg-white/5 border border-white/10 flex flex-col gap-3">
-                <div className="flex items-center justify-between text-xs font-mono">
-                  <span className="text-zinc-400">ALOKASI STARS ANDA:</span>
-                  <span className="font-bold text-amber-400">
-                    {allocations[activeFocusCandidate.submissionId] || 0} Stars
-                  </span>
-                </div>
-
-                {activeFocusCandidate.isSelfSubmission ? (
-                  <span className="text-xs font-mono text-zinc-500 italic text-center">
-                    Self-voting dilarang
-                  </span>
-                ) : (
-                  <div className="grid grid-cols-2 gap-2">
+              {/* Stepper or Action Button inside Detail Focus */}
+              <div className="flex items-center gap-3">
+                {maxStars > 1 ? (
+                  <div className="flex items-center gap-2 bg-white/5 p-1.5 rounded-2xl border border-white/10">
                     <button
-                      onClick={() => updateStars(activeFocusCandidate.submissionId, -1)}
-                      disabled={!(allocations[activeFocusCandidate.submissionId] > 0)}
-                      className="py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-mono transition-colors disabled:opacity-30 cursor-pointer"
+                      type="button"
+                      disabled={
+                        focusedCandidate.isSelfSubmission ||
+                        (allocations[focusedCandidate.submissionId] || 0) <= 0
+                      }
+                      onClick={() => handleDecrementStar(focusedCandidate)}
+                      aria-label={`Kurangi Star untuk ${focusedCandidate.title}`}
+                      className="h-11 w-11 min-h-[44px] min-w-[44px] rounded-xl bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center text-zinc-200 transition-colors cursor-pointer"
                     >
-                      - Kurangi
+                      <Minus className="h-4 w-4" />
                     </button>
+                    <span className="font-mono text-sm font-bold text-amber-300 px-2 min-w-[4rem] text-center">
+                      {allocations[focusedCandidate.submissionId] || 0} Star
+                    </span>
                     <button
-                      onClick={() => updateStars(activeFocusCandidate.submissionId, 1)}
-                      disabled={remainingStars <= 0}
-                      className="py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-mono font-bold transition-all shadow-md shadow-amber-500/20 disabled:opacity-30 cursor-pointer"
+                      type="button"
+                      disabled={focusedCandidate.isSelfSubmission || remainingStars <= 0}
+                      onClick={() => handleIncrementStar(focusedCandidate)}
+                      aria-label={`Tambah Star untuk ${focusedCandidate.title}`}
+                      className="h-11 w-11 min-h-[44px] min-w-[44px] rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors cursor-pointer"
                     >
-                      + Beri Star
+                      <Plus className="h-4 w-4" />
                     </button>
                   </div>
+                ) : (
+                  <AtelierButton
+                    type="button"
+                    variant={
+                      (allocations[focusedCandidate.submissionId] || 0) > 0
+                        ? "primary"
+                        : "surface"
+                    }
+                    disabled={focusedCandidate.isSelfSubmission}
+                    onClick={() => handleToggleStar(focusedCandidate)}
+                    leftIcon={<Star className="h-4 w-4 fill-current" />}
+                  >
+                    {focusedCandidate.isSelfSubmission
+                      ? "Karya Sendiri"
+                      : (allocations[focusedCandidate.submissionId] || 0) > 0
+                      ? "Star Diberikan (Ketuk untuk Cabut)"
+                      : "Beri Star untuk Karya Ini"}
+                  </AtelierButton>
                 )}
               </div>
             </div>
-          </div>
+          </DialogContent>
+        </Dialog>
+      )}
 
-          {/* Candidate Thumbnails Strip */}
-          <div className="flex items-center gap-3 overflow-x-auto p-2 glass-panel rounded-2xl">
-            {candidates.map((c, idx) => (
-              <button
-                key={c.submissionId}
-                onClick={() => setFocusIndex(idx)}
-                className={`h-16 w-24 rounded-xl overflow-hidden shrink-0 border-2 transition-all cursor-pointer relative ${
-                  focusIndex === idx ? "border-amber-400 scale-105" : "border-transparent opacity-60 hover:opacity-100"
-                }`}
-              >
-                <img
-                  src={`/api/media/public/${c.thumbnailStorageKey}`}
-                  alt={c.title}
-                  className="w-full h-full object-cover"
-                />
-                {(allocations[c.submissionId] || 0) > 0 ? (
-                  <span className="absolute bottom-1 right-1 px-1 rounded bg-black/80 text-[10px] font-mono text-amber-400 font-bold">
-                    ★ {allocations[c.submissionId]}
-                  </span>
-                ) : null}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      {/* VIEW MODE 3: SIDE-BY-SIDE COMPARISON */}
-      {viewMode === "compare" && compareA && compareB ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Candidate A Card */}
-          <div className="glass-panel p-6 rounded-3xl flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-mono text-amber-400">KANDIDAT A</span>
-              <select
-                value={compareIndexA}
-                onChange={(e) => setCompareIndexA(Number(e.target.value))}
-                className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-white text-xs font-mono"
-              >
-                {candidates.map((c, idx) => (
-                  <option key={c.submissionId} value={idx} className="bg-zinc-900 text-white">
-                    {c.title} ({c.artistName})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="aspect-[4/3] bg-black/50 rounded-2xl overflow-hidden flex items-center justify-center">
-              <img
-                src={`/api/media/public/${compareA.publicStorageKey || compareA.thumbnailStorageKey}`}
-                alt={compareA.title}
-                className="max-h-full max-w-full object-contain"
-              />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="font-display font-bold text-base text-[#f6f2e9]">{compareA.title}</h4>
-                <p className="text-xs text-zinc-400">oleh {compareA.artistName}</p>
-              </div>
-
-              <button
-                onClick={() => updateStars(compareA.submissionId, 1)}
-                disabled={remainingStars <= 0 || compareA.isSelfSubmission}
-                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold font-mono transition-all disabled:opacity-40 cursor-pointer"
-              >
-                + Beri Star ({allocations[compareA.submissionId] || 0})
-              </button>
-            </div>
-          </div>
-
-          {/* Candidate B Card */}
-          <div className="glass-panel p-6 rounded-3xl flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-mono text-amber-400">KANDIDAT B</span>
-              <select
-                value={compareIndexB}
-                onChange={(e) => setCompareIndexB(Number(e.target.value))}
-                className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-white text-xs font-mono"
-              >
-                {candidates.map((c, idx) => (
-                  <option key={c.submissionId} value={idx} className="bg-zinc-900 text-white">
-                    {c.title} ({c.artistName})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="aspect-[4/3] bg-black/50 rounded-2xl overflow-hidden flex items-center justify-center">
-              <img
-                src={`/api/media/public/${compareB.publicStorageKey || compareB.thumbnailStorageKey}`}
-                alt={compareB.title}
-                className="max-h-full max-w-full object-contain"
-              />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="font-display font-bold text-base text-[#f6f2e9]">{compareB.title}</h4>
-                <p className="text-xs text-zinc-400">oleh {compareB.artistName}</p>
-              </div>
-
-              <button
-                onClick={() => updateStars(compareB.submissionId, 1)}
-                disabled={remainingStars <= 0 || compareB.isSelfSubmission}
-                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold font-mono transition-all disabled:opacity-40 cursor-pointer"
-              >
-                + Beri Star ({allocations[compareB.submissionId] || 0})
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {/* Sticky Ballot Review Dock */}
-      {isLoggedIn ? (
-        <BallotReviewDock
-          remainingStars={remainingStars}
-          maxStars={maxStars}
-          allocations={allocations}
-          candidates={candidates}
-          isLoading={isLoading}
-          onReset={handleReset}
-          onSubmit={handleSubmit}
+      {/* Single-Star Movement Modal (Grill-Me Decision #6) */}
+      {moveStarModal.isOpen && moveStarModal.fromCandidate && moveStarModal.toCandidate && (
+        <ConfirmModal
+          isOpen={moveStarModal.isOpen}
+          onClose={() =>
+            setMoveStarModal({ isOpen: false, fromCandidate: null, toCandidate: null })
+          }
+          onConfirm={handleConfirmMoveStar}
+          title="Pindahkan Star?"
+          description={`Pindahkan Star dari "${moveStarModal.fromCandidate.title}" ke "${moveStarModal.toCandidate.title}"?`}
+          confirmText="Pindahkan Star"
+          cancelText="Batal"
         />
-      ) : null}
+      )}
+
+      {/* Reset Confirmation Modal */}
+      {isResetModalOpen && (
+        <ConfirmModal
+          isOpen={isResetModalOpen}
+          onClose={() => setIsResetModalOpen(false)}
+          onConfirm={handleConfirmReset}
+          title="Hapus Semua Alokasi Star?"
+          description="Seluruh alokasi Star kamu pada babak voting ini akan dihapus. Kamu tetap dapat memberikan suara baru sebelum deadline berakhir."
+          confirmText="Hapus Semua Star"
+          cancelText="Batal"
+          variant="danger"
+          isLoading={isResetting}
+        />
+      )}
+
+      {/* Floating Bottom Sticky Action Bar (Ergonomic Thumb Bar) */}
+      <aside
+        aria-label="Ringkasan Alokasi Star"
+        className="fixed bottom-4 left-0 right-0 z-40 px-4 flex justify-center pointer-events-none"
+      >
+        <div className="pointer-events-auto">
+          <StarAllocationCounter
+            allocatedStars={totalAllocated}
+            maxStars={maxStars}
+            saveStatus={saveStatus}
+            errorMessage={errorMessage || undefined}
+            onReset={totalAllocated > 0 ? () => setIsResetModalOpen(true) : undefined}
+          />
+        </div>
+      </aside>
     </div>
   );
 }

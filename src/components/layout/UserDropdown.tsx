@@ -3,17 +3,17 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  User,
   Palette,
   Briefcase,
-  Settings,
+  UserPen,
   ShieldCheck,
   LogOut,
   ChevronDown,
-  Sparkles,
+  LayoutDashboard,
 } from "lucide-react";
 import Link from "next/link";
 import { signOut } from "next-auth/react";
+import { invalidateActiveDraftOnLogout } from "@/lib/utils/draftStorage";
 
 interface UserDropdownProps {
   user: {
@@ -45,7 +45,9 @@ export function UserDropdown({ user }: UserDropdownProps) {
     <div className="relative">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 p-1.5 sm:px-3 sm:py-1.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-200 transition-all cursor-pointer group"
+        className="flex items-center gap-2 p-1.5 sm:px-3 sm:py-1.5 min-h-[44px] rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-200 transition-all cursor-pointer group"
+        aria-label="Menu Pengguna"
+        aria-expanded={isOpen}
       >
         <div className="h-7 w-7 rounded-xl bg-amber-500/20 text-amber-400 font-bold font-mono flex items-center justify-center text-xs border border-amber-500/30 shrink-0">
           {user.displayName?.charAt(0) || user.email.charAt(0).toUpperCase()}
@@ -99,30 +101,39 @@ export function UserDropdown({ user }: UserDropdownProps) {
               {/* Member Studio Nav */}
               <div className="flex flex-col py-1">
                 <Link
+                  href="/dashboard"
+                  onClick={() => setIsOpen(false)}
+                  className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] rounded-xl text-xs font-sans text-zinc-300 hover:text-white hover:bg-white/5 transition-colors"
+                >
+                  <LayoutDashboard className="h-4 w-4 text-amber-400" />
+                  <span>Studio Pribadi</span>
+                </Link>
+
+                <Link
                   href="/me/portfolio"
                   onClick={() => setIsOpen(false)}
-                  className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-sans text-zinc-300 hover:text-white hover:bg-white/5 transition-colors"
+                  className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] rounded-xl text-xs font-sans text-zinc-300 hover:text-white hover:bg-white/5 transition-colors"
                 >
                   <Palette className="h-4 w-4 text-amber-400" />
-                  <span>Studio Portofolio Saya</span>
+                  <span>Portofolio Saya</span>
                 </Link>
 
                 <Link
                   href="/me/commissions"
                   onClick={() => setIsOpen(false)}
-                  className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-sans text-zinc-300 hover:text-white hover:bg-white/5 transition-colors"
+                  className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] rounded-xl text-xs font-sans text-zinc-300 hover:text-white hover:bg-white/5 transition-colors"
                 >
                   <Briefcase className="h-4 w-4 text-amber-400" />
-                  <span>Kelola Layanan Komisi</span>
+                  <span>Layanan Komisi</span>
                 </Link>
 
                 <Link
                   href="/me/profile"
                   onClick={() => setIsOpen(false)}
-                  className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-sans text-zinc-300 hover:text-white hover:bg-white/5 transition-colors"
+                  className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] rounded-xl text-xs font-sans text-zinc-300 hover:text-white hover:bg-white/5 transition-colors"
                 >
-                  <Settings className="h-4 w-4 text-amber-400" />
-                  <span>Pengaturan Profil</span>
+                  <UserPen className="h-4 w-4 text-amber-400" />
+                  <span>Edit Profil</span>
                 </Link>
               </div>
 
@@ -132,10 +143,10 @@ export function UserDropdown({ user }: UserDropdownProps) {
                   <Link
                     href="/admin"
                     onClick={() => setIsOpen(false)}
-                    className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-mono font-semibold text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 transition-colors"
+                    className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] rounded-xl text-xs font-mono font-semibold text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 transition-colors"
                   >
                     <ShieldCheck className="h-4 w-4 text-amber-400" />
-                    <span>Admin Command Center</span>
+                    <span>Panel Kelola Komunitas</span>
                   </Link>
                 </div>
               ) : null}
@@ -143,8 +154,11 @@ export function UserDropdown({ user }: UserDropdownProps) {
               {/* Logout Action */}
               <div className="pt-1 border-t border-white/10">
                 <button
-                  onClick={() => signOut({ callbackUrl: "/" })}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-sans text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors cursor-pointer"
+                  onClick={async () => {
+                    await invalidateActiveDraftOnLogout(user.id);
+                    signOut({ callbackUrl: "/" });
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] rounded-xl text-xs font-sans text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors cursor-pointer"
                 >
                   <LogOut className="h-4 w-4" />
                   <span>Keluar Akun</span>

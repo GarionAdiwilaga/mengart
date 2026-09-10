@@ -7,6 +7,7 @@ import { ArrowLeft, Briefcase, Plus, ExternalLink, Clock, RefreshCw } from "luci
 import { CommissionServiceModal } from "@/components/commissions/CommissionServiceModal";
 import { DeleteCommissionServiceButton } from "@/components/commissions/DeleteCommissionServiceButton";
 import { ScopeRulesEditor } from "@/components/commissions/ScopeRulesEditor";
+import { StudioShell } from "@/components/layout/shells/StudioShell";
 
 export default async function CommissionsManagerPage() {
   const user = await requireAuth("/login");
@@ -19,9 +20,11 @@ export default async function CommissionsManagerPage() {
 
   if (!profile) {
     return (
-      <main className="min-h-screen p-6 sm:p-12 max-w-6xl mx-auto flex flex-col gap-6">
-        <p className="text-zinc-400 text-sm font-mono">Profil tidak ditemukan.</p>
-      </main>
+      <StudioShell headerTitle="Pusat Layanan Komisi">
+        <div className="glass-panel p-12 rounded-3xl text-center flex flex-col items-center gap-3">
+          <p className="text-zinc-400 font-mono text-sm">Profil tidak ditemukan.</p>
+        </div>
+      </StudioShell>
     );
   }
 
@@ -38,28 +41,11 @@ export default async function CommissionsManagerPage() {
     .orderBy(commissionScopeRules.displayOrder);
 
   return (
-    <main className="p-6 sm:p-12 max-w-6xl mx-auto flex flex-col gap-10 flex-1">
-      {/* Studio Header Action Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-6">
-        <div className="flex flex-col gap-2">
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center gap-1.5 text-xs font-mono text-zinc-400 hover:text-amber-400 transition-colors"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Dashboard
-          </Link>
-          <h1 className="font-display font-extrabold text-3xl text-[#f6f2e9] tracking-tight">
-            Pusat Layanan Komisi
-          </h1>
-          <p className="text-sm text-zinc-400">
-            Atur kartu layanan, rentang harga, estimasi pengerjaan, dan ketentuan Do / Don't Anda.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <CommissionServiceModal />
-        </div>
-      </div>
+    <StudioShell
+      headerTitle="Pusat Layanan Komisi"
+      headerSubtitle="Atur status ketersediaan slot (Open/Waitlist/Closed), kartu jenis layanan, dan panduan Do / Don't scope Anda."
+      rightAction={<CommissionServiceModal />}
+    >
 
       {/* Services List Section */}
       <section className="flex flex-col gap-4">
@@ -157,6 +143,6 @@ export default async function CommissionsManagerPage() {
 
         <ScopeRulesEditor initialRules={scopeRules} />
       </section>
-    </main>
+    </StudioShell>
   );
 }

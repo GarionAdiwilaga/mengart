@@ -134,7 +134,7 @@ export async function updateArtworkService(
     title: string;
     description?: string | null;
     audience?: "public" | "members_only" | "unlisted" | "private";
-    critiqueMode?: "showcase_only" | "open_for_critique" | "general" | "detailed";
+    critiqueMode?: "showcase_only" | "open_for_critique";
     isSpoiler?: boolean;
   }
 ) {

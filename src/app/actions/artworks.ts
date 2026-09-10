@@ -45,7 +45,8 @@ export async function createArtworkUploadAction(formData: FormData) {
   }
 
   const title = (formData.get("title") as string)?.trim() || "Untitled Artwork";
-  const description = (formData.get("caption") as string)?.trim() || null;
+  const rawDesc = formData.get("description") ?? formData.get("caption");
+  const description = typeof rawDesc === "string" ? rawDesc.trim() || null : null;
   const audience = ((formData.get("audience") as string) || "public") as
     | "public"
     | "members_only"
@@ -123,7 +124,7 @@ export async function updateArtworkAction(formData: FormData) {
   const title = (formData.get("title") as string)?.trim();
   const description = (formData.get("description") as string)?.trim() || null;
   const audience = (formData.get("audience") as string) as "public" | "members_only" | "unlisted" | "private" | undefined;
-  const critiqueMode = (formData.get("critiqueMode") as string) as "showcase_only" | "general" | "detailed" | undefined;
+  const critiqueMode = (formData.get("critiqueMode") as string) as "showcase_only" | "open_for_critique" | undefined;
   const isSpoilerVal = formData.get("isSpoiler");
   const isSpoiler = isSpoilerVal !== null ? (isSpoilerVal === "true" || isSpoilerVal === "1" || isSpoilerVal === "on") : undefined;
 
@@ -138,7 +139,7 @@ export async function updateArtworkAction(formData: FormData) {
       title,
       description,
       audience,
-      critiqueMode: critiqueMode as any,
+      critiqueMode,
       isSpoiler,
     });
   });

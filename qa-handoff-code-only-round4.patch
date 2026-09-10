@@ -1,0 +1,3284 @@
+diff --git a/package.json b/package.json
+index e17ad6b..c548701 100644
+--- a/package.json
++++ b/package.json
+@@ -19,7 +19,7 @@
+     "cron:materialize": "tsx scripts/runScheduler.ts",
+     "test:migrate": "tsx scripts/verifyMigrations.ts",
+     "test:e2e": "playwright test",
+-    "test:all": "tsx scripts/verifyMigrations.ts && tsx src/lib/__tests__/testPhase2SecurityAndContracts.ts && tsx src/lib/__tests__/testPhase9LegacyCleanup.ts && tsx src/lib/__tests__/testGateHConcurrencyAndDR.ts && tsx src/lib/__tests__/testGateGCommunityAndStoryCard.ts && tsx src/lib/__tests__/testGateFMediaAndRateLimiting.ts && tsx src/lib/__tests__/testGateESubmissionAndPortfolio.ts && tsx src/lib/__tests__/testPhase4AuthAndInvites.ts && tsx src/lib/__tests__/testPhase2VotingAndTiebreak.ts && tsx src/lib/__tests__/testPhase3SimplifiedJury.ts && tsx src/lib/__tests__/testGate1SecurityAndIntegrity.ts && tsx src/lib/__tests__/testConcurrency.ts && tsx src/lib/__tests__/testPhase1LifecycleAndState.ts && tsx src/lib/__tests__/testPhase2Pipeline.ts && tsx src/lib/__tests__/testPhase3Challenges.ts && tsx src/lib/__tests__/testPhase4Voting.ts && tsx src/lib/__tests__/testPhase5Community.ts && tsx src/lib/__tests__/testPhase6HistoricalAndMedia.ts && tsx src/lib/__tests__/testLoginFlow.ts && tsx src/lib/__tests__/testModernizedArchitecture.ts"
++    "test:all": "tsx scripts/verifyMigrations.ts && tsx src/lib/__tests__/testDraftStorageGenerations.ts && tsx src/lib/__tests__/testTiebreakPortfolioMaterialization.ts && tsx src/lib/__tests__/testPhase2SecurityAndContracts.ts && tsx src/lib/__tests__/testPhase9LegacyCleanup.ts && tsx src/lib/__tests__/testGateHConcurrencyAndDR.ts && tsx src/lib/__tests__/testGateGCommunityAndStoryCard.ts && tsx src/lib/__tests__/testGateFMediaAndRateLimiting.ts && tsx src/lib/__tests__/testGateESubmissionAndPortfolio.ts && tsx src/lib/__tests__/testPhase4AuthAndInvites.ts && tsx src/lib/__tests__/testPhase2VotingAndTiebreak.ts && tsx src/lib/__tests__/testPhase3SimplifiedJury.ts && tsx src/lib/__tests__/testGate1SecurityAndIntegrity.ts && tsx src/lib/__tests__/testConcurrency.ts && tsx src/lib/__tests__/testPhase1LifecycleAndState.ts && tsx src/lib/__tests__/testPhase2Pipeline.ts && tsx src/lib/__tests__/testPhase3Challenges.ts && tsx src/lib/__tests__/testPhase4Voting.ts && tsx src/lib/__tests__/testPhase5Community.ts && tsx src/lib/__tests__/testPhase6HistoricalAndMedia.ts && tsx src/lib/__tests__/testLoginFlow.ts && tsx src/lib/__tests__/testModernizedArchitecture.ts"
+   },
+   "dependencies": {
+     "@radix-ui/react-dialog": "^1.1.23",
+diff --git a/src/app/account-suspended/page.tsx b/src/app/account-suspended/page.tsx
+index d07a2e6..3c7119e 100644
+--- a/src/app/account-suspended/page.tsx
++++ b/src/app/account-suspended/page.tsx
+@@ -2,6 +2,7 @@ import { getCurrentUser } from "@/lib/rbac";
+ import { redirect } from "next/navigation";
+ import { ShieldAlert, LogOut, MessageSquare } from "lucide-react";
+ import { logoutAction } from "@/app/actions/auth";
++import { SignOutButton } from "@/components/auth/SignOutButton";
+ 
+ export const metadata = {
+   title: "Akun Ditangguhkan | Mengart Atelier",
+@@ -58,15 +59,10 @@ export default async function AccountSuspendedPage() {
+           </div>
+ 
+           {/* Sign Out Action */}
+-          <form action={logoutAction} className="w-full">
+-            <button
+-              type="submit"
+-              className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-sm font-medium text-zinc-200 hover:text-white transition-all cursor-pointer"
+-            >
+-              <LogOut className="h-4 w-4 text-zinc-400" />
+-              <span>Keluar dari Akun</span>
+-            </button>
+-          </form>
++          <SignOutButton className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-sm font-medium text-zinc-200 hover:text-white transition-all cursor-pointer">
++            <LogOut className="h-4 w-4 text-zinc-400" />
++            <span>Keluar dari Akun</span>
++          </SignOutButton>
+         </div>
+       </div>
+     </div>
+diff --git a/src/app/api/artworks/route.ts b/src/app/api/artworks/route.ts
+index b47ea00..80794a0 100644
+--- a/src/app/api/artworks/route.ts
++++ b/src/app/api/artworks/route.ts
+@@ -120,6 +120,18 @@ export async function handleGetArtworks(
+       challengeSlug: challenges.slug,
+       challengeIsVisible: challenges.isVisible,
+       challengeDeletedAt: challenges.deletedAt,
++      awardType: sql<string | null>`(
++        SELECT cr.award_type FROM challenge_results cr
++        WHERE cr.submission_id = ${challengeSubmissions.id} AND cr.is_published = true
++        ORDER BY CASE WHEN cr.award_type = 'community_vote_winner' THEN 1 ELSE 2 END
++        LIMIT 1
++      )`,
++      categoryLabel: sql<string | null>`(
++        SELECT cr.category_label FROM challenge_results cr
++        WHERE cr.submission_id = ${challengeSubmissions.id} AND cr.is_published = true
++        ORDER BY CASE WHEN cr.award_type = 'community_vote_winner' THEN 1 ELSE 2 END
++        LIMIT 1
++      )`,
+     })
+     .from(artworks)
+     .innerJoin(profiles, eq(profiles.userId, artworks.userId))
+diff --git a/src/app/api/auth/redeem-callback/route.ts b/src/app/api/auth/redeem-callback/route.ts
+index 06ed567..2fb0a57 100644
+--- a/src/app/api/auth/redeem-callback/route.ts
++++ b/src/app/api/auth/redeem-callback/route.ts
+@@ -7,6 +7,20 @@ import { eq } from "drizzle-orm";
+ 
+ import { getSafeReturnUrl } from "@/lib/navigation/returnUrl";
+ 
++function createSafeRedirectUrl(destination: string, requestUrl: string, fallback: string = "/dashboard"): URL {
++  const safePath = getSafeReturnUrl(destination, fallback);
++  const parsedRequest = new URL(requestUrl);
++  const target = new URL(safePath, parsedRequest.origin);
++  if (
++    target.origin !== parsedRequest.origin ||
++    target.pathname.startsWith("//") ||
++    target.pathname.startsWith("/\\")
++  ) {
++    return new URL(fallback, parsedRequest.origin);
++  }
++  return target;
++}
++
+ export async function handleRedeemCallback(
+   request: NextRequest,
+   sessionUserOverride?: { id: string; email?: string; name?: string; image?: string; role?: string; membershipStatus?: string | null }
+@@ -62,7 +76,8 @@ export async function handleRedeemCallback(
+ 
+   if (dbUser.membershipStatus === "active") {
+     // Already an active member: pass through to preserved destination without consuming invite
+-    const response = NextResponse.redirect(new URL(returnTo, request.url));
++    const targetUrl = createSafeRedirectUrl(returnTo, request.url, "/dashboard");
++    const response = NextResponse.redirect(targetUrl);
+     response.cookies.delete("mengart_pending_invite");
+     return response;
+   }
+@@ -92,7 +107,7 @@ export async function handleRedeemCallback(
+       userAgent,
+     });
+ 
+-    const targetUrl = new URL(returnTo, request.url);
++    const targetUrl = createSafeRedirectUrl(returnTo, request.url, "/dashboard");
+     if (result.isAlreadyActive) {
+       targetUrl.searchParams.set("notice", "already_active");
+     } else {
+diff --git a/src/app/onboarding/page.tsx b/src/app/onboarding/page.tsx
+index bceb1dd..28e5d8a 100644
+--- a/src/app/onboarding/page.tsx
++++ b/src/app/onboarding/page.tsx
+@@ -3,7 +3,7 @@ import { auth } from "@/auth";
+ import { redirect } from "next/navigation";
+ import { Palette, Sparkles, Key, LogOut } from "lucide-react";
+ import { OnboardingInviteForm } from "@/components/auth/OnboardingInviteForm";
+-import { logoutAction } from "@/app/actions/auth";
++import { SignOutButton } from "@/components/auth/SignOutButton";
+ 
+ export const metadata: Metadata = {
+   title: "Onboarding Anggota — Mengart",
+@@ -73,15 +73,10 @@ export default async function OnboardingPage({ searchParams }: OnboardingPagePro
+         {/* Sign out footer */}
+         <div className="pt-4 border-t border-white/10 flex items-center justify-between text-xs text-zinc-500">
+           <span>Bukan akun Anda?</span>
+-          <form action={logoutAction}>
+-            <button
+-              type="submit"
+-              className="font-mono text-zinc-400 hover:text-red-400 transition-colors inline-flex items-center gap-1 cursor-pointer"
+-            >
+-              <LogOut className="h-3.5 w-3.5" />
+-              <span>Keluar</span>
+-            </button>
+-          </form>
++          <SignOutButton className="font-mono text-zinc-400 hover:text-red-400 transition-colors inline-flex items-center gap-1 cursor-pointer">
++            <LogOut className="h-3.5 w-3.5" />
++            <span>Keluar</span>
++          </SignOutButton>
+         </div>
+       </div>
+     </main>
+diff --git a/src/app/page.tsx b/src/app/page.tsx
+index a689810..9ecc24e 100644
+--- a/src/app/page.tsx
++++ b/src/app/page.tsx
+@@ -209,6 +209,18 @@ export default async function HomePage() {
+       challengeDeletedAt: challenges.deletedAt,
+       systemCaption: portfolioEntries.systemCaption,
+       customCaption: portfolioEntries.customCaption,
++      awardType: sql<string | null>`(
++        SELECT cr.award_type FROM challenge_results cr
++        WHERE cr.submission_id = ${challengeSubmissions.id} AND cr.is_published = true
++        ORDER BY CASE WHEN cr.award_type = 'community_vote_winner' THEN 1 ELSE 2 END
++        LIMIT 1
++      )`,
++      categoryLabel: sql<string | null>`(
++        SELECT cr.category_label FROM challenge_results cr
++        WHERE cr.submission_id = ${challengeSubmissions.id} AND cr.is_published = true
++        ORDER BY CASE WHEN cr.award_type = 'community_vote_winner' THEN 1 ELSE 2 END
++        LIMIT 1
++      )`,
+     })
+     .from(artworks)
+     .innerJoin(profiles, eq(profiles.userId, artworks.userId))
+diff --git a/src/components/auth/SignOutButton.tsx b/src/components/auth/SignOutButton.tsx
+new file mode 100644
+index 0000000..af9b2a2
+--- /dev/null
++++ b/src/components/auth/SignOutButton.tsx
+@@ -0,0 +1,26 @@
++"use client";
++
++import { logoutAction } from "@/app/actions/auth";
++import { ReactNode } from "react";
++
++interface SignOutButtonProps {
++  className?: string;
++  children: ReactNode;
++}
++
++export function SignOutButton({ className, children }: SignOutButtonProps) {
++  const handleLogout = async () => {
++    await logoutAction();
++  };
++
++  return (
++    <form action={handleLogout} className="w-full">
++      <button
++        type="submit"
++        className={className}
++      >
++        {children}
++      </button>
++    </form>
++  );
++}
+diff --git a/src/components/challenges/ChallengeSubmissionModal.tsx b/src/components/challenges/ChallengeSubmissionModal.tsx
+index e5ad2e3..97f1e79 100644
+--- a/src/components/challenges/ChallengeSubmissionModal.tsx
++++ b/src/components/challenges/ChallengeSubmissionModal.tsx
+@@ -25,6 +25,7 @@ import {
+   saveSubmissionDraft,
+   loadSubmissionDraft,
+   clearSubmissionDraft,
++  getDraftGeneration,
+   purgeLegacyDrafts,
+ } from "@/lib/utils/draftStorage";
+ 
+@@ -67,6 +68,8 @@ export function ChallengeSubmissionModal({
+ 
+   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+   const isDraftActiveRef = useRef(true);
++  const prevUserIdRef = useRef<string | null>(userId ?? null);
++  const activeGenerationRef = useRef<number>(1);
+ 
+   // Purge legacy unscoped drafts on mount
+   useEffect(() => {
+@@ -85,6 +88,16 @@ export function ChallengeSubmissionModal({
+       clearTimeout(saveTimeoutRef.current);
+       saveTimeoutRef.current = null;
+     }
++
++    // Account-switch cleanup: purge stored drafts for old account on this specific challenge
++    if (prevUserIdRef.current && userId && prevUserIdRef.current !== userId) {
++      clearSubmissionDraft(prevUserIdRef.current, challengeId);
++    }
++    prevUserIdRef.current = userId ?? null;
++    if (userId) {
++      activeGenerationRef.current = getDraftGeneration(userId, challengeId);
++    }
++
+     isDraftActiveRef.current = false;
+     setTitle(initialTitle);
+     setDescription(initialDescription);
+@@ -94,11 +107,13 @@ export function ChallengeSubmissionModal({
+     setFile(null);
+     setPreviewUrl(null);
+     setError(null);
+-  }, [userId, initialTitle, initialDescription, initialSoftware, initialSpoiler]);
++  }, [userId, challengeId, initialTitle, initialDescription, initialSoftware, initialSpoiler]);
+ 
+   // Restore draft from localStorage on modal open if not a revision
+   useEffect(() => {
+     if (isOpen && !isRevision && userId) {
++      activeGenerationRef.current = getDraftGeneration(userId, challengeId);
++
+       // Validate deadline eligibility: if submission window expired, clear & do not restore
+       if (submissionDeadline && new Date(submissionDeadline).getTime() <= Date.now()) {
+         clearSubmissionDraft(userId, challengeId);
+@@ -119,6 +134,34 @@ export function ChallengeSubmissionModal({
+     }
+   }, [isOpen, isRevision, userId, challengeId, submissionDeadline]);
+ 
++  // Cross-tab and same-tab invalidation listener
++  useEffect(() => {
++    const handleStorageOrInvalidation = () => {
++      if (!userId) return;
++      const currentGen = getDraftGeneration(userId, challengeId);
++      if (currentGen !== activeGenerationRef.current) {
++        if (saveTimeoutRef.current) {
++          clearTimeout(saveTimeoutRef.current);
++          saveTimeoutRef.current = null;
++        }
++        activeGenerationRef.current = currentGen;
++        isDraftActiveRef.current = false;
++        setTitle(initialTitle);
++        setDescription(initialDescription);
++        setSoftwareUsed(initialSoftware);
++        setIsSpoiler(initialSpoiler);
++        setIsRecovered(false);
++      }
++    };
++
++    window.addEventListener("storage", handleStorageOrInvalidation);
++    window.addEventListener("mengart_draft_invalidated", handleStorageOrInvalidation as EventListener);
++    return () => {
++      window.removeEventListener("storage", handleStorageOrInvalidation);
++      window.removeEventListener("mengart_draft_invalidated", handleStorageOrInvalidation as EventListener);
++    };
++  }, [userId, challengeId, initialTitle, initialDescription, initialSoftware, initialSpoiler]);
++
+   const handleFieldChange = (
+     field: "title" | "description" | "software" | "spoiler",
+     value: any
+@@ -134,16 +177,31 @@ export function ChallengeSubmissionModal({
+     if (field === "spoiler") setIsSpoiler(value);
+ 
+     isDraftActiveRef.current = true;
++
+     if (!isRevision && userId) {
+       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
++      const capturedUserId = userId;
++      const capturedChallengeId = challengeId;
++      const capturedGen = activeGenerationRef.current;
++
+       saveTimeoutRef.current = setTimeout(() => {
+         if (!isDraftActiveRef.current) return;
+-        saveSubmissionDraft(userId, challengeId, {
+-          title: nextTitle,
+-          description: nextDesc,
+-          softwareUsed: nextSoft,
+-          isSpoiler: nextSpoiler,
+-        });
++        // Re-check deadline before autosave write
++        if (submissionDeadline && new Date(submissionDeadline).getTime() <= Date.now()) {
++          return;
++        }
++        // Save with expected generation check: if invalidated during 500ms debounce, save is rejected
++        saveSubmissionDraft(
++          capturedUserId,
++          capturedChallengeId,
++          {
++            title: nextTitle,
++            description: nextDesc,
++            softwareUsed: nextSoft,
++            isSpoiler: nextSpoiler,
++          },
++          capturedGen
++        );
+       }, 500);
+     }
+   };
+@@ -156,6 +214,7 @@ export function ChallengeSubmissionModal({
+     isDraftActiveRef.current = false;
+     if (userId) {
+       clearSubmissionDraft(userId, challengeId);
++      activeGenerationRef.current = getDraftGeneration(userId, challengeId);
+     }
+     setTitle(initialTitle);
+     setDescription(initialDescription);
+@@ -213,8 +272,10 @@ export function ChallengeSubmissionModal({
+       if (res.success) {
+         // Clear draft on successful submission
+         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
++        isDraftActiveRef.current = false;
+         if (userId) {
+           clearSubmissionDraft(userId, challengeId);
++          activeGenerationRef.current = getDraftGeneration(userId, challengeId);
+         }
+         setSuccess(true);
+         setTimeout(() => {
+diff --git a/src/components/gallery/ArtworkCard.tsx b/src/components/gallery/ArtworkCard.tsx
+index 3e61134..83295f3 100644
+--- a/src/components/gallery/ArtworkCard.tsx
++++ b/src/components/gallery/ArtworkCard.tsx
+@@ -12,9 +12,10 @@ interface ArtworkCardProps {
+   artwork: ArtworkListItem;
+   currentUserRole?: string;
+   from?: string;
++  onNavigate?: (artworkId: string) => void;
+ }
+ 
+-export function ArtworkCard({ artwork, currentUserRole, from }: ArtworkCardProps) {
++export function ArtworkCard({ artwork, currentUserRole, from, onNavigate }: ArtworkCardProps) {
+   const [isRevealed, setIsRevealed] = useState(false);
+   const isVideo = artwork.mediaType === "video";
+   const isObscured = Boolean(artwork.isSpoiler && !isRevealed);
+@@ -22,16 +23,24 @@ export function ArtworkCard({ artwork, currentUserRole, from }: ArtworkCardProps
+     ? `/artworks/${artwork.slug}?from=${encodeURIComponent(from)}`
+     : `/artworks/${artwork.slug}`;
+ 
++  const handleCardClick = () => {
++    onNavigate?.(artwork.id);
++  };
++
+   return (
+     <motion.div
++      id={`artwork-card-${artwork.id}`}
++      tabIndex={-1}
++      data-artwork-id={artwork.id}
+       initial={{ opacity: 0, y: 15 }}
+       animate={{ opacity: 1, y: 0 }}
+       transition={{ duration: 0.2 }}
+-      className="group relative glass-panel rounded-3xl overflow-hidden flex flex-col border border-white/10 hover:border-amber-500/30 transition-all duration-300 shadow-lg hover:shadow-2xl hover:shadow-amber-500/5"
++      className="group relative glass-panel rounded-3xl overflow-hidden flex flex-col border border-white/10 hover:border-amber-500/30 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all duration-300 shadow-lg hover:shadow-2xl hover:shadow-amber-500/5"
+     >
+       {/* Media Container with 4:3 Aspect Frame */}
+       <Link
+         href={artworkHref}
++        onClick={handleCardClick}
+         className="relative aspect-[4/3] bg-black/40 overflow-hidden block"
+       >
+         {artwork.thumbnailStorageKey ? (
+@@ -135,6 +144,7 @@ export function ArtworkCard({ artwork, currentUserRole, from }: ArtworkCardProps
+ 
+           <Link
+             href={artworkHref}
++            onClick={handleCardClick}
+             className="font-display font-bold text-base text-[#f6f2e9] hover:text-amber-300 transition-colors line-clamp-1"
+           >
+             {artwork.title}
+diff --git a/src/components/gallery/GalleryGrid.tsx b/src/components/gallery/GalleryGrid.tsx
+index f54debc..3ceb3c2 100644
+--- a/src/components/gallery/GalleryGrid.tsx
++++ b/src/components/gallery/GalleryGrid.tsx
+@@ -1,6 +1,6 @@
+ "use client";
+ 
+-import { useState, useEffect, useTransition, Suspense } from "react";
++import { useState, useEffect, useTransition, useCallback, useRef, Suspense } from "react";
+ import { useRouter, useSearchParams, usePathname } from "next/navigation";
+ import { useGalleryFilterStore } from "@/stores/useGalleryFilterStore";
+ import { useArtworksQuery } from "@/hooks/useArtworks";
+@@ -26,14 +26,30 @@ interface GalleryGridProps {
+   initialTab?: "bebas" | "challenge";
+ }
+ 
++function isMatchingGalleryUrl(savedUrlStr: string, currentPath: string): boolean {
++  if (savedUrlStr === currentPath) return true;
++  try {
++    const saved = new URL(savedUrlStr, "https://mengart.local");
++    const current = new URL(currentPath, "https://mengart.local");
++    if (saved.pathname !== current.pathname) return false;
++    const savedKeys = Array.from(saved.searchParams.keys()).sort();
++    const currentKeys = Array.from(current.searchParams.keys()).sort();
++    if (savedKeys.length !== currentKeys.length) return false;
++    for (const key of savedKeys) {
++      if (saved.searchParams.get(key) !== current.searchParams.get(key)) return false;
++    }
++    return true;
++  } catch {
++    return false;
++  }
++}
++
+ function GalleryGridContent({ currentUserRole, initialTab }: GalleryGridProps) {
+   const router = useRouter();
+   const pathname = usePathname();
+   const searchParams = useSearchParams();
+   const [, startTransition] = useTransition();
+ 
+-  const urlTab = searchParams.get("tab") === "challenge" ? "challenge" : "bebas";
+-
+   const {
+     galleryTab,
+     setGalleryTab,
+@@ -49,37 +65,127 @@ function GalleryGridContent({ currentUserRole, initialTab }: GalleryGridProps) {
+   } = useGalleryFilterStore();
+ 
+   const [localSearch, setLocalSearch] = useState(searchQuery);
++  const hasRestoredRef = useRef(false);
+ 
+-  // Sync tab from URL on mount
++  // Sync state from URL parameters on mount and browser Back/Forward (popstate)
+   useEffect(() => {
+-    if (urlTab !== galleryTab) {
+-      setGalleryTab(urlTab);
++    const state = useGalleryFilterStore.getState();
++    const urlTab = searchParams.get("tab") === "challenge" ? "challenge" : "bebas";
++    const urlSearch = searchParams.get("search") || searchParams.get("q") || "";
++    const rawMedia = searchParams.get("media") || searchParams.get("mediaType");
++    const urlMedia = rawMedia === "image" || rawMedia === "video" ? rawMedia : "all";
++    const rawCritique = searchParams.get("critique") || searchParams.get("critiqueMode");
++    const urlCritique = rawCritique === "open_for_critique" ? "open_for_critique" : "all";
++    const rawSort = searchParams.get("sort") || searchParams.get("sortBy");
++    const urlSort = rawSort === "oldest" ? "oldest" : "latest";
++
++    if (urlTab !== state.galleryTab) state.setGalleryTab(urlTab);
++    if (urlSearch !== state.searchQuery) {
++      state.setSearchQuery(urlSearch);
++      setLocalSearch(urlSearch);
+     }
+-  }, [urlTab, galleryTab, setGalleryTab]);
++    if (urlMedia !== state.mediaType) state.setMediaType(urlMedia);
++    if (urlCritique !== state.critiqueMode) state.setCritiqueMode(urlCritique);
++    if (urlSort !== state.sortBy) state.setSortBy(urlSort);
++  }, [searchParams]);
++
++  // Synchronize all filters into URL search params
++  const updateUrlFilters = useCallback(
++    (overrides: {
++      tab?: "bebas" | "challenge";
++      search?: string;
++      media?: "all" | "image" | "video";
++      critique?: "all" | "open_for_critique";
++      sort?: "latest" | "oldest";
++    }) => {
++      const activeTab = overrides.tab ?? galleryTab;
++      const activeSearch = overrides.search !== undefined ? overrides.search : searchQuery;
++      const activeMedia = overrides.media ?? mediaType;
++      const activeCritique = overrides.critique ?? critiqueMode;
++      const activeSort = overrides.sort ?? sortBy;
++
++      const params = new URLSearchParams();
++      if (activeTab === "challenge") params.set("tab", "challenge");
++      if (activeSearch && activeSearch.trim()) params.set("search", activeSearch.trim());
++      if (activeMedia !== "all") params.set("media", activeMedia);
++      if (activeCritique !== "all") params.set("critique", activeCritique);
++      if (activeSort === "oldest") params.set("sort", "oldest");
++
++      const qs = params.toString();
++      const target = qs ? `${pathname}?${qs}` : pathname;
++      startTransition(() => {
++        router.replace(target, { scroll: false });
++      });
++    },
++    [galleryTab, searchQuery, mediaType, critiqueMode, sortBy, pathname, router]
++  );
++
++  // Debounce search query updates by 300ms
++  useEffect(() => {
++    const timer = setTimeout(() => {
++      if (localSearch !== searchQuery) {
++        setSearchQuery(localSearch);
++        updateUrlFilters({ search: localSearch });
++      }
++    }, 300);
++    return () => clearTimeout(timer);
++  }, [localSearch, searchQuery, setSearchQuery, updateUrlFilters]);
+ 
+-  // Handle Tab Switch with URL query synchronization
++  // Handle Tab Switch
+   const handleTabChange = (newTabId: string) => {
+     const tabValue = newTabId as "bebas" | "challenge";
+     setGalleryTab(tabValue);
++    updateUrlFilters({ tab: tabValue });
++  };
++
++  // Handle Media Type Switch
++  const handleMediaChange = (newMedia: "all" | "image" | "video") => {
++    setMediaType(newMedia);
++    updateUrlFilters({ media: newMedia });
++  };
++
++  // Handle Sort Switch
++  const handleSortChange = () => {
++    const nextSort = sortBy === "latest" ? "oldest" : "latest";
++    setSortBy(nextSort);
++    updateUrlFilters({ sort: nextSort });
++  };
++
++  // Handle Critique Mode Switch
++  const handleCritiqueChange = () => {
++    const nextCritique = critiqueMode === "open_for_critique" ? "all" : "open_for_critique";
++    setCritiqueMode(nextCritique);
++    updateUrlFilters({ critique: nextCritique });
++  };
++
++  // Handle Reset Filters
++  const handleResetAll = () => {
++    resetFilters();
++    setLocalSearch("");
+     startTransition(() => {
+-      const params = new URLSearchParams(searchParams.toString());
+-      if (tabValue === "challenge") {
+-        params.set("tab", "challenge");
+-      } else {
+-        params.delete("tab");
+-      }
+-      const newQuery = params.toString();
+-      router.replace(newQuery ? `${pathname}?${newQuery}` : pathname, { scroll: false });
++      router.replace(pathname, { scroll: false });
+     });
+   };
+ 
+-  // Debounce search query updates by 300ms
+-  useEffect(() => {
+-    const timer = setTimeout(() => {
+-      setSearchQuery(localSearch);
+-    }, 300);
+-    return () => clearTimeout(timer);
+-  }, [localSearch, setSearchQuery]);
++  // Save composite navigation context to sessionStorage before opening artwork
++  const handleCardNavigate = (artworkId: string) => {
++    if (typeof window === "undefined") return;
++    try {
++      const qs = searchParams.toString();
++      const currentUrl = qs ? `${pathname}?${qs}` : pathname;
++      sessionStorage.setItem(
++        "mengart_gallery_nav_context",
++        JSON.stringify({
++          url: currentUrl,
++          artworkId,
++          scrollY: window.scrollY || window.pageYOffset || 0,
++          timestamp: Date.now(),
++        })
++      );
++    } catch (_e) {
++      // Ignore sessionStorage access exceptions
++    }
++  };
+ 
+   const { data: artworks = [], isLoading, error } = useArtworksQuery({
+     search: searchQuery,
+@@ -89,6 +195,60 @@ function GalleryGridContent({ currentUserRole, initialTab }: GalleryGridProps) {
+     sortBy,
+   });
+ 
++  // Restore scroll offset and card focus after artworks finish rendering
++  useEffect(() => {
++    if (isLoading || artworks.length === 0 || hasRestoredRef.current) return;
++    if (typeof window === "undefined") return;
++
++    try {
++      const raw = sessionStorage.getItem("mengart_gallery_nav_context");
++      if (!raw) return;
++      const parsed = JSON.parse(raw);
++      if (!parsed || !parsed.url) return;
++
++      // Expiry check: discard context older than 15 minutes (F5 / R09)
++      if (parsed.timestamp && Date.now() - parsed.timestamp > 15 * 60 * 1000) {
++        sessionStorage.removeItem("mengart_gallery_nav_context");
++        return;
++      }
++
++      const qs = searchParams.toString();
++      const currentPath = qs ? `${pathname}?${qs}` : pathname;
++
++      // Ensure referring URL matches canonical query string (not pathname alone)
++      if (!isMatchingGalleryUrl(parsed.url, currentPath)) {
++        return;
++      }
++
++      // Verify referring card existence in rendered DOM before consuming context
++      const cardEl = parsed.artworkId
++        ? document.getElementById(`artwork-card-${parsed.artworkId}`)
++        : null;
++
++      if (cardEl) {
++        hasRestoredRef.current = true;
++        sessionStorage.removeItem("mengart_gallery_nav_context");
++
++        // Restore scroll and focus referent card without jump
++        requestAnimationFrame(() => {
++          if (typeof parsed.scrollY === "number") {
++            window.scrollTo({ top: parsed.scrollY, behavior: "instant" });
++          }
++          cardEl.focus({ preventScroll: true });
++        });
++      } else {
++        // If the artwork is absent from this loaded dataset, clean up context without jumping
++        const artworkInList = artworks.some((a) => a.id === parsed.artworkId);
++        if (!artworkInList) {
++          hasRestoredRef.current = true;
++          sessionStorage.removeItem("mengart_gallery_nav_context");
++        }
++      }
++    } catch (_e) {
++      // Ignore sessionStorage access exceptions
++    }
++  }, [isLoading, artworks, pathname, searchParams]);
++
+   return (
+     <div className="flex flex-col gap-8">
+       {/* Top Gallery Segmented Navigation & Commission Shortcut */}
+@@ -154,7 +314,7 @@ function GalleryGridContent({ currentUserRole, initialTab }: GalleryGridProps) {
+               <button
+                 key={tab.key}
+                 type="button"
+-                onClick={() => setMediaType(tab.key as any)}
++                onClick={() => handleMediaChange(tab.key as any)}
+                 className={`px-3 py-2 min-h-[40px] rounded-xl text-xs font-mono transition-all cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-center ${
+                   mediaType === tab.key
+                     ? "bg-amber-500 text-black font-bold shadow-md shadow-amber-500/20"
+@@ -169,7 +329,7 @@ function GalleryGridContent({ currentUserRole, initialTab }: GalleryGridProps) {
+           {/* Sort By Toggle */}
+           <button
+             type="button"
+-            onClick={() => setSortBy(sortBy === "latest" ? "oldest" : "latest")}
++            onClick={handleSortChange}
+             className="px-3.5 py-2 min-h-[44px] rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 text-xs font-mono text-zinc-300 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer shrink-0 whitespace-nowrap"
+           >
+             <ArrowUpDown className="h-3.5 w-3.5 text-amber-400" />
+@@ -179,9 +339,7 @@ function GalleryGridContent({ currentUserRole, initialTab }: GalleryGridProps) {
+           {/* Komentar Terbuka Toggle */}
+           <button
+             type="button"
+-            onClick={() =>
+-              setCritiqueMode(critiqueMode === "open_for_critique" ? "all" : "open_for_critique")
+-            }
++            onClick={handleCritiqueChange}
+             className={`px-3.5 py-2 min-h-[44px] rounded-2xl border text-xs font-mono transition-all flex items-center gap-1.5 cursor-pointer shrink-0 whitespace-nowrap ${
+               critiqueMode === "open_for_critique"
+                 ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/40 font-bold"
+@@ -222,7 +380,7 @@ function GalleryGridContent({ currentUserRole, initialTab }: GalleryGridProps) {
+           {(searchQuery || mediaType !== "all" || critiqueMode !== "all") && (
+             <button
+               type="button"
+-              onClick={resetFilters}
++              onClick={handleResetAll}
+               className="mt-2 px-4 py-2 min-h-[44px] rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-mono cursor-pointer flex items-center justify-center"
+             >
+               Reset Semua Filter
+@@ -243,6 +401,7 @@ function GalleryGridContent({ currentUserRole, initialTab }: GalleryGridProps) {
+                 artwork={art}
+                 currentUserRole={currentUserRole}
+                 from={currentPathWithQuery}
++                onNavigate={handleCardNavigate}
+               />
+             );
+           })}
+diff --git a/src/components/layout/UserDropdown.tsx b/src/components/layout/UserDropdown.tsx
+index 3068e76..b1b670b 100644
+--- a/src/components/layout/UserDropdown.tsx
++++ b/src/components/layout/UserDropdown.tsx
+@@ -13,7 +13,6 @@ import {
+ } from "lucide-react";
+ import Link from "next/link";
+ import { signOut } from "next-auth/react";
+-import { clearAllSubmissionDrafts } from "@/lib/utils/draftStorage";
+ 
+ interface UserDropdownProps {
+   user: {
+@@ -155,7 +154,6 @@ export function UserDropdown({ user }: UserDropdownProps) {
+               <div className="pt-1 border-t border-white/10">
+                 <button
+                   onClick={() => {
+-                    clearAllSubmissionDrafts();
+                     signOut({ callbackUrl: "/" });
+                   }}
+                   className="w-full flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] rounded-xl text-xs font-sans text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors cursor-pointer"
+diff --git a/src/components/voting/VotingWorkspace.tsx b/src/components/voting/VotingWorkspace.tsx
+index 289c47d..37ecd0c 100644
+--- a/src/components/voting/VotingWorkspace.tsx
++++ b/src/components/voting/VotingWorkspace.tsx
+@@ -87,10 +87,13 @@ export function VotingWorkspace({
+     ...initialAllocations,
+   });
+ 
+-  // User and Round Generation tracking for clean invalidation
+-  const currentGen = `${userId || "anon"}:${votingRoundId}`;
+-  const generationRef = useRef(currentGen);
++  // Monotonic epoch tracking across user and round lifecycle changes
++  const epochCounterRef = useRef(0);
++  const currentGenStr = `${userId || "anon"}:${votingRoundId}`;
++  const lastGenStrRef = useRef(currentGenStr);
++  const epochRef = useRef(0);
+   const seqRef = useRef(0);
++  const latestConfirmedSeqRef = useRef(0);
+   const pendingCountRef = useRef(0);
+ 
+   // Local optimistic allocations
+@@ -104,6 +107,8 @@ export function VotingWorkspace({
+   const [isUncertain, setIsUncertain] = useState(false);
+   const isUncertainRef = useRef(false);
+   const [isReconciling, setIsReconciling] = useState(false);
++  const isReconcilingRef = useRef(false);
++  const [hasUnsavedIntent, setHasUnsavedIntent] = useState(false);
+ 
+   // Failed intent storage for explicit retry
+   const failedIntentRef = useRef<{ [submissionId: string]: number } | null>(null);
+@@ -145,9 +150,12 @@ export function VotingWorkspace({
+ 
+   // Invalidate pending queue operations and sync state immediately on account or round generation change
+   useEffect(() => {
+-    const newGen = `${userId || "anon"}:${votingRoundId}`;
+-    if (generationRef.current !== newGen) {
+-      generationRef.current = newGen;
++    const newGenStr = `${userId || "anon"}:${votingRoundId}`;
++    if (lastGenStrRef.current !== newGenStr) {
++      lastGenStrRef.current = newGenStr;
++      epochRef.current = ++epochCounterRef.current;
++      seqRef.current = 0;
++      latestConfirmedSeqRef.current = 0;
+       pendingCountRef.current = 0;
+       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+       confirmedAllocationsRef.current = { ...initialAllocations };
+@@ -160,7 +168,12 @@ export function VotingWorkspace({
+       setIsUncertain(false);
+       isUncertainRef.current = false;
+       failedIntentRef.current = null;
++      setHasUnsavedIntent(false);
+       busyPendingRefreshRef.current = null;
++      setIsReconciling(false);
++      isReconcilingRef.current = false;
++      setIsResetting(false);
++      setIsResetModalOpen(false);
+     }
+   }, [userId, votingRoundId, initialAllocations, maxStars]);
+ 
+@@ -193,6 +206,8 @@ export function VotingWorkspace({
+ 
+       // Uncertainty gate: pause subsequent writes while outcome is unresolved
+       if (isUncertainRef.current) {
++        failedIntentRef.current = targetAllocations;
++        setHasUnsavedIntent(true);
+         setErrorMessage(
+           "Status alokasi suara sebelumnya belum pasti karena gangguan jaringan. Harap periksa status suara terlebih dahulu."
+         );
+@@ -200,7 +215,7 @@ export function VotingWorkspace({
+         return;
+       }
+ 
+-      const opGen = generationRef.current;
++      const opEpoch = epochRef.current;
+       const opSeq = ++seqRef.current;
+       pendingCountRef.current++;
+ 
+@@ -221,9 +236,19 @@ export function VotingWorkspace({
+       // 2. Chain onto FIFO Promise Queue
+       queueRef.current = queueRef.current
+         .then(async () => {
+-          // Invalidation check: skip if unmounted or account/round generation changed
+-          if (isUnmountedRef.current || generationRef.current !== opGen) {
++          // Invalidation check: skip if unmounted or epoch changed (without modifying new epoch's pending count)
++          if (isUnmountedRef.current || epochRef.current !== opEpoch) {
++            return;
++          }
++
++          // Pre-execution uncertainty gate: block queued writes if earlier mutation failed with uncertainty
++          if (isUncertainRef.current) {
+             pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
++            failedIntentRef.current = targetAllocations;
++            setHasUnsavedIntent(true);
++            if (pendingCountRef.current === 0) {
++              setSaveStatus("error");
++            }
+             return;
+           }
+ 
+@@ -247,8 +272,7 @@ export function VotingWorkspace({
+               votes: activeVotes,
+             });
+           } catch (err: any) {
+-            if (isUnmountedRef.current || generationRef.current !== opGen) {
+-              pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
++            if (isUnmountedRef.current || epochRef.current !== opEpoch) {
+               return;
+             }
+ 
+@@ -278,6 +302,7 @@ export function VotingWorkspace({
+               setSaveStatus("error");
+               setErrorMessage(msg);
+               failedIntentRef.current = targetAllocations;
++              setHasUnsavedIntent(!isPermanent);
+ 
+               // Rollback optimistic state ONLY if this was the latest enqueued operation
+               if (opSeq === seqRef.current) {
+@@ -297,20 +322,24 @@ export function VotingWorkspace({
+                 "Koneksi terputus saat menyimpan suara. Harap periksa status suara untuk memastikan alokasi tersimpan."
+               );
+               failedIntentRef.current = targetAllocations;
++              setHasUnsavedIntent(true);
+             }
+             return;
+           }
+ 
+-          if (isUnmountedRef.current || generationRef.current !== opGen) {
+-            pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
++          if (isUnmountedRef.current || epochRef.current !== opEpoch) {
+             return;
+           }
+ 
+           pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+ 
+           if (res?.success) {
+-            confirmedAllocationsRef.current = targetAllocations;
++            if (opSeq >= latestConfirmedSeqRef.current) {
++              latestConfirmedSeqRef.current = opSeq;
++              confirmedAllocationsRef.current = targetAllocations;
++            }
+             failedIntentRef.current = null;
++            setHasUnsavedIntent(false);
+             setIsPermanentError(false);
+             isUncertainRef.current = false;
+             setIsUncertain(false);
+@@ -327,7 +356,7 @@ export function VotingWorkspace({
+               setSaveStatus("saved");
+               if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+               saveTimeoutRef.current = setTimeout(() => {
+-                if (!isUnmountedRef.current && pendingCountRef.current === 0) {
++                if (!isUnmountedRef.current && pendingCountRef.current === 0 && epochRef.current === opEpoch) {
+                   setSaveStatus("idle");
+                 }
+               }, 2500);
+@@ -346,20 +375,30 @@ export function VotingWorkspace({
+     [isLoggedIn, maxStars, roundDeadline, votingRoundId]
+   );
+ 
+-  // Retry failed intent
++  // Retry failed intent (explicit action allowed only when NOT in an unresolved uncertain state)
+   const handleRetryFailedIntent = () => {
+-    if (!failedIntentRef.current || isPermanentError) return;
+-    isUncertainRef.current = false;
+-    setIsUncertain(false);
+-    enqueueSave(failedIntentRef.current);
++    if (!failedIntentRef.current || isPermanentError || isUncertainRef.current) return;
++    const retryTarget = { ...failedIntentRef.current };
++    enqueueSave(retryTarget);
+   };
+ 
+-  // Reconcile ballot status with server
++  // Reconcile ballot status with server with full epoch & error/finally guards
+   const handleReconcile = async () => {
+     setIsReconciling(true);
++    isReconcilingRef.current = true;
+     setErrorMessage(null);
++    const opEpoch = epochRef.current;
++    const reconcileSeq = ++seqRef.current;
+     try {
+       const roundData = await reconcileBallotAction(votingRoundId);
++      if (isUnmountedRef.current || epochRef.current !== opEpoch) return;
++
++      if (reconcileSeq < latestConfirmedSeqRef.current) {
++        // Stale reconciliation read! A newer mutation was already confirmed.
++        return;
++      }
++      latestConfirmedSeqRef.current = Math.max(latestConfirmedSeqRef.current, reconcileSeq);
++
+       if (roundData?.votingRound?.id && roundData.votingRound.id !== votingRoundId) {
+         throw new Error("ID babak voting tidak sesuai dengan babak aktif.");
+       }
+@@ -376,20 +415,48 @@ export function VotingWorkspace({
+       setAllocations(serverAllocations);
+       const serverTotal = Object.values(serverAllocations).reduce((a, b) => a + b, 0);
+       setRemainingStars(maxStars - serverTotal);
+-      failedIntentRef.current = null;
++
++      // Uncertainty resolved authoritatively
+       isUncertainRef.current = false;
+       setIsUncertain(false);
+       setIsPermanentError(false);
++
++      // Settle failed intent if server state already matches it
++      if (failedIntentRef.current) {
++        const intentKeys = Object.keys(failedIntentRef.current).filter(
++          (k) => (failedIntentRef.current![k] || 0) > 0
++        );
++        const serverKeys = Object.keys(serverAllocations).filter(
++          (k) => (serverAllocations[k] || 0) > 0
++        );
++        const match =
++          intentKeys.length === serverKeys.length &&
++          intentKeys.every((k) => failedIntentRef.current![k] === serverAllocations[k]);
++        if (match) {
++          failedIntentRef.current = null;
++          setHasUnsavedIntent(false);
++        } else {
++          setHasUnsavedIntent(true);
++        }
++      } else {
++        setHasUnsavedIntent(false);
++      }
++
+       setSaveStatus("saved");
+       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+       saveTimeoutRef.current = setTimeout(() => {
+-        if (!isUnmountedRef.current) setSaveStatus("idle");
++        if (!isUnmountedRef.current && epochRef.current === opEpoch) setSaveStatus("idle");
+       }, 2000);
+     } catch (err: any) {
++      if (isUnmountedRef.current || epochRef.current !== opEpoch) return;
+       setErrorMessage(err?.message || "Gagal memeriksa status suara.");
+       setSaveStatus("error");
+     } finally {
+-      setIsReconciling(false);
++      if (!isUnmountedRef.current && epochRef.current === opEpoch) {
++        setIsReconciling(false);
++        isReconcilingRef.current = false;
++        pendingCountRef.current = 0;
++      }
+     }
+   };
+ 
+@@ -515,50 +582,95 @@ export function VotingWorkspace({
+     enqueueSave(nextAllocations);
+   };
+ 
+-  // Reset ballot inside serialized queue
++  // Reset ballot inside serialized queue with full uncertainty barrier and epoch isolation
+   const handleConfirmReset = async () => {
++    if (isUncertainRef.current) {
++      setErrorMessage(
++        "Tidak dapat mereset saat alokasi suara belum pasti karena gangguan jaringan. Harap periksa status suara terlebih dahulu."
++      );
++      setSaveStatus("error");
++      setIsResetModalOpen(false);
++      return;
++    }
++
+     setIsResetting(true);
+     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+-    const opGen = generationRef.current;
++    const opEpoch = epochRef.current;
++    const opSeq = ++seqRef.current;
++    pendingCountRef.current++;
+ 
+     queueRef.current = queueRef.current
+       .then(async () => {
+-        if (isUnmountedRef.current || generationRef.current !== opGen) return;
++        if (isUnmountedRef.current || epochRef.current !== opEpoch) return;
++
++        if (isUncertainRef.current) {
++          pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
++          setIsResetting(false);
++          setIsResetModalOpen(false);
++          return;
++        }
+ 
+         setSaveStatus("saving");
+         try {
+           await resetBallotAction({ votingRoundId });
+-          if (isUnmountedRef.current || generationRef.current !== opGen) return;
++          if (isUnmountedRef.current || epochRef.current !== opEpoch) return;
+ 
+-          confirmedAllocationsRef.current = {};
++          pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
++          if (opSeq >= latestConfirmedSeqRef.current) {
++            latestConfirmedSeqRef.current = opSeq;
++            confirmedAllocationsRef.current = {};
++          }
+           failedIntentRef.current = null;
++          setHasUnsavedIntent(false);
+           isUncertainRef.current = false;
+           setIsUncertain(false);
++          setIsPermanentError(false);
+           setAllocations({});
+           setRemainingStars(maxStars);
+           setSaveStatus("saved");
+           setIsResetModalOpen(false);
+           if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+           saveTimeoutRef.current = setTimeout(() => {
+-            if (!isUnmountedRef.current) setSaveStatus("idle");
++            if (!isUnmountedRef.current && epochRef.current === opEpoch && pendingCountRef.current === 0) {
++              setSaveStatus("idle");
++            }
+           }, 2000);
+         } catch (err: any) {
+-          if (isUnmountedRef.current || generationRef.current !== opGen) return;
+-          setSaveStatus("error");
+-          setErrorMessage(err?.message || "Gagal mereset suara.");
++          if (isUnmountedRef.current || epochRef.current !== opEpoch) return;
++          pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
++          setIsResetModalOpen(false);
++          const msg = err?.message || "Gagal mereset suara.";
++
++          const isConfirmedRejection =
++            msg.includes("sedang tidak dibuka") ||
++            msg.includes("telah berakhir") ||
++            msg.includes("ditangguhkan") ||
++            msg.includes("Akses ditolak");
++
++          if (isConfirmedRejection) {
++            setSaveStatus("error");
++            setErrorMessage(msg);
++          } else {
++            // Uncertain outcome on reset
++            isUncertainRef.current = true;
++            setIsUncertain(true);
++            setSaveStatus("error");
++            setErrorMessage(
++              "Koneksi terputus saat mereset suara. Harap periksa status suara untuk memastikan alokasi."
++            );
++            failedIntentRef.current = {};
++            setHasUnsavedIntent(true);
++          }
+         }
+       })
+       .catch((err) => {
+         console.error("Voting reset queue error:", err);
++      })
++      .finally(() => {
++        if (!isUnmountedRef.current && epochRef.current === opEpoch) {
++          setIsResetting(false);
++        }
+       });
+-
+-    try {
+-      await queueRef.current;
+-    } finally {
+-      if (!isUnmountedRef.current) {
+-        setIsResetting(false);
+-      }
+-    }
+   };
+ 
+   // Keyboard navigation for focus inspection
+@@ -606,11 +718,11 @@ export function VotingWorkspace({
+             <span>{errorMessage}</span>
+           </div>
+           <div className="flex items-center gap-2 self-end sm:self-auto">
+-            {!isPermanentError && failedIntentRef.current && (
++            {!isPermanentError && !isUncertain && hasUnsavedIntent && (
+               <button
+                 type="button"
+                 onClick={handleRetryFailedIntent}
+-                className="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs font-sans transition-colors cursor-pointer min-h-[36px]"
++                className="px-3 py-2 min-h-[44px] min-w-[44px] rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs font-sans transition-colors cursor-pointer flex items-center justify-center"
+               >
+                 Coba simpan ulang
+               </button>
+@@ -619,10 +731,10 @@ export function VotingWorkspace({
+               type="button"
+               onClick={handleReconcile}
+               disabled={isReconciling}
+-              className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-zinc-200 font-sans text-xs transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
++              className="px-3 py-2 min-h-[44px] min-w-[44px] rounded-lg bg-white/10 hover:bg-white/15 text-zinc-200 font-sans text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+             >
+               <RefreshCw className={`h-3.5 w-3.5 ${isReconciling ? "animate-spin" : ""}`} />
+-              <span>Periksa status suara</span>
++              <span>{isReconciling ? "Memeriksa..." : "Periksa status suara"}</span>
+             </button>
+             <button
+               type="button"
+@@ -636,6 +748,39 @@ export function VotingWorkspace({
+         </div>
+       )}
+ 
++      {/* Independent Unsaved Intent Recovery Banner (F2 / R02) */}
++      {!errorMessage && hasUnsavedIntent && !isUncertain && !isPermanentError && (
++        <div
++          role="alert"
++          className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs font-sans flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md"
++        >
++          <div className="flex items-center gap-2">
++            <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
++            <span>Status suara terverifikasi di server. Anda memiliki pilihan suara yang belum tersimpan.</span>
++          </div>
++          <div className="flex items-center gap-2 self-end sm:self-auto">
++            <button
++              type="button"
++              onClick={handleRetryFailedIntent}
++              className="px-3 py-2 min-h-[44px] min-w-[44px] rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs font-sans transition-colors cursor-pointer flex items-center justify-center"
++            >
++              Coba simpan ulang
++            </button>
++            <button
++              type="button"
++              onClick={() => {
++                failedIntentRef.current = null;
++                setHasUnsavedIntent(false);
++              }}
++              aria-label="Abaikan suara belum tersimpan"
++              className="h-11 w-11 min-h-[44px] min-w-[44px] rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white flex items-center justify-center cursor-pointer"
++            >
++              <X className="h-4 w-4" />
++            </button>
++          </div>
++        </div>
++      )}
++
+       {/* 2-Column Mobile Overview Grid (Grill-Me & Blueprint v0.3) */}
+       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">
+         {candidates.map((cand, index) => {
+diff --git a/src/lib/__tests__/testDraftStorageGenerations.ts b/src/lib/__tests__/testDraftStorageGenerations.ts
+new file mode 100644
+index 0000000..579ab06
+--- /dev/null
++++ b/src/lib/__tests__/testDraftStorageGenerations.ts
+@@ -0,0 +1,232 @@
++/**
++ * Automated Regression Test Suite: Generational Draft Storage Contract (F1 / R04)
++ * Verifies monotonic integer generation tracking, cross-challenge isolation,
++ * rejection of stale debounced writes, clock rollback immunity, and legacy migration.
++ */
++
++import {
++  saveSubmissionDraft,
++  loadSubmissionDraft,
++  clearSubmissionDraft,
++  clearUserChallengeDraft,
++  clearDraftsForUser,
++  getDraftGeneration,
++  incrementDraftGeneration,
++  getDraftKey,
++  getDraftGenerationKey,
++  type SubmissionDraftData,
++} from "@/lib/utils/draftStorage";
++
++// Mock localStorage in Node environment
++class MockLocalStorage implements Storage {
++  private store = new Map<string, string>();
++
++  get length(): number {
++    return this.store.size;
++  }
++
++  clear(): void {
++    this.store.clear();
++  }
++
++  getItem(key: string): string | null {
++    return this.store.get(key) ?? null;
++  }
++
++  key(index: number): string | null {
++    const keys = Array.from(this.store.keys());
++    return keys[index] ?? null;
++  }
++
++  removeItem(key: string): void {
++    this.store.delete(key);
++  }
++
++  setItem(key: string, value: string): void {
++    this.store.set(key, String(value));
++  }
++
++  keys(): string[] {
++    return Array.from(this.store.keys());
++  }
++}
++
++async function runDraftStorageTests() {
++  console.log("=== Starting Generational Draft Storage Contract Tests (F1 / R04) ===");
++
++  const storage = new MockLocalStorage();
++  (globalThis as any).window = {
++    localStorage: storage,
++    dispatchEvent: () => true,
++  };
++  (globalThis as any).CustomEvent = class {
++    type: string;
++    detail: any;
++    constructor(type: string, params?: { detail: any }) {
++      this.type = type;
++      this.detail = params?.detail;
++    }
++  };
++
++  const sampleData: Omit<SubmissionDraftData, "savedAt" | "generation"> = {
++    title: "Lukisan Alam Mengart",
++    description: "Karya seni visual digital menggunakan teknik warna dinamis.",
++    softwareUsed: "Krita 5.2",
++    isSpoiler: false,
++  };
++
++  // 1. Initial Generation Verification
++  console.log("\n[Test 1] Initial draft generation should be 1");
++  const initialGen = getDraftGeneration("user-1", "challenge-1");
++  if (initialGen !== 1) {
++    throw new Error(`Expected initial generation to be 1, got ${initialGen}`);
++  }
++  console.log("  ✓ Initial generation is 1");
++
++  // 2. Successful Save with Current Generation
++  console.log("\n[Test 2] Save draft with matching expected generation");
++  const saveOk = saveSubmissionDraft("user-1", "challenge-1", sampleData, initialGen);
++  if (!saveOk) {
++    throw new Error("Failed to save draft with initial generation");
++  }
++  const loaded = loadSubmissionDraft("user-1", "challenge-1");
++  if (!loaded || loaded.title !== sampleData.title || loaded.generation !== 1) {
++    throw new Error(`Failed to load saved draft or generation mismatched: ${JSON.stringify(loaded)}`);
++  }
++  console.log("  ✓ Draft saved and verified with generation 1");
++
++  // 3. Increment Generation on Invalidation / Clear Draft
++  console.log("\n[Test 3] Clear draft increments generation and removes draft key while retaining generation marker");
++  clearSubmissionDraft("user-1", "challenge-1");
++  const genAfterClear = getDraftGeneration("user-1", "challenge-1");
++  if (genAfterClear !== 2) {
++    throw new Error(`Expected generation to increment to 2, got ${genAfterClear}`);
++  }
++  const loadedAfterClear = loadSubmissionDraft("user-1", "challenge-1");
++  if (loadedAfterClear !== null) {
++    throw new Error("Draft should be null after clearance");
++  }
++  const draftKeyExists = storage.getItem(getDraftKey("user-1", "challenge-1"));
++  if (draftKeyExists !== null) {
++    throw new Error("Draft payload key should be deleted from storage");
++  }
++  const genKeyExists = storage.getItem(getDraftGenerationKey("user-1", "challenge-1"));
++  if (genKeyExists === null || parseInt(genKeyExists, 10) !== 2) {
++    throw new Error("Generation marker MUST be retained in storage after draft deletion");
++  }
++  console.log("  ✓ Draft payload deleted, generation incremented to 2, generation marker retained");
++
++  // 4. Stale In-Flight Autosave Rejection
++  console.log("\n[Test 4] Delayed / stale autosave with older generation is rejected");
++  const staleSaveResult = saveSubmissionDraft(
++    "user-1",
++    "challenge-1",
++    { ...sampleData, title: "Stale Autosave" },
++    initialGen // initialGen is 1, but current generation is 2!
++  );
++  if (staleSaveResult !== false) {
++    throw new Error("Stale autosave with older generation MUST return false");
++  }
++  const loadedAfterStale = loadSubmissionDraft("user-1", "challenge-1");
++  if (loadedAfterStale !== null) {
++    throw new Error("Stale draft should not be written to storage");
++  }
++  console.log("  ✓ Stale autosave with older generation was rejected and storage remained clean");
++
++  // 5. Immunity to Clock Rollback
++  console.log("\n[Test 5] Monotonic generation check is immune to clock rollback");
++  // Simulate wall-clock moving backward from timestamp 5000 to 1000
++  const realDateNow = Date.now;
++  try {
++    Date.now = () => 5000;
++    const capturedGen = getDraftGeneration("user-2", "challenge-2"); // 1
++    saveSubmissionDraft("user-2", "challenge-2", sampleData, capturedGen);
++
++    // Discard happens at clock = 2000 (clock moved backward)
++    Date.now = () => 2000;
++    clearSubmissionDraft("user-2", "challenge-2"); // generation becomes 2
++
++    // Delayed callback attempts save at clock = 6000 with capturedGen = 1
++    Date.now = () => 6000;
++    const delayedSave = saveSubmissionDraft("user-2", "challenge-2", sampleData, capturedGen);
++    if (delayedSave !== false) {
++      throw new Error("Delayed save after clock rollback must be rejected by generation check");
++    }
++    const checkLoaded = loadSubmissionDraft("user-2", "challenge-2");
++    if (checkLoaded !== null) {
++      throw new Error("Draft was resurrected despite clock rollback and invalidation");
++    }
++    console.log("  ✓ Clock rollback does not affect monotonic generation rejection");
++  } finally {
++    Date.now = realDateNow;
++  }
++
++  // 6. Cross-User and Cross-Challenge Isolation
++  console.log("\n[Test 6] Scoped clearance isolates by user and challenge without touching unrelated drafts");
++  storage.clear();
++  // Seed:
++  // User A, Challenge Current
++  // User A, Challenge Other
++  // User B, Challenge Other
++  saveSubmissionDraft("user-A", "challenge-current", { ...sampleData, title: "A Current" });
++  saveSubmissionDraft("user-A", "challenge-other", { ...sampleData, title: "A Other" });
++  saveSubmissionDraft("user-B", "challenge-other", { ...sampleData, title: "B Other" });
++
++  const keysBefore = storage.keys();
++  console.log("  Keys before scoped clearance:", keysBefore);
++
++  // Clear ONLY User A on Challenge Current (account-switch / modal discard)
++  clearUserChallengeDraft("user-A", "challenge-current");
++
++  // User A Current should be cleared
++  const userACurrent = loadSubmissionDraft("user-A", "challenge-current");
++  if (userACurrent !== null) {
++    throw new Error("User A current challenge draft should be cleared");
++  }
++
++  // User A Other MUST survive!
++  const userAOther = loadSubmissionDraft("user-A", "challenge-other");
++  if (!userAOther || userAOther.title !== "A Other") {
++    throw new Error(`User A other challenge draft MUST be preserved! Got: ${JSON.stringify(userAOther)}`);
++  }
++
++  // User B Other MUST survive!
++  const userBOther = loadSubmissionDraft("user-B", "challenge-other");
++  if (!userBOther || userBOther.title !== "B Other") {
++    throw new Error(`User B other challenge draft MUST be preserved! Got: ${JSON.stringify(userBOther)}`);
++  }
++  console.log("  ✓ User A other draft and User B other draft survived intact");
++
++  // 7. Legacy v1 Storage Format Migration
++  console.log("\n[Test 7] Automatic migration from legacy v1 draft keys");
++  const legacyKey = "mengart_sub_draft:v1:user-legacy:challenge-legacy";
++  const legacyPayload = {
++    title: "Legacy Title",
++    description: "Legacy Description",
++    softwareUsed: "Photoshop",
++    isSpoiler: true,
++    savedAt: 123456789,
++  };
++  storage.setItem(legacyKey, JSON.stringify(legacyPayload));
++
++  const migrated = loadSubmissionDraft("user-legacy", "challenge-legacy");
++  if (!migrated || migrated.title !== "Legacy Title" || migrated.isSpoiler !== true) {
++    throw new Error(`Failed to migrate legacy draft: ${JSON.stringify(migrated)}`);
++  }
++  // Check that legacy key was removed and modern key was populated
++  if (storage.getItem(legacyKey) !== null) {
++    throw new Error("Legacy key should be removed after migration");
++  }
++  const modernKey = getDraftKey("user-legacy", "challenge-legacy");
++  if (storage.getItem(modernKey) === null) {
++    throw new Error("Modern key should be created after migration");
++  }
++  console.log("  ✓ Legacy draft migrated cleanly to modern format");
++
++  console.log("\n=== ALL GENERATIONAL DRAFT STORAGE TESTS PASSED (100%) ===");
++}
++
++runDraftStorageTests().catch((err) => {
++  console.error("Draft storage test failure:", err);
++  process.exit(1);
++});
+diff --git a/src/lib/__tests__/testPhase2SecurityAndContracts.ts b/src/lib/__tests__/testPhase2SecurityAndContracts.ts
+index d1b8ea5..98ece5c 100644
+--- a/src/lib/__tests__/testPhase2SecurityAndContracts.ts
++++ b/src/lib/__tests__/testPhase2SecurityAndContracts.ts
+@@ -21,14 +21,18 @@ import { takedownArtworkDirectService } from "@/lib/services/moderationService";
+ import { disqualifyChallengeCandidateService } from "@/lib/services/challengeService";
+ import { getChallengeBySlug } from "@/lib/challenges";
+ import { getChallengeVotingData } from "@/lib/voting";
+-import { castOrUpdateBallotService } from "@/lib/services/votingService";
++import {
++  castOrUpdateBallotService,
++  startTiebreakService,
++  resolveTieManuallyService,
++} from "@/lib/services/votingService";
+ import { importHistoricalChallengeAction } from "@/app/actions/historicalBackfill";
++import { importHistoricalChallengeService } from "@/lib/services/historicalBackfillService";
+ import {
+   toWitaDatetimeLocalValue,
+   parseWitaDatetimeLocalInput,
+   formatWitaDate,
+ } from "@/lib/presentation/witaTime";
+-import { importHistoricalChallengeService } from "@/lib/services/historicalBackfillService";
+ import { getSafeReturnUrl } from "@/lib/navigation/returnUrl";
+ import { handleRedeemCallback } from "@/app/api/auth/redeem-callback/route";
+ import { NextRequest } from "next/server";
+@@ -618,16 +622,20 @@ async function runPhase2SecurityAndContractTests() {
+       ],
+     };
+ 
+-    // 1. Exported Server Action Boundary: unauthenticated caller rejected
+-    let actionBoundaryRejected = false;
++    // 1. Exported Server Action Boundary: unauthenticated / anonymous caller rejected (native auth() boundary)
++    let anonActionRejected = false;
+     try {
+       await importHistoricalChallengeAction(sampleHistoricalInput);
+     } catch (e: any) {
+-      actionBoundaryRejected = true;
++      if (e.message.includes("Autentikasi diperlukan") || e.message.includes("AuthRequired")) {
++        anonActionRejected = true;
++      }
+     }
+-    if (!actionBoundaryRejected) throw new Error("Scenario 6 Failed: Exported action boundary allowed unauthenticated call!");
++    if (!anonActionRejected) throw new Error("Scenario 6 Failed: Exported action boundary allowed unauthenticated call!");
++    const [unauthCheck] = await db.select().from(challenges).where(eq(challenges.slug, sampleHistoricalInput.slug));
++    if (unauthCheck) throw new Error("Scenario 6 Failed: Row was inserted into challenges table by unauthenticated call!");
+ 
+-    // 2. Exported Server Action Boundary: caller attempting payload injection of actorOverride
++    // 2. Exported Server Action Boundary: payload injection of actorOverride rejected
+     let actionPayloadInjectionRejected = false;
+     try {
+       await importHistoricalChallengeAction({
+@@ -638,76 +646,70 @@ async function runPhase2SecurityAndContractTests() {
+       actionPayloadInjectionRejected = true;
+     }
+     if (!actionPayloadInjectionRejected) throw new Error("Scenario 6 Failed: Exported action boundary accepted injected actorOverride!");
++    const [injCheck] = await db.select().from(challenges).where(eq(challenges.slug, sampleHistoricalInput.slug));
++    if (injCheck) throw new Error("Scenario 6 Failed: Row was inserted into challenges table by injected payload!");
+ 
+-    // Verify 0 rows written in challenges table for unauthenticated action attempts
+-    const [unauthCheck] = await db.select().from(challenges).where(eq(challenges.slug, sampleHistoricalInput.slug));
+-    if (unauthCheck) throw new Error("Scenario 6 Failed: Row was inserted into challenges table by rejected action call!");
+-
+-    // 3. Negative: Anonymous / missing actor on service
+-    let anonRejected = false;
+-    try {
+-      await importHistoricalChallengeService(db, { id: "", role: "" } as any, sampleHistoricalInput);
+-    } catch (e: any) {
+-      anonRejected = true;
+-    }
+-    if (!anonRejected) throw new Error("Scenario 6 Failed: Anonymous actor was not rejected!");
+-
+-    // 4. Negative: Ordinary member caller
+-    let memberRejected = false;
++    // 3. Domain Service RBAC Boundary: ordinary member caller rejected with 403 against live DB
++    let memberServiceRejected = false;
+     try {
+       await importHistoricalChallengeService(db, { id: normalMember.id, role: normalMember.role }, sampleHistoricalInput);
+     } catch (e: any) {
+-      memberRejected = true;
++      if (e.message.includes("administrator atau moderator") || e.message.includes("Akses ditolak") || e.message.includes("Wewenang Moderator")) {
++        memberServiceRejected = true;
++      }
+     }
+-    if (!memberRejected) throw new Error("Scenario 6 Failed: Ordinary member was not rejected!");
++    if (!memberServiceRejected) throw new Error("Scenario 6 Failed: Service allowed ordinary member!");
++    const [memberCheck] = await db.select().from(challenges).where(eq(challenges.slug, sampleHistoricalInput.slug));
++    if (memberCheck) throw new Error("Scenario 6 Failed: Row was inserted into challenges table by member call!");
+ 
+-    // 5. Negative: Suspended staff caller
+-    let suspendedRejected = false;
++    // 4. Domain Service RBAC Boundary: suspended staff caller rejected
++    let suspendedServiceRejected = false;
+     try {
+-      await importHistoricalChallengeService(db, { id: suspendedStaff.id, role: suspendedStaff.role }, sampleHistoricalInput);
++      await importHistoricalChallengeService(db, { id: suspendedStaff.id, role: "moderator" }, sampleHistoricalInput);
+     } catch (e: any) {
+-      suspendedRejected = true;
++      if (e.message.includes("moderator aktif") || e.message.includes("ditangguhkan")) {
++        suspendedServiceRejected = true;
++      }
+     }
+-    if (!suspendedRejected) throw new Error("Scenario 6 Failed: Suspended staff was not rejected!");
++    if (!suspendedServiceRejected) throw new Error("Scenario 6 Failed: Service allowed suspended staff!");
++    const [suspCheck] = await db.select().from(challenges).where(eq(challenges.slug, sampleHistoricalInput.slug));
++    if (suspCheck) throw new Error("Scenario 6 Failed: Row was inserted into challenges table by suspended staff!");
+ 
+-    // 6. Negative: Deleted staff caller
+-    let deletedRejected = false;
++    // 5. Domain Service RBAC Boundary: deleted staff caller rejected
++    let deletedServiceRejected = false;
+     try {
+-      await importHistoricalChallengeService(db, { id: deletedStaff.id, role: deletedStaff.role }, sampleHistoricalInput);
++      await importHistoricalChallengeService(db, { id: deletedStaff.id, role: "moderator" }, sampleHistoricalInput);
+     } catch (e: any) {
+-      deletedRejected = true;
++      if (e.message.includes("moderator aktif") || e.message.includes("dihapus")) {
++        deletedServiceRejected = true;
++      }
+     }
+-    if (!deletedRejected) throw new Error("Scenario 6 Failed: Deleted staff was not rejected!");
++    if (!deletedServiceRejected) throw new Error("Scenario 6 Failed: Service allowed deleted staff!");
++    const [delCheck] = await db.select().from(challenges).where(eq(challenges.slug, sampleHistoricalInput.slug));
++    if (delCheck) throw new Error("Scenario 6 Failed: Row was inserted into challenges table by deleted staff!");
+ 
+-    // 7. Negative: Demoted staff caller (claims role moderator, but database has member)
+-    let demotedRejected = false;
++    // 6. Domain Service RBAC Boundary: demoted staff caller (session claims moderator, but live DB row is member)
++    let demotedServiceRejected = false;
+     try {
+       await importHistoricalChallengeService(db, { id: demotedStaff.id, role: "moderator" }, sampleHistoricalInput);
+     } catch (e: any) {
+-      demotedRejected = true;
+-    }
+-    if (!demotedRejected) throw new Error("Scenario 6 Failed: Demoted staff caller was not rejected by live database check!");
+-
+-    // 8. Negative: Extra injected identity property in input payload with member credentials
+-    let injectedPayloadRejected = false;
+-    try {
+-      const injectedPayload = {
+-        ...sampleHistoricalInput,
+-        actorOverride: { id: activeStaff.id, role: "admin" },
+-      };
+-      await importHistoricalChallengeService(db, { id: normalMember.id, role: normalMember.role }, injectedPayload as any);
+-    } catch (e: any) {
+-      injectedPayloadRejected = true;
++      if (e.message.includes("moderator aktif") || e.message.includes("Akses ditolak") || e.message.includes("Wewenang Moderator")) {
++        demotedServiceRejected = true;
++      }
+     }
+-    if (!injectedPayloadRejected) throw new Error("Scenario 6 Failed: Injected actorOverride bypassed auth boundary!");
++    if (!demotedServiceRejected) throw new Error("Scenario 6 Failed: Service allowed demoted staff!");
++    const [demotedCheck] = await db.select().from(challenges).where(eq(challenges.slug, sampleHistoricalInput.slug));
++    if (demotedCheck) throw new Error("Scenario 6 Failed: Row was inserted into challenges table by demoted staff!");
+ 
+-    // 9. Positive: Authorized active staff caller succeeds
+-    const successResult = await importHistoricalChallengeService(db, { id: activeStaff.id, role: activeStaff.role }, sampleHistoricalInput);
+-    if (!successResult.success || !successResult.challengeId) {
+-      throw new Error("Scenario 6 Failed: Active staff historical import failed unexpectedly.");
++    // 7. Positive: Authorized active staff caller on domain service succeeds and writes row
++    const actionSuccessResult = await importHistoricalChallengeService(db, { id: activeStaff.id, role: activeStaff.role }, sampleHistoricalInput);
++    if (!actionSuccessResult.success || !actionSuccessResult.challengeId) {
++      throw new Error("Scenario 6 Failed: Active staff call failed unexpectedly.");
+     }
++    const [successCheck] = await db.select().from(challenges).where(eq(challenges.id, actionSuccessResult.challengeId));
++    if (!successCheck) throw new Error("Scenario 6 Failed: Challenge was not created by authorized service call!");
+ 
+-    console.log("  ✓ R01: Action boundary & service verified against anonymous, member, suspended, deleted, demoted callers and payload injection.");
++    console.log("  ✓ R01: Authentic exported action boundary verified against unauthenticated caller and payload injection, with live DB service validation across member, suspended, deleted, demoted roles and positive staff write.");
+   }
+ 
+   // =========================================================================
+@@ -994,7 +996,446 @@ async function runPhase2SecurityAndContractTests() {
+       throw new Error("Scenario 7 Failed: Audit log for disqualify_candidate was not recorded!");
+     }
+ 
+-    console.log("  ✓ R05: Disqualification phase matrix verified for locked, tiebreak, finished, and cancelled guards.");
++    // 8. Subscenario 7B: 3-way tie in closed main round with disqualification during tie_pending
++    const { user: artist3, profile: artistProfile3 } = await createTestUser("member", "active");
++    const { artwork: art3, version: ver3 } = await createTestArtwork(artist3.id, artistProfile3.id, "Disq Art 3");
++
++    const [tie3Challenge] = await db
++      .insert(challenges)
++      .values({
++        title: `3-Way Tie Challenge ${suffix}`,
++        slug: `3way-tie-challenge-${suffix}`,
++        theme: "3-Way Tie Phase",
++        description: "Challenge with 3 tied candidates",
++        promptRules: "Rules",
++        status: "tie_pending",
++        awardMode: "vote_only",
++      })
++      .returning();
++
++    const [subA] = await db
++      .insert(challengeSubmissions)
++      .values({
++        challengeId: tie3Challenge.id,
++        userId: artist1.id,
++        profileId: artistProfile1.id,
++        artworkId: art1.id,
++        artworkVersionId: ver1.id,
++        title: "Sub A",
++        submissionStatus: "submitted",
++      })
++      .returning();
++
++    const [subB] = await db
++      .insert(challengeSubmissions)
++      .values({
++        challengeId: tie3Challenge.id,
++        userId: artist2.id,
++        profileId: artistProfile2.id,
++        artworkId: art2.id,
++        artworkVersionId: ver2.id,
++        title: "Sub B",
++        submissionStatus: "submitted",
++      })
++      .returning();
++
++    const [subC] = await db
++      .insert(challengeSubmissions)
++      .values({
++        challengeId: tie3Challenge.id,
++        userId: artist3.id,
++        profileId: artistProfile3.id,
++        artworkId: art3.id,
++        artworkVersionId: ver3.id,
++        title: "Sub C",
++        submissionStatus: "submitted",
++      })
++      .returning();
++
++    // Create closed main round where A, B, C tied with 3 stars each
++    const [mainRound3] = await db
++      .insert(challengeVotingRounds)
++      .values({
++        challengeId: tie3Challenge.id,
++        roundType: "main",
++        status: "closed",
++        startsAt: new Date(Date.now() - 7200000),
++        deadline: new Date(Date.now() - 3600000),
++        starsPerMember: 3,
++      })
++      .returning();
++
++    await db.insert(challengeVotingRoundCandidates).values([
++      { votingRoundId: mainRound3.id, submissionId: subA.id },
++      { votingRoundId: mainRound3.id, submissionId: subB.id },
++      { votingRoundId: mainRound3.id, submissionId: subC.id },
++    ]);
++
++    // Insert 3 stars for each of A, B, C
++    const { user: voter1 } = await createTestUser("member", "active");
++    const [b1] = await db
++      .insert(challengeBallots)
++      .values({
++        challengeId: tie3Challenge.id,
++        votingRoundId: mainRound3.id,
++        userId: voter1.id,
++        roundType: "main",
++        starsAllocated: 3,
++      })
++      .returning();
++
++    await db.insert(challengeBallotStars).values([
++      { ballotId: b1.id, submissionId: subA.id, starsCount: 1 },
++      { ballotId: b1.id, submissionId: subB.id, starsCount: 1 },
++      { ballotId: b1.id, submissionId: subC.id, starsCount: 1 },
++    ]);
++
++    // Disqualify subA during tie_pending
++    const disqA = await disqualifyChallengeCandidateService(
++      db,
++      { userId: adminStaff.id, role: adminStaff.role },
++      { submissionId: subA.id, reason: "Violates terms during tie_pending" }
++    );
++    if (!disqA.success) throw new Error("Scenario 7 Failed: Disqualification of subA failed");
++
++    // Verify challenge remains in tie_pending (subB and subC remain tied)
++    const [checkTie3] = await db.select().from(challenges).where(eq(challenges.id, tie3Challenge.id));
++    if (checkTie3.status !== "tie_pending") {
++      throw new Error(`Scenario 7 Failed: Expected tie_pending with 2 tied survivors, got ${checkTie3.status}`);
++    }
++
++    // Attempt manual resolution with disqualified subA: must fail under row-level lock
++    let disqManualResolved = false;
++    try {
++      await resolveTieManuallyService(
++        db,
++        { userId: adminStaff.id, role: adminStaff.role },
++        {
++          challengeId: tie3Challenge.id,
++          submissionId: subA.id,
++          reason: "Attempt to crown disqualified sub",
++        }
++      );
++    } catch (e: any) {
++      if (e.message.includes("telah didiskualifikasi") || e.message.includes("tidak memenuhi syarat")) {
++        disqManualResolved = true;
++      }
++    }
++    if (!disqManualResolved) throw new Error("Scenario 7 Failed: Manual tie resolution accepted disqualified candidate!");
++
++    // Start tiebreak: must intersect tied set with currently eligible submissions under lock
++    const tiebreakStartRes = await startTiebreakService(
++      db,
++      { userId: adminStaff.id, role: adminStaff.role },
++      { challengeId: tie3Challenge.id }
++    );
++    if (!tiebreakStartRes.success) throw new Error("Scenario 7 Failed: startTiebreakService failed");
++    if (tiebreakStartRes.tiedCandidatesCount !== 2) {
++      throw new Error(`Scenario 7 Failed: Expected 2 eligible candidates in tiebreak, got ${tiebreakStartRes.tiedCandidatesCount}`);
++    }
++
++    // Verify candidates frozen in new tiebreak round strictly contain B and C, excluding A
++    const frozenTiebreakCandidates = await db
++      .select()
++      .from(challengeVotingRoundCandidates)
++      .where(eq(challengeVotingRoundCandidates.votingRoundId, tiebreakStartRes.votingRoundId));
++    const frozenIds = frozenTiebreakCandidates.map((c) => c.submissionId);
++    if (frozenIds.includes(subA.id) || !frozenIds.includes(subB.id) || !frozenIds.includes(subC.id)) {
++      throw new Error(`Scenario 7 Failed: Frozen tiebreak candidates corrupted: ${JSON.stringify(frozenIds)}`);
++    }
++
++    // 9. Subscenario 7C: Single remaining tied candidate in tie_pending auto-resolves with authentic Stars & round ID
++    const [singleSurvChallenge] = await db
++      .insert(challenges)
++      .values({
++        title: `Single Survivor Challenge ${suffix}`,
++        slug: `single-survivor-${suffix}`,
++        theme: "Single Survivor",
++        description: "2 tied, 1 disqualified",
++        promptRules: "Rules",
++        status: "tie_pending",
++        awardMode: "vote_only",
++      })
++      .returning();
++
++    const [survSub1] = await db
++      .insert(challengeSubmissions)
++      .values({
++        challengeId: singleSurvChallenge.id,
++        userId: artist1.id,
++        profileId: artistProfile1.id,
++        artworkId: art1.id,
++        artworkVersionId: ver1.id,
++        title: "Surv 1",
++        submissionStatus: "submitted",
++      })
++      .returning();
++
++    const [survSub2] = await db
++      .insert(challengeSubmissions)
++      .values({
++        challengeId: singleSurvChallenge.id,
++        userId: artist2.id,
++        profileId: artistProfile2.id,
++        artworkId: art2.id,
++        artworkVersionId: ver2.id,
++        title: "Surv 2",
++        submissionStatus: "submitted",
++      })
++      .returning();
++
++    const [survMainRound] = await db
++      .insert(challengeVotingRounds)
++      .values({
++        challengeId: singleSurvChallenge.id,
++        roundType: "main",
++        status: "closed",
++        startsAt: new Date(Date.now() - 7200000),
++        deadline: new Date(Date.now() - 3600000),
++        starsPerMember: 5,
++      })
++      .returning();
++
++    await db.insert(challengeVotingRoundCandidates).values([
++      { votingRoundId: survMainRound.id, submissionId: survSub1.id },
++      { votingRoundId: survMainRound.id, submissionId: survSub2.id },
++    ]);
++
++    const [survBallot] = await db
++      .insert(challengeBallots)
++      .values({
++        challengeId: singleSurvChallenge.id,
++        votingRoundId: survMainRound.id,
++        userId: voter1.id,
++        roundType: "main",
++        starsAllocated: 8,
++      })
++      .returning();
++
++    await db.insert(challengeBallotStars).values([
++      { ballotId: survBallot.id, submissionId: survSub1.id, starsCount: 4 },
++      { ballotId: survBallot.id, submissionId: survSub2.id, starsCount: 4 },
++    ]);
++
++    // Disqualify survSub1 -> leaving only survSub2
++    await disqualifyChallengeCandidateService(
++      db,
++      { userId: adminStaff.id, role: adminStaff.role },
++      { submissionId: survSub1.id, reason: "Violates guidelines in 2-way tie" }
++    );
++
++    // Verify survSub2 is auto-crowned community_vote_winner with authentic 4 stars and sourceVotingRoundId!
++    const [survResult] = await db
++      .select()
++      .from(challengeResults)
++      .where(
++        and(
++          eq(challengeResults.challengeId, singleSurvChallenge.id),
++          eq(challengeResults.submissionId, survSub2.id)
++        )
++      );
++
++    if (!survResult || survResult.awardType !== "community_vote_winner") {
++      throw new Error("Scenario 7 Failed: Single remaining tied candidate was not crowned community_vote_winner!");
++    }
++    if (survResult.totalCommunityStars !== 4) {
++      throw new Error(`Scenario 7 Failed: Expected 4 authentic Stars from main round, got ${survResult.totalCommunityStars}`);
++    }
++    if (survResult.sourceVotingRoundId !== survMainRound.id) {
++      throw new Error(`Scenario 7 Failed: Expected sourceVotingRoundId ${survMainRound.id}, got ${survResult.sourceVotingRoundId}`);
++    }
++
++    // 10. Subscenario 7D: Jury readiness validation rollback in vote_and_jury mode
++    const [juryRollbackChallenge] = await db
++      .insert(challenges)
++      .values({
++        title: `Jury Readiness Rollback Challenge ${suffix}`,
++        slug: `jury-rollback-${suffix}`,
++        theme: "Jury Readiness Rollback",
++        description: "Zero jurors configured",
++        promptRules: "Rules",
++        status: "tie_pending",
++        awardMode: "vote_and_jury",
++      })
++      .returning();
++
++    const [jurySub1] = await db
++      .insert(challengeSubmissions)
++      .values({
++        challengeId: juryRollbackChallenge.id,
++        userId: artist1.id,
++        profileId: artistProfile1.id,
++        artworkId: art1.id,
++        artworkVersionId: ver1.id,
++        title: "Jury Sub 1",
++        submissionStatus: "submitted",
++      })
++      .returning();
++
++    const [jurySub2] = await db
++      .insert(challengeSubmissions)
++      .values({
++        challengeId: juryRollbackChallenge.id,
++        userId: artist2.id,
++        profileId: artistProfile2.id,
++        artworkId: art2.id,
++        artworkVersionId: ver2.id,
++        title: "Jury Sub 2",
++        submissionStatus: "submitted",
++      })
++      .returning();
++
++    const [juryMainRound] = await db
++      .insert(challengeVotingRounds)
++      .values({
++        challengeId: juryRollbackChallenge.id,
++        roundType: "main",
++        status: "closed",
++        startsAt: new Date(Date.now() - 7200000),
++        deadline: new Date(Date.now() - 3600000),
++        starsPerMember: 1,
++      })
++      .returning();
++
++    await db.insert(challengeVotingRoundCandidates).values([
++      { votingRoundId: juryMainRound.id, submissionId: jurySub1.id },
++      { votingRoundId: juryMainRound.id, submissionId: jurySub2.id },
++    ]);
++
++    const [juryBallot] = await db
++      .insert(challengeBallots)
++      .values({
++        challengeId: juryRollbackChallenge.id,
++        votingRoundId: juryMainRound.id,
++        userId: voter1.id,
++        roundType: "main",
++        starsAllocated: 2,
++      })
++      .returning();
++
++    await db.insert(challengeBallotStars).values([
++      { ballotId: juryBallot.id, submissionId: jurySub1.id, starsCount: 1 },
++      { ballotId: juryBallot.id, submissionId: jurySub2.id, starsCount: 1 },
++    ]);
++
++    // Zero jurors configured: disqualifying jurySub1 attempts transition to jury_selection_open,
++    // which must fail readiness and ROLL BACK the entire transaction!
++    let juryReadinessRolledBack = false;
++    try {
++      await disqualifyChallengeCandidateService(
++        db,
++        { userId: adminStaff.id, role: adminStaff.role },
++        { submissionId: jurySub1.id, reason: "Attempt disq with unready jury" }
++      );
++    } catch (e: any) {
++      if (e.message.includes("Transisi ke 'jury_selection_open' diblokir") || e.message.includes("panel juri")) {
++        juryReadinessRolledBack = true;
++      }
++    }
++    if (!juryReadinessRolledBack) {
++      throw new Error("Scenario 7 Failed: Disqualification transitioned to jury_selection_open without ready jury panel!");
++    }
++
++    // Verify transaction rollback: jurySub1 is STILL "submitted" (not "disqualified")
++    const [checkRolledBackSub1] = await db
++      .select()
++      .from(challengeSubmissions)
++      .where(eq(challengeSubmissions.id, jurySub1.id));
++    if (checkRolledBackSub1.submissionStatus !== "submitted") {
++      throw new Error(`Scenario 7 Failed: Transaction did not roll back! submissionStatus is ${checkRolledBackSub1.submissionStatus}`);
++    }
++
++    // 11. Subscenario 7E: Real PostgreSQL Concurrency test
++    // Two concurrent transactions attempting to disqualify candidates under row-level lock
++    const [concChallenge] = await db
++      .insert(challenges)
++      .values({
++        title: `Conc Challenge ${suffix}`,
++        slug: `conc-challenge-${suffix}`,
++        theme: "Conc Phase",
++        description: "Concurrent disq test",
++        promptRules: "Rules",
++        status: "submission_locked",
++        awardMode: "vote_only",
++      })
++      .returning();
++
++    const [concSub1] = await db
++      .insert(challengeSubmissions)
++      .values({
++        challengeId: concChallenge.id,
++        userId: artist1.id,
++        profileId: artistProfile1.id,
++        artworkId: art1.id,
++        artworkVersionId: ver1.id,
++        title: "Conc Sub 1",
++        submissionStatus: "submitted",
++      })
++      .returning();
++
++    const [concSub2] = await db
++      .insert(challengeSubmissions)
++      .values({
++        challengeId: concChallenge.id,
++        userId: artist2.id,
++        profileId: artistProfile2.id,
++        artworkId: art2.id,
++        artworkVersionId: ver2.id,
++        title: "Conc Sub 2",
++        submissionStatus: "submitted",
++      })
++      .returning();
++
++    const { user: artist4, profile: artistProfile4 } = await createTestUser("member", "active");
++    const { artwork: art4, version: ver4 } = await createTestArtwork(artist4.id, artistProfile4.id, "Conc Art 4");
++
++    const [concSub3] = await db
++      .insert(challengeSubmissions)
++      .values({
++        challengeId: concChallenge.id,
++        userId: artist3.id,
++        profileId: artistProfile3.id,
++        artworkId: art3.id,
++        artworkVersionId: ver3.id,
++        title: "Conc Sub 3",
++        submissionStatus: "submitted",
++      })
++      .returning();
++
++    const [concSub4] = await db
++      .insert(challengeSubmissions)
++      .values({
++        challengeId: concChallenge.id,
++        userId: artist4.id,
++        profileId: artistProfile4.id,
++        artworkId: art4.id,
++        artworkVersionId: ver4.id,
++        title: "Conc Sub 4",
++        submissionStatus: "submitted",
++      })
++      .returning();
++
++    const concResults = await Promise.allSettled([
++      disqualifyChallengeCandidateService(
++        db,
++        { userId: adminStaff.id, role: adminStaff.role },
++        { submissionId: concSub1.id, reason: "Concurrent disq 1" }
++      ),
++      disqualifyChallengeCandidateService(
++        db,
++        { userId: adminStaff.id, role: adminStaff.role },
++        { submissionId: concSub2.id, reason: "Concurrent disq 2" }
++      ),
++    ]);
++
++    // Both should settle cleanly without deadlock
++    for (const r of concResults) {
++      if (r.status === "rejected") {
++        throw new Error(`Scenario 7 Failed: Concurrency execution threw deadlock/error: ${(r as any).reason}`);
++      }
++    }
++
++    console.log("  ✓ R05: Disqualification phase matrix verified for locked, tiebreak, finished, 3-way ties, authentic score provenance, jury readiness rollback, and PostgreSQL concurrency.");
+   }
+ 
+   // =========================================================================
+@@ -1010,10 +1451,21 @@ async function runPhase2SecurityAndContractTests() {
+     if (getSafeReturnUrl("/gallery?search=studi%20warna") !== "/gallery?search=studi%20warna") {
+       throw new Error("Scenario 8 Failed: Valid query parameter with encoded space was rejected.");
+     }
++    if (getSafeReturnUrl("/gallery?search=studi+warna") !== "/gallery?search=studi+warna") {
++      throw new Error("Scenario 8 Failed: Valid query parameter with '+' space was rejected.");
++    }
+     if (getSafeReturnUrl("/gallery?category=ilustrasi%20karya") !== "/gallery?category=ilustrasi%20karya") {
+       throw new Error("Scenario 8 Failed: Valid query parameter with encoded Indonesian text was rejected.");
+     }
+ 
++    // Dot-segment and protocol-relative bypasses
++    if (getSafeReturnUrl("/gallery/..//example.invalid") !== "/gallery") {
++      throw new Error("Scenario 8 Failed: Dot-segment normalization '//' redirect was not prevented!");
++    }
++    if (getSafeReturnUrl("/a/%2e%2e//example.invalid") !== "/gallery") {
++      throw new Error("Scenario 8 Failed: Encoded dot-segment '%2e%2e//' redirect was not prevented!");
++    }
++
+     // Protocol-relative attacks
+     if (getSafeReturnUrl("//evil.com") !== "/gallery") throw new Error("Scenario 8 Failed: Protocol-relative '//' attack not prevented.");
+     if (getSafeReturnUrl("/\\evil.com") !== "/gallery") throw new Error("Scenario 8 Failed: '/\\' attack not prevented.");
+diff --git a/src/lib/__tests__/testTiebreakPortfolioMaterialization.ts b/src/lib/__tests__/testTiebreakPortfolioMaterialization.ts
+new file mode 100644
+index 0000000..25c2770
+--- /dev/null
++++ b/src/lib/__tests__/testTiebreakPortfolioMaterialization.ts
+@@ -0,0 +1,246 @@
++import { db } from "@/db";
++import {
++  users,
++  profiles,
++  artworks,
++  artworkVersions,
++  portfolioEntries,
++  challenges,
++  challengeSubmissions,
++  challengeVotingRounds,
++  challengeVotingRoundCandidates,
++  challengeResults,
++} from "@/db/schema";
++import { eq, and } from "drizzle-orm";
++import { disqualifyChallengeCandidateService } from "@/lib/services/challengeService";
++import { resolveChallengeSubmissionCaption } from "@/lib/services/portfolioService";
++
++async function runTiebreakPortfolioMaterializationTests() {
++  console.log("=== Starting Tiebreak Portfolio Materialization Regression Tests (F4 / R05) ===");
++
++  const suffix = Date.now().toString().slice(-6);
++
++  async function createTestUser(role: "member" | "moderator" | "admin") {
++    const idSuffix = Math.random().toString(36).substring(2, 7);
++    const [user] = await db
++      .insert(users)
++      .values({
++        email: `tiebreak_${role}_${idSuffix}_${suffix}@mengart.local`,
++        username: `tb_${role}_${idSuffix}_${suffix}`,
++        role,
++        membershipStatus: "active",
++      })
++      .returning();
++
++    const [profile] = await db
++      .insert(profiles)
++      .values({
++        userId: user.id,
++        slug: `artist-${user.username}`,
++        displayName: `Test ${role} ${idSuffix}`,
++        avatarUrl: "https://example.com/avatar.jpg",
++        profileStatus: "active_public",
++      })
++      .returning();
++
++    return { user, profile };
++  }
++
++  async function createTestArtwork(userId: string, profileId: string, title: string) {
++    const [artwork] = await db
++      .insert(artworks)
++      .values({
++        userId,
++        title,
++        description: "Test Artwork for tiebreak portfolio test",
++        slug: `tb-art-${Math.random().toString(36).substring(2, 8)}-${suffix}`,
++        mediaType: "image",
++        audience: "public",
++        publicationStatus: "published",
++      })
++      .returning();
++
++    const [version] = await db
++      .insert(artworkVersions)
++      .values({
++        artworkId: artwork.id,
++        versionNumber: 1,
++        mediaType: "image",
++        mimeType: "image/png",
++        checksumSha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
++        masterStorageKey: `master_${artwork.id}.png`,
++        publicStorageKey: `public_${artwork.id}.webp`,
++        thumbnailStorageKey: `thumb_${artwork.id}.webp`,
++        fileSizeBytes: 1024,
++      })
++      .returning();
++
++    await db.update(artworks).set({ currentVersionId: version.id }).where(eq(artworks.id, artwork.id));
++
++    return { artwork, version };
++  }
++
++  // 1. Setup staff and candidates
++  const { user: adminStaff } = await createTestUser("admin");
++  const { user: artist1, profile: profile1 } = await createTestUser("member");
++  const { user: artist2, profile: profile2 } = await createTestUser("member");
++
++  const { artwork: art1, version: ver1 } = await createTestArtwork(artist1.id, profile1.id, "Candidate Art 1");
++  const { artwork: art2, version: ver2 } = await createTestArtwork(artist2.id, profile2.id, "Candidate Art 2");
++
++  // 2. Setup Challenge in tiebreak_open
++  const [challenge] = await db
++    .insert(challenges)
++    .values({
++      title: `Tiebreak Portfolio Challenge ${suffix}`,
++      slug: `tb-portfolio-challenge-${suffix}`,
++      theme: "Tiebreak Completion Theme",
++      description: "Testing portfolio materialization on tiebreak resolution",
++      promptRules: "Rules",
++      status: "tiebreak_open",
++      awardMode: "vote_only",
++    })
++    .returning();
++
++  // 3. Create submissions
++  const [sub1] = await db
++    .insert(challengeSubmissions)
++    .values({
++      challengeId: challenge.id,
++      userId: artist1.id,
++      profileId: profile1.id,
++      artworkId: art1.id,
++      artworkVersionId: ver1.id,
++      title: "Candidate Art 1",
++      submissionStatus: "submitted",
++    })
++    .returning();
++
++  const [sub2] = await db
++    .insert(challengeSubmissions)
++    .values({
++      challengeId: challenge.id,
++      userId: artist2.id,
++      profileId: profile2.id,
++      artworkId: art2.id,
++      artworkVersionId: ver2.id,
++      title: "Candidate Art 2",
++      submissionStatus: "submitted",
++    })
++    .returning();
++
++  // Verify initially ZERO portfolio entries exist for either artwork
++  const initialPortfolio1 = await db
++    .select()
++    .from(portfolioEntries)
++    .where(eq(portfolioEntries.artworkId, art1.id));
++  const initialPortfolio2 = await db
++    .select()
++    .from(portfolioEntries)
++    .where(eq(portfolioEntries.artworkId, art2.id));
++
++  if (initialPortfolio1.length !== 0 || initialPortfolio2.length !== 0) {
++    throw new Error("Precondition failed: Portfolio entries already exist before tiebreak resolution");
++  }
++  console.log("  ✓ Precondition verified: 0 portfolio entries for submissions prior to resolution");
++
++  // 4. Create tiebreak voting round
++  const [tiebreakRound] = await db
++    .insert(challengeVotingRounds)
++    .values({
++      challengeId: challenge.id,
++      roundType: "tiebreak",
++      status: "open",
++      starsPerMember: 1,
++    })
++    .returning();
++
++  await db.insert(challengeVotingRoundCandidates).values([
++    { votingRoundId: tiebreakRound.id, submissionId: sub1.id },
++    { votingRoundId: tiebreakRound.id, submissionId: sub2.id },
++  ]);
++
++  // 5. Execute Disqualification of sub1 by adminStaff
++  console.log("\n[Test Scenario] Disqualify tiebreak candidate sub1 to leave sub2 as single survivor");
++  const disqResult = await disqualifyChallengeCandidateService(
++    db,
++    { userId: adminStaff.id, role: adminStaff.role },
++    { submissionId: sub1.id, reason: "Single survivor tiebreak resolution test" }
++  );
++
++  if (!disqResult.success) {
++    throw new Error(`Disqualification failed: ${disqResult.error}`);
++  }
++  console.log("  ✓ Disqualification executed successfully");
++
++  // 6. Assert Challenge status advanced to 'finished'
++  const [updatedChallenge] = await db
++    .select()
++    .from(challenges)
++    .where(eq(challenges.id, challenge.id));
++
++  if (updatedChallenge.status !== "finished") {
++    throw new Error(`Expected challenge status 'finished', got '${updatedChallenge.status}'`);
++  }
++  console.log("  ✓ Challenge status successfully advanced to 'finished'");
++
++  // 7. Assert challengeResults contains Community Winner for sub2
++  const results = await db
++    .select()
++    .from(challengeResults)
++    .where(eq(challengeResults.challengeId, challenge.id));
++
++  const winnerResult = results.find((r) => r.submissionId === sub2.id);
++  if (!winnerResult || winnerResult.awardType !== "community_vote_winner") {
++    throw new Error("Remaining survivor sub2 was not crowned community_vote_winner");
++  }
++  console.log("  ✓ Survivor crowned community_vote_winner in challengeResults");
++
++  // 8. Assert portfolio_entries materialized for survivor sub2
++  const winnerPortfolio = await db
++    .select()
++    .from(portfolioEntries)
++    .where(eq(portfolioEntries.artworkId, art2.id));
++
++  if (winnerPortfolio.length !== 1) {
++    throw new Error(
++      `F4 / R05 REGRESSION: Expected 1 materialized portfolio entry for survivor, found ${winnerPortfolio.length}`
++    );
++  }
++
++  const expectedCaption = resolveChallengeSubmissionCaption(challenge.title, [
++    { awardType: "community_vote_winner", categoryLabel: null },
++  ]);
++
++  if (winnerPortfolio[0].systemCaption !== expectedCaption) {
++    throw new Error(
++      `Expected systemCaption "${expectedCaption}", got "${winnerPortfolio[0].systemCaption}"`
++    );
++  }
++  if (!winnerPortfolio[0].isVisible) {
++    throw new Error("Materialized portfolio entry must be marked isVisible: true");
++  }
++  console.log(`  ✓ Portfolio entry successfully materialized: "${winnerPortfolio[0].systemCaption}"`);
++
++  // 9. Assert disqualified sub1 was NOT added to portfolio
++  const disqualifiedPortfolio = await db
++    .select()
++    .from(portfolioEntries)
++    .where(eq(portfolioEntries.artworkId, art1.id));
++
++  if (disqualifiedPortfolio.length !== 0) {
++    throw new Error("Disqualified submission must not have portfolio entries created");
++  }
++  console.log("  ✓ Disqualified submission correctly excluded from portfolio materialization");
++
++  console.log("\n=== ALL TIEBREAK PORTFOLIO MATERIALIZATION TESTS PASSED (100%) ===");
++}
++
++runTiebreakPortfolioMaterializationTests()
++  .then(() => {
++    process.exit(0);
++  })
++  .catch((err) => {
++    console.error("Tiebreak portfolio test failed:", err);
++    process.exit(1);
++  });
+diff --git a/src/lib/navigation/returnUrl.ts b/src/lib/navigation/returnUrl.ts
+index 5b3d144..803c9cc 100644
+--- a/src/lib/navigation/returnUrl.ts
++++ b/src/lib/navigation/returnUrl.ts
+@@ -85,7 +85,14 @@ export function getSafeReturnUrl(
+   // Normalized path after WHATWG normalization (resolves dot segments like /gallery/../login -> /login)
+   const normalizedPath = parsed.pathname.toLowerCase();
+ 
+-  if (!normalizedPath.startsWith("/")) {
++  // Reject paths that do not start with a single slash or morph into protocol-relative paths
++  if (
++    !normalizedPath.startsWith("/") ||
++    normalizedPath.startsWith("//") ||
++    normalizedPath.startsWith("/\\") ||
++    parsed.pathname.startsWith("//") ||
++    parsed.pathname.startsWith("/\\")
++  ) {
+     return fallback;
+   }
+ 
+@@ -97,5 +104,6 @@ export function getSafeReturnUrl(
+   }
+ 
+   // Return canonical relative path + search query (stripping hash/fragment)
++  // Preserves legitimate search query parameters including +, %20, and encoded terms
+   return parsed.pathname + parsed.search;
+ }
+diff --git a/src/lib/presentation/provenance.ts b/src/lib/presentation/provenance.ts
+index 4b376a4..a5efb62 100644
+--- a/src/lib/presentation/provenance.ts
++++ b/src/lib/presentation/provenance.ts
+@@ -1,6 +1,7 @@
+ /**
+  * Shared provenance projection helper for public artwork displays.
+- * Centralizes caption redaction, challenge title concealment, and origin discrimination.
++ * Centralizes authoritative structured caption resolution, challenge title concealment,
++ * and origin discrimination.
+  */
+ 
+ export interface ProvenanceSource {
+@@ -13,6 +14,8 @@ export interface ProvenanceSource {
+   challengeDeletedAt?: Date | string | null;
+   systemCaption?: string | null;
+   customCaption?: string | null;
++  awardType?: string | null;
++  categoryLabel?: string | null;
+ }
+ 
+ export interface ProjectedProvenance {
+@@ -26,26 +29,55 @@ export interface ProjectedProvenance {
+ }
+ 
+ /**
+- * Sanitizes system caption to remove private/hidden challenge titles while preserving award categories.
++ * Builds public system caption strictly from structured metadata.
++ * When redacted = true, challengeTitle is strictly omitted to prevent leaks.
++ */
++export function buildAuthoritativeSystemCaption(
++  source: {
++    challengeTitle?: string | null;
++    awardType?: string | null;
++    categoryLabel?: string | null;
++  },
++  redacted: boolean
++): string {
++  if (source.awardType === "community_vote_winner") {
++    return redacted || !source.challengeTitle
++      ? "Juara Favorit Komunitas"
++      : `Juara Favorit Komunitas — ${source.challengeTitle}`;
++  }
++
++  if (source.awardType === "jury_award") {
++    const label = source.categoryLabel?.trim();
++    if (label && label !== "Pemenang Juri") {
++      return redacted || !source.challengeTitle
++        ? `Penghargaan Juri: ${label}`
++        : `Penghargaan Juri: ${label} — ${source.challengeTitle}`;
++    }
++    return redacted || !source.challengeTitle
++      ? "Pemenang Juri"
++      : `Pemenang Juri — ${source.challengeTitle}`;
++  }
++
++  return redacted || !source.challengeTitle
++    ? "Peserta Challenge"
++    : `Peserta Challenge — ${source.challengeTitle}`;
++}
++
++/**
++ * Backward-compatible neutral sanitizer.
++ * For legacy records without structured metadata, returns safe neutral fallback.
+  */
+ export function sanitizeSystemCaption(rawCaption: string | null | undefined): string {
+   if (!rawCaption) return "Peserta Challenge";
+ 
+-  // Check for Community Winner
+-  if (rawCaption.includes("Juara Favorit Komunitas")) {
++  // Check exact prefix matches before any delimiter without searching the remainder
++  if (rawCaption.startsWith("Juara Favorit Komunitas")) {
+     return "Juara Favorit Komunitas";
+   }
+-
+-  // Check for Jury Award (with or without category)
+-  if (rawCaption.includes("Penghargaan Juri")) {
+-    const match = rawCaption.match(/Penghargaan Juri:\s*([^—–-]+)/i);
+-    if (match && match[1]?.trim()) {
+-      return `Penghargaan Juri: ${match[1].trim()}`;
+-    }
+-    return "Penghargaan Juri";
++  if (rawCaption.startsWith("Pemenang Juri")) {
++    return "Pemenang Juri";
+   }
+-
+-  // Default fallback for challenge participants
++  // For legacy records without reliable metadata, use neutral fallback
+   return "Peserta Challenge";
+ }
+ 
+@@ -54,14 +86,20 @@ export function sanitizeSystemCaption(rawCaption: string | null | undefined): st
+  * When a challenge is hidden or deleted and the viewer is not active staff:
+  * - Redacts challengeTitle and challengeSlug to null
+  * - Preserves origin: "challenge"
+- * - Replaces system-generated captions that disclose the hidden challenge title with safe neutral captions
++ * - Generates public system captions authoritatively from structured award metadata
++ * - For legacy records without reliable metadata, uses neutral fallback "Peserta Challenge"
+  * - Preserves artist's customCaption override
+  */
+ export function projectPublicArtworkProvenance(
+   source: ProvenanceSource,
+   viewerContext: { isActiveStaff?: boolean } = {}
+ ): ProjectedProvenance {
+-  const isChallengeOrigin = Boolean(source.challengeSubmissionId || source.origin === "challenge");
++  const isChallengeOrigin = Boolean(
++    source.challengeSubmissionId ||
++      source.challengeId ||
++      source.challengeTitle ||
++      source.origin === "challenge"
++  );
+   const origin: "challenge" | "independent" = isChallengeOrigin ? "challenge" : "independent";
+ 
+   if (!isChallengeOrigin) {
+@@ -82,11 +120,16 @@ export function projectPublicArtworkProvenance(
+     source.challengeIsVisible === false || source.challengeDeletedAt != null;
+ 
+   const shouldRedact = isHiddenOrDeleted && !viewerContext.isActiveStaff;
+-
+   const custom = source.customCaption || null;
+ 
+   if (shouldRedact) {
+-    const safeSystem = sanitizeSystemCaption(source.systemCaption);
++    let safeSystem: string;
++    if (source.awardType) {
++      safeSystem = buildAuthoritativeSystemCaption(source, true);
++    } else {
++      safeSystem = "Peserta Challenge";
++    }
++
+     return {
+       origin: "challenge",
+       challengeId: null,
+@@ -98,14 +141,24 @@ export function projectPublicArtworkProvenance(
+     };
+   }
+ 
+-  const rawSystem = source.systemCaption || null;
++  let finalSystem: string | null = null;
++  if (source.awardType) {
++    finalSystem = buildAuthoritativeSystemCaption(source, false);
++  } else {
++    finalSystem =
++      source.systemCaption ||
++      (source.challengeTitle
++        ? `Peserta Challenge — ${source.challengeTitle}`
++        : "Peserta Challenge");
++  }
++
+   return {
+     origin: "challenge",
+     challengeId: source.challengeId || null,
+     challengeTitle: source.challengeTitle || null,
+     challengeSlug: source.challengeSlug || null,
+-    systemCaption: rawSystem,
++    systemCaption: finalSystem,
+     customCaption: custom,
+-    effectiveCaption: custom ?? rawSystem ?? null,
++    effectiveCaption: custom ?? finalSystem ?? null,
+   };
+ }
+diff --git a/src/lib/rbac.ts b/src/lib/rbac.ts
+index b6e0aba..bf1a704 100644
+--- a/src/lib/rbac.ts
++++ b/src/lib/rbac.ts
+@@ -11,9 +11,13 @@ export const ADMIN_MEMBERSHIP_ADVISORY_LOCK_KEY = 4281729;
+  * Get current authenticated user session or null
+  */
+ export async function getCurrentUser() {
+-  const session = await auth();
+-  if (!session?.user || !session.user.id) return null;
+-  return session.user;
++  try {
++    const session = await auth();
++    if (!session?.user || !session.user.id) return null;
++    return session.user;
++  } catch (_e) {
++    return null;
++  }
+ }
+ 
+ /**
+diff --git a/src/lib/services/challengeService.ts b/src/lib/services/challengeService.ts
+index f27e932..f6e7cb7 100644
+--- a/src/lib/services/challengeService.ts
++++ b/src/lib/services/challengeService.ts
+@@ -1369,12 +1369,8 @@ export async function disqualifyChallengeCandidateService(
+           );
+ 
+         if (remainingTiebreakCandidates.length === 1) {
+-          // Exactly 1 tied candidate remains: they win the tiebreak!
++          // Exactly 1 candidate remains in the tied set: they win!
+           const singleTieWinner = remainingTiebreakCandidates[0];
+-          await tx
+-            .update(challengeVotingRounds)
+-            .set({ status: "closed", updatedAt: new Date() })
+-            .where(eq(challengeVotingRounds.id, activeRound.id));
+ 
+           await tx
+             .delete(challengeResults)
+@@ -1385,17 +1381,86 @@ export async function disqualifyChallengeCandidateService(
+               )
+             );
+ 
++          // Close active tiebreak round
++          await tx
++            .update(challengeVotingRounds)
++            .set({ status: "closed", updatedAt: new Date() })
++            .where(eq(challengeVotingRounds.id, activeRound.id));
++
++          // Look up winner's stars: check tiebreak round first, fallback to main round
++          const [tbStarRow] = await tx
++            .select({
++              totalStars: sql<number>`coalesce(sum(${challengeBallotStars.starsCount}), 0)::int`,
++            })
++            .from(challengeBallotStars)
++            .innerJoin(
++              challengeBallots,
++              eq(challengeBallots.id, challengeBallotStars.ballotId)
++            )
++            .where(
++              and(
++                eq(challengeBallots.votingRoundId, activeRound.id),
++                eq(challengeBallotStars.submissionId, singleTieWinner.id)
++              )
++            );
++
++          let winnerStars = Number(tbStarRow?.totalStars || 0);
++          let authoritativeRoundId = activeRound.id;
++
++          if (winnerStars === 0) {
++            const [mainRound] = await tx
++              .select({ id: challengeVotingRounds.id })
++              .from(challengeVotingRounds)
++              .where(
++                and(
++                  eq(challengeVotingRounds.challengeId, challenge.id),
++                  eq(challengeVotingRounds.roundType, "main"),
++                  eq(challengeVotingRounds.status, "closed")
++                )
++              )
++              .limit(1);
++            if (mainRound) {
++              const [mainStarRow] = await tx
++                .select({
++                  totalStars: sql<number>`coalesce(sum(${challengeBallotStars.starsCount}), 0)::int`,
++                })
++                .from(challengeBallotStars)
++                .innerJoin(
++                  challengeBallots,
++                  eq(challengeBallots.id, challengeBallotStars.ballotId)
++                )
++                .where(
++                  and(
++                    eq(challengeBallots.votingRoundId, mainRound.id),
++                    eq(challengeBallotStars.submissionId, singleTieWinner.id)
++                  )
++                );
++              winnerStars = Number(mainStarRow?.totalStars || 0);
++              authoritativeRoundId = mainRound.id;
++            }
++          }
++
+           const isPublished = challenge.awardMode === "vote_only";
+           await tx.insert(challengeResults).values({
+             challengeId: challenge.id,
+             submissionId: singleTieWinner.id,
+             finalRank: 1,
+             awardType: "community_vote_winner",
+-            totalCommunityStars: 0,
++            totalCommunityStars: winnerStars,
+             resolutionMethod: "disqualification_tie_resolution",
++            sourceVotingRoundId: authoritativeRoundId,
+             isPublished,
+           });
+ 
++          if (challenge.awardMode === "vote_and_jury") {
++            const readiness = await validateJuryPhaseReadinessService(tx, challenge.id);
++            if (!readiness.ready) {
++              throw new Error(
++                `Transisi ke 'jury_selection_open' diblokir: ${readiness.reason}. Konfigurasikan panel juri terlebih dahulu.`
++              );
++            }
++          }
++
+           const nextStatus = challenge.awardMode === "vote_only" ? "finished" : "jury_selection_open";
+           await tx
+             .update(challenges)
+@@ -1412,16 +1477,29 @@ export async function disqualifyChallengeCandidateService(
+             .set({ status: "closed", updatedAt: new Date() })
+             .where(eq(challengeVotingRounds.id, activeRound.id));
+ 
++          if (challenge.awardMode === "vote_and_jury") {
++            const readiness = await validateJuryPhaseReadinessService(tx, challenge.id);
++            if (!readiness.ready) {
++              throw new Error(
++                `Transisi ke 'jury_selection_open' diblokir: ${readiness.reason}. Konfigurasikan panel juri terlebih dahulu.`
++              );
++            }
++          }
++
+           const nextStatus = challenge.awardMode === "vote_only" ? "finished" : "jury_selection_open";
+           await tx
+             .update(challenges)
+             .set({ status: nextStatus, updatedAt: new Date() })
+             .where(eq(challenges.id, challenge.id));
++
++          if (nextStatus === "finished") {
++            await autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id);
++          }
+         }
+       } else if (challenge.status === "tie_pending") {
+         // In tie_pending, derive remaining candidates from the original authoritative tied set
+         const [latestClosedRound] = await tx
+-          .select({ id: challengeVotingRounds.id })
++          .select({ id: challengeVotingRounds.id, roundType: challengeVotingRounds.roundType })
+           .from(challengeVotingRounds)
+           .where(
+             and(
+@@ -1448,7 +1526,8 @@ export async function disqualifyChallengeCandidateService(
+                   inArray(challengeSubmissions.id, tiedIds),
+                   eq(challengeSubmissions.submissionStatus, "submitted")
+                 )
+-              );
++              )
++              .for("update");
+ 
+             if (remainingTiedCandidates.length === 1) {
+               // Exactly 1 candidate remains in the tied set: they win!
+@@ -1463,17 +1542,80 @@ export async function disqualifyChallengeCandidateService(
+                   )
+                 );
+ 
++              // Look up authoritative Stars for singleTieWinner
++              const [starRow] = await tx
++                .select({
++                  totalStars: sql<number>`coalesce(sum(${challengeBallotStars.starsCount}), 0)::int`,
++                })
++                .from(challengeBallotStars)
++                .innerJoin(
++                  challengeBallots,
++                  eq(challengeBallots.id, challengeBallotStars.ballotId)
++                )
++                .where(
++                  and(
++                    eq(challengeBallots.votingRoundId, latestClosedRound.id),
++                    eq(challengeBallotStars.submissionId, singleTieWinner.id)
++                  )
++                );
++
++              let winnerStars = Number(starRow?.totalStars || 0);
++              let authoritativeRoundId = latestClosedRound.id;
++
++              if (winnerStars === 0 && latestClosedRound.roundType === "tiebreak") {
++                const [mainRound] = await tx
++                  .select({ id: challengeVotingRounds.id })
++                  .from(challengeVotingRounds)
++                  .where(
++                    and(
++                      eq(challengeVotingRounds.challengeId, challenge.id),
++                      eq(challengeVotingRounds.roundType, "main"),
++                      eq(challengeVotingRounds.status, "closed")
++                    )
++                  )
++                  .limit(1);
++                if (mainRound) {
++                  const [mainStarRow] = await tx
++                    .select({
++                      totalStars: sql<number>`coalesce(sum(${challengeBallotStars.starsCount}), 0)::int`,
++                    })
++                    .from(challengeBallotStars)
++                    .innerJoin(
++                      challengeBallots,
++                      eq(challengeBallots.id, challengeBallotStars.ballotId)
++                    )
++                    .where(
++                      and(
++                        eq(challengeBallots.votingRoundId, mainRound.id),
++                        eq(challengeBallotStars.submissionId, singleTieWinner.id)
++                      )
++                    );
++                  winnerStars = Number(mainStarRow?.totalStars || 0);
++                  authoritativeRoundId = mainRound.id;
++                }
++              }
++
+               const isPublished = challenge.awardMode === "vote_only";
+               await tx.insert(challengeResults).values({
+                 challengeId: challenge.id,
+                 submissionId: singleTieWinner.id,
+                 finalRank: 1,
+                 awardType: "community_vote_winner",
+-                totalCommunityStars: 0,
++                totalCommunityStars: winnerStars,
+                 resolutionMethod: "disqualification_tie_resolution",
++                sourceVotingRoundId: authoritativeRoundId,
+                 isPublished,
+               });
+ 
++              if (challenge.awardMode === "vote_and_jury") {
++                const readiness = await validateJuryPhaseReadinessService(tx, challenge.id);
++                if (!readiness.ready) {
++                  throw new Error(
++                    `Transisi ke 'jury_selection_open' diblokir: ${readiness.reason}. Konfigurasikan panel juri terlebih dahulu.`
++                  );
++                }
++              }
++
+               const nextStatus = challenge.awardMode === "vote_only" ? "finished" : "jury_selection_open";
+               await tx
+                 .update(challenges)
+@@ -1484,12 +1626,24 @@ export async function disqualifyChallengeCandidateService(
+                 await autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id);
+               }
+             } else if (remainingTiedCandidates.length === 0) {
+-              // 0 tied candidates remain
++              if (challenge.awardMode === "vote_and_jury") {
++                const readiness = await validateJuryPhaseReadinessService(tx, challenge.id);
++                if (!readiness.ready) {
++                  throw new Error(
++                    `Transisi ke 'jury_selection_open' diblokir: ${readiness.reason}. Konfigurasikan panel juri terlebih dahulu.`
++                  );
++                }
++              }
++
+               const nextStatus = challenge.awardMode === "vote_only" ? "finished" : "jury_selection_open";
+               await tx
+                 .update(challenges)
+                 .set({ status: nextStatus, updatedAt: new Date() })
+                 .where(eq(challenges.id, challenge.id));
++
++              if (nextStatus === "finished") {
++                await autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id);
++              }
+             }
+           }
+         }
+@@ -1536,7 +1690,7 @@ export async function disqualifyChallengeCandidateService(
+               finalRank: 1,
+               awardType: "community_vote_winner",
+               totalCommunityStars: 0,
+-              resolutionMethod: "automatic_single_submission",
++              resolutionMethod: "single_submission_auto_winner",
+               isPublished: true,
+             });
+ 
+@@ -1547,6 +1701,13 @@ export async function disqualifyChallengeCandidateService(
+ 
+             await autoAddChallengeSubmissionsToPortfolioService(tx, challenge.id);
+           } else if (challenge.awardMode === "vote_and_jury") {
++            const readiness = await validateJuryPhaseReadinessService(tx, challenge.id);
++            if (!readiness.ready) {
++              throw new Error(
++                `Transisi ke 'jury_selection_open' diblokir: ${readiness.reason}. Konfigurasikan panel juri terlebih dahulu.`
++              );
++            }
++
+             await tx
+               .delete(challengeResults)
+               .where(
+@@ -1562,7 +1723,7 @@ export async function disqualifyChallengeCandidateService(
+               finalRank: 1,
+               awardType: "community_vote_winner",
+               totalCommunityStars: 0,
+-              resolutionMethod: "automatic_single_submission",
++              resolutionMethod: "single_submission_auto_winner",
+               isPublished: false,
+             });
+ 
+diff --git a/src/lib/services/votingService.ts b/src/lib/services/votingService.ts
+index 802b3e7..de06e24 100644
+--- a/src/lib/services/votingService.ts
++++ b/src/lib/services/votingService.ts
+@@ -1014,6 +1014,25 @@ export async function startTiebreakService(
+     throw new Error("Tidak ditemukan seri pada peringkat 1 babak utama.");
+   }
+ 
++  // Intersect authoritative tied set with currently eligible submissions under lock
++  const eligibleTiedCandidates = await dbOrTx
++    .select({ id: challengeSubmissions.id })
++    .from(challengeSubmissions)
++    .where(
++      and(
++        inArray(challengeSubmissions.id, mainTally.tiedSubmissionIds),
++        eq(challengeSubmissions.submissionStatus, "submitted")
++      )
++    )
++    .for("update");
++
++  const eligibleTiedIds: string[] = eligibleTiedCandidates.map((c: any) => c.id as string);
++  if (eligibleTiedIds.length < 2) {
++    throw new Error(
++      `Hanya tersisa ${eligibleTiedIds.length} kandidat yang memenuhi syarat. Babak tiebreak membutuhkan minimal 2 kandidat.`
++    );
++  }
++
+   // 5. Validate Deadline
+   const now = new Date();
+   let resolvedDeadline: Date;
+@@ -1041,7 +1060,7 @@ export async function startTiebreakService(
+ 
+   // 7. Freeze Tied Candidates into challenge_voting_round_candidates
+   await dbOrTx.insert(challengeVotingRoundCandidates).values(
+-    mainTally.tiedSubmissionIds.map((subId: string) => ({
++    eligibleTiedIds.map((subId: string) => ({
+       votingRoundId: tiebreakRound.id,
+       submissionId: subId,
+     }))
+@@ -1053,7 +1072,7 @@ export async function startTiebreakService(
+     actor,
+     challengeId,
+     "tiebreak_open",
+-    `Mulai babak tiebreak untuk ${mainTally.tiedSubmissionIds.length} karya seri hingga ${resolvedDeadline.toISOString()}`
++    `Mulai babak tiebreak untuk ${eligibleTiedIds.length} karya seri hingga ${resolvedDeadline.toISOString()}`
+   );
+ 
+   // 9. Write Audit Log
+@@ -1065,7 +1084,7 @@ export async function startTiebreakService(
+     reason: `Membuka babak tiebreak dengan deadline ${resolvedDeadline.toISOString()}`,
+     metadata: {
+       tiebreakRoundId: tiebreakRound.id,
+-      tiedSubmissionIds: mainTally.tiedSubmissionIds,
++      tiedSubmissionIds: eligibleTiedIds,
+       deadline: resolvedDeadline.toISOString(),
+     },
+   });
+@@ -1074,7 +1093,7 @@ export async function startTiebreakService(
+     success: true,
+     votingRoundId: tiebreakRound.id,
+     deadline: resolvedDeadline,
+-    tiedCandidatesCount: mainTally.tiedSubmissionIds.length,
++    tiedCandidatesCount: eligibleTiedIds.length,
+   };
+ }
+ 
+@@ -1161,6 +1180,27 @@ export async function resolveTieManuallyService(
+     );
+   }
+ 
++  // Verify chosen candidate is currently eligible (not disqualified) under row-level lock
++  const [chosenSubmission] = await dbOrTx
++    .select({
++      id: challengeSubmissions.id,
++      submissionStatus: challengeSubmissions.submissionStatus,
++    })
++    .from(challengeSubmissions)
++    .where(
++      and(
++        eq(challengeSubmissions.id, submissionId),
++        eq(challengeSubmissions.challengeId, challenge.id)
++      )
++    )
++    .for("update");
++
++  if (!chosenSubmission || chosenSubmission.submissionStatus !== "submitted") {
++    throw new Error(
++      "Karya yang dipilih telah didiskualifikasi atau tidak memenuhi syarat untuk dimenangkan."
++    );
++  }
++
+   const resolutionMethod =
+     latestClosedRound.roundType === "main" ? "manual_main_tie" : "manual_tiebreak_tie";
+ 
+diff --git a/src/lib/utils/draftStorage.ts b/src/lib/utils/draftStorage.ts
+index 1a1d9fd..f8c0f46 100644
+--- a/src/lib/utils/draftStorage.ts
++++ b/src/lib/utils/draftStorage.ts
+@@ -1,5 +1,6 @@
+ /**
+- * Utility for managing user-scoped submission drafts with full lifecycle cleanup.
++ * Utility for managing user-scoped submission drafts with full lifecycle cleanup,
++ * monotonic integer generation counters, and per-draft cross-tab lock serialization.
+  */
+ 
+ export interface SubmissionDraftData {
+@@ -8,13 +9,20 @@ export interface SubmissionDraftData {
+   softwareUsed: string;
+   isSpoiler: boolean;
+   savedAt: number;
++  generation?: number;
+ }
+ 
+-const DRAFT_PREFIX = "mengart_sub_draft:";
+-const FORMAT_VERSION = "v1";
++const DRAFT_PREFIX = "mengart:draft:";
++const DRAFT_GEN_PREFIX = "mengart:draft-generation:";
++const LEGACY_DRAFT_PREFIX_V1 = "mengart_sub_draft:v1:";
++const LEGACY_DRAFT_PREFIX_UNSCOPED = "mengart_sub_draft:";
+ 
+-function getDraftKey(userId: string, challengeId: string): string {
+-  return `${DRAFT_PREFIX}${FORMAT_VERSION}:${userId}:${challengeId}`;
++export function getDraftKey(userId: string, challengeId: string): string {
++  return `${DRAFT_PREFIX}${userId}:${challengeId}`;
++}
++
++export function getDraftGenerationKey(userId: string, challengeId: string): string {
++  return `${DRAFT_GEN_PREFIX}${userId}:${challengeId}`;
+ }
+ 
+ /**
+@@ -30,9 +38,154 @@ function getLocalStorage(): Storage | null {
+   }
+ }
+ 
++const heldDraftLocks = new Set<string>();
++
++/**
++ * Executes a function under a per-(user, challenge) storage lock
++ * to ensure cross-tab and concurrent operation serialization.
++ * Supports reentrant locking within the same thread context.
++ */
++function withDraftLock<T>(userId: string, challengeId: string, fn: () => T): T {
++  const storage = getLocalStorage();
++  if (!storage || !userId || !challengeId) return fn();
++
++  const lockKey = `mengart:draft-lock:${userId}:${challengeId}`;
++  if (heldDraftLocks.has(lockKey)) {
++    return fn();
++  }
++
++  const lockToken = `${Date.now()}:${Math.random()}`;
++  const maxWaitMs = 100;
++  const start = Date.now();
++  let acquired = false;
++  let attempts = 0;
++
++  while (Date.now() - start < maxWaitMs && attempts++ < 50) {
++    try {
++      const existing = storage.getItem(lockKey);
++      if (!existing) {
++        storage.setItem(lockKey, lockToken);
++        if (storage.getItem(lockKey) === lockToken) {
++          acquired = true;
++          break;
++        }
++      } else {
++        const parts = existing.split(":");
++        const lockTime = Number(parts[0] || 0);
++        // Break stale lock after 1000ms
++        if (Date.now() - lockTime > 1000) {
++          storage.setItem(lockKey, lockToken);
++          if (storage.getItem(lockKey) === lockToken) {
++            acquired = true;
++            break;
++          }
++        }
++      }
++    } catch (_e) {
++      break;
++    }
++  }
++
++  if (acquired) {
++    heldDraftLocks.add(lockKey);
++  }
++
++  try {
++    return fn();
++  } finally {
++    if (acquired) {
++      heldDraftLocks.delete(lockKey);
++      try {
++        if (storage.getItem(lockKey) === lockToken) {
++          storage.removeItem(lockKey);
++        }
++      } catch (_e) {
++        // Ignore storage removal errors
++      }
++    }
++  }
++}
++
++/**
++ * Dispatches cross-tab / same-tab invalidation notifications.
++ */
++function notifyDraftInvalidated(detail: { userId: string; challengeId: string; generation: number }): void {
++  if (typeof window === "undefined") return;
++  try {
++    window.dispatchEvent(new CustomEvent("mengart_draft_invalidated", { detail }));
++  } catch (_e) {
++    // Ignore event dispatch errors
++  }
++}
++
++/**
++ * Get current generation counter for a specific user and challenge draft.
++ * Monotonic positive integer starting from 1.
++ */
++export function getDraftGeneration(userId: string, challengeId: string): number {
++  const storage = getLocalStorage();
++  if (!storage || !userId || !challengeId) return 1;
++
++  try {
++    const raw = storage.getItem(getDraftGenerationKey(userId, challengeId));
++    if (!raw) return 1;
++    const parsed = parseInt(raw, 10);
++    return Number.isFinite(parsed) && parsed >= 1 ? parsed : 1;
++  } catch (_e) {
++    return 1;
++  }
++}
++
++/**
++ * Increment the draft generation for a specific user and challenge.
++ * The generation marker is NEVER deleted on draft clearance; it is monotonically
++ * incremented so that any stale autosaves or delayed callbacks are rejected.
++ */
++export function incrementDraftGeneration(userId: string, challengeId: string): number {
++  const storage = getLocalStorage();
++  if (!storage || !userId || !challengeId) return 1;
++
++  return withDraftLock(userId, challengeId, () => {
++    const currentGen = getDraftGeneration(userId, challengeId);
++    const nextGen = currentGen + 1;
++    try {
++      storage.setItem(getDraftGenerationKey(userId, challengeId), String(nextGen));
++    } catch (_e) {
++      // Ignore storage errors
++    }
++    notifyDraftInvalidated({ userId, challengeId, generation: nextGen });
++    return nextGen;
++  });
++}
++
++/**
++ * Mark a draft invalidated for a specific user and challenge.
++ * Increments the persistent generation marker even if no draft currently exists.
++ */
++export function markDraftInvalidated(userId: string, challengeId?: string): void {
++  if (userId && challengeId) {
++    incrementDraftGeneration(userId, challengeId);
++  }
++}
++
++/**
++ * Check whether a draft for a given user/challenge has been invalidated.
++ */
++export function isDraftInvalidated(
++  userId: string,
++  challengeId: string,
++  expectedGeneration?: number
++): boolean {
++  if (!userId || !challengeId) return false;
++  const currentGen = getDraftGeneration(userId, challengeId);
++  if (expectedGeneration !== undefined) {
++    return currentGen !== expectedGeneration;
++  }
++  return false;
++}
++
+ /**
+  * Purge any legacy unscoped drafts (e.g. mengart_sub_draft:challengeId)
+- * or drafts belonging to unknown format versions.
+  */
+ export function purgeLegacyDrafts(): void {
+   const storage = getLocalStorage();
+@@ -42,9 +195,9 @@ export function purgeLegacyDrafts(): void {
+     const keysToRemove: string[] = [];
+     for (let i = 0; i < storage.length; i++) {
+       const key = storage.key(i);
+-      if (key && key.startsWith(DRAFT_PREFIX)) {
+-        // If it doesn't match the versioned format "mengart_sub_draft:v1:..."
+-        if (!key.startsWith(`${DRAFT_PREFIX}${FORMAT_VERSION}:`)) {
++      if (key && key.startsWith(LEGACY_DRAFT_PREFIX_UNSCOPED)) {
++        // If it's not a versioned or modern key
++        if (!key.startsWith(LEGACY_DRAFT_PREFIX_V1)) {
+           keysToRemove.push(key);
+         }
+       }
+@@ -57,33 +210,48 @@ export function purgeLegacyDrafts(): void {
+ 
+ /**
+  * Save draft for a specific user and challenge.
++ * Verifies that expectedGeneration matches current persistent generation.
++ * Rejects stale saves with mismatched generation.
+  */
+ export function saveSubmissionDraft(
+   userId: string,
+   challengeId: string,
+-  data: Omit<SubmissionDraftData, "savedAt">
+-): void {
++  data: Omit<SubmissionDraftData, "savedAt" | "generation">,
++  expectedGeneration?: number
++): boolean {
+   const storage = getLocalStorage();
+-  if (!storage || !userId || !challengeId) return;
++  if (!storage || !userId || !challengeId) return false;
+ 
+-  try {
+-    const key = getDraftKey(userId, challengeId);
+-    const payload: SubmissionDraftData = {
+-      title: String(data.title || "").slice(0, 150),
+-      description: String(data.description || "").slice(0, 2000),
+-      softwareUsed: String(data.softwareUsed || "").slice(0, 100),
+-      isSpoiler: Boolean(data.isSpoiler),
+-      savedAt: Date.now(),
+-    };
+-    storage.setItem(key, JSON.stringify(payload));
+-  } catch (_e) {
+-    // QuotaExceededError or private browsing mode
+-  }
++  return withDraftLock(userId, challengeId, () => {
++    const currentGen = getDraftGeneration(userId, challengeId);
++    if (expectedGeneration !== undefined && expectedGeneration !== currentGen) {
++      // Generation mismatch: stale callback or invalidated draft!
++      return false;
++    }
++
++    try {
++      const key = getDraftKey(userId, challengeId);
++      const payload: SubmissionDraftData = {
++        title: String(data.title || "").slice(0, 150),
++        description: String(data.description || "").slice(0, 2000),
++        softwareUsed: String(data.softwareUsed || "").slice(0, 100),
++        isSpoiler: Boolean(data.isSpoiler),
++        savedAt: Date.now(),
++        generation: currentGen,
++      };
++      storage.setItem(key, JSON.stringify(payload));
++      return true;
++    } catch (_e) {
++      // QuotaExceededError or private browsing mode
++      return false;
++    }
++  });
+ }
+ 
+ /**
+  * Load draft for a specific user and challenge.
+- * Returns null if missing, expired, or invalid.
++ * Returns null if missing, expired, invalidated, or generation mismatch.
++ * Automatically migrates from legacy v1 format if present.
+  */
+ export function loadSubmissionDraft(
+   userId: string,
+@@ -92,59 +260,120 @@ export function loadSubmissionDraft(
+   const storage = getLocalStorage();
+   if (!storage || !userId || !challengeId) return null;
+ 
+-  try {
+-    const key = getDraftKey(userId, challengeId);
+-    const raw = storage.getItem(key);
+-    if (!raw) return null;
+-
+-    const parsed = JSON.parse(raw);
+-    if (typeof parsed !== "object" || parsed === null) return null;
+-
+-    // Validate fields
+-    return {
+-      title: typeof parsed.title === "string" ? parsed.title.slice(0, 150) : "",
+-      description: typeof parsed.description === "string" ? parsed.description.slice(0, 2000) : "",
+-      softwareUsed: typeof parsed.softwareUsed === "string" ? parsed.softwareUsed.slice(0, 100) : "",
+-      isSpoiler: Boolean(parsed.isSpoiler),
+-      savedAt: typeof parsed.savedAt === "number" ? parsed.savedAt : Date.now(),
+-    };
+-  } catch (_e) {
+-    return null;
+-  }
++  return withDraftLock(userId, challengeId, () => {
++    try {
++      const key = getDraftKey(userId, challengeId);
++      let raw = storage.getItem(key);
++
++      // Attempt migration from legacy v1 key if modern key is absent
++      if (!raw) {
++        const legacyKey = `${LEGACY_DRAFT_PREFIX_V1}${userId}:${challengeId}`;
++        const legacyRaw = storage.getItem(legacyKey);
++        if (legacyRaw) {
++          raw = legacyRaw;
++          storage.removeItem(legacyKey);
++          storage.setItem(key, legacyRaw);
++        }
++      }
++
++      if (!raw) return null;
++
++      const parsed = JSON.parse(raw);
++      if (typeof parsed !== "object" || parsed === null) return null;
++
++      const currentGen = getDraftGeneration(userId, challengeId);
++      if (parsed.generation !== undefined && parsed.generation !== currentGen) {
++        // Stale draft from older generation
++        storage.removeItem(key);
++        return null;
++      }
++
++      const savedAt = typeof parsed.savedAt === "number" ? parsed.savedAt : Date.now();
++
++      return {
++        title: typeof parsed.title === "string" ? parsed.title.slice(0, 150) : "",
++        description: typeof parsed.description === "string" ? parsed.description.slice(0, 2000) : "",
++        softwareUsed: typeof parsed.softwareUsed === "string" ? parsed.softwareUsed.slice(0, 100) : "",
++        isSpoiler: Boolean(parsed.isSpoiler),
++        savedAt,
++        generation: currentGen,
++      };
++    } catch (_e) {
++      return null;
++    }
++  });
+ }
+ 
+ /**
+  * Clear a specific challenge draft for a user.
++ * Increments generation counter to reject in-flight saves and removes draft payload.
++ * Retains generation key in storage.
+  */
+ export function clearSubmissionDraft(userId: string, challengeId: string): void {
+   const storage = getLocalStorage();
+   if (!storage || !userId || !challengeId) return;
+ 
+-  try {
+-    storage.removeItem(getDraftKey(userId, challengeId));
+-  } catch (_e) {
+-    // Ignore storage errors
+-  }
++  withDraftLock(userId, challengeId, () => {
++    incrementDraftGeneration(userId, challengeId);
++    try {
++      storage.removeItem(getDraftKey(userId, challengeId));
++      storage.removeItem(`${LEGACY_DRAFT_PREFIX_V1}${userId}:${challengeId}`);
++    } catch (_e) {
++      // Ignore storage errors
++    }
++  });
++}
++
++/**
++ * Alias for clearSubmissionDraft for explicit user-challenge scoping.
++ */
++export function clearUserChallengeDraft(userId: string, challengeId: string): void {
++  clearSubmissionDraft(userId, challengeId);
+ }
+ 
+ /**
+- * Clear ALL submission drafts across all users and challenges.
+- * Used during logout to guarantee zero cross-account leakage.
++ * Clear drafts for a specific user, scoped strictly to that user's challenges.
++ * Does NOT delete unrelated challenges or other users' drafts.
+  */
+-export function clearAllSubmissionDrafts(): void {
++export function clearDraftsForUser(userId: string): void {
+   const storage = getLocalStorage();
+-  if (!storage) return;
++  if (!storage || !userId) return;
+ 
+   try {
+-    const keysToRemove: string[] = [];
++    const prefix = `${DRAFT_PREFIX}${userId}:`;
++    const legacyPrefix = `${LEGACY_DRAFT_PREFIX_V1}${userId}:`;
++    const challengesToClear: string[] = [];
++
+     for (let i = 0; i < storage.length; i++) {
+       const key = storage.key(i);
+-      if (key && key.startsWith(DRAFT_PREFIX)) {
+-        keysToRemove.push(key);
++      if (key) {
++        if (key.startsWith(prefix)) {
++          const chId = key.slice(prefix.length);
++          if (chId && !challengesToClear.includes(chId)) challengesToClear.push(chId);
++        } else if (key.startsWith(legacyPrefix)) {
++          const chId = key.slice(legacyPrefix.length);
++          if (chId && !challengesToClear.includes(chId)) challengesToClear.push(chId);
++        }
+       }
+     }
+-    keysToRemove.forEach((k) => storage.removeItem(k));
++
++    for (const chId of challengesToClear) {
++      clearSubmissionDraft(userId, chId);
++    }
+   } catch (_e) {
+     // Ignore storage errors
+   }
+ }
++
++/**
++ * Global cleanup helper: purges legacy unscoped drafts.
++ * Broad deletion across all users and challenges is strictly prohibited.
++ */
++export function clearAllSubmissionDrafts(userId?: string, challengeId?: string): void {
++  if (userId && challengeId) {
++    clearSubmissionDraft(userId, challengeId);
++    return;
++  }
++  purgeLegacyDrafts();
++}
++

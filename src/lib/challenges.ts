@@ -8,7 +8,7 @@ import {
   artworks,
   profiles,
 } from "@/db/schema";
-import { eq, and, desc, asc } from "drizzle-orm";
+import { eq, and, desc, asc, isNull } from "drizzle-orm";
 import crypto from "crypto";
 
 export function slugify(text: string): string {
@@ -72,11 +72,19 @@ export function isChallengePhaseDeadlinePassed(
 /**
  * Fetch full Challenge entity including associated relation records
  */
-export async function getChallengeWithRelations(challengeId: string) {
+export async function getChallengeWithRelations(
+  challengeId: string,
+  options?: { allowDeleted?: boolean }
+) {
+  const filters = [eq(challenges.id, challengeId)];
+  if (!options?.allowDeleted) {
+    filters.push(isNull(challenges.deletedAt));
+  }
+
   const [challenge] = await db
     .select()
     .from(challenges)
-    .where(eq(challenges.id, challengeId))
+    .where(and(...filters))
     .limit(1);
 
   if (!challenge) return null;
@@ -113,16 +121,27 @@ export async function getChallengeWithRelations(challengeId: string) {
 /**
  * Fetch full Challenge entity by its URL slug
  */
-export async function getChallengeBySlug(slug: string) {
+export async function getChallengeBySlug(
+  slug: string,
+  options?: { allowDeleted?: boolean; allowInvisible?: boolean }
+) {
+  const filters = [eq(challenges.slug, slug)];
+  if (!options?.allowDeleted) {
+    filters.push(isNull(challenges.deletedAt));
+  }
+  if (!options?.allowInvisible) {
+    filters.push(eq(challenges.isVisible, true));
+  }
+
   const [challenge] = await db
     .select()
     .from(challenges)
-    .where(eq(challenges.slug, slug))
+    .where(and(...filters))
     .limit(1);
 
   if (!challenge) return null;
 
-  return getChallengeWithRelations(challenge.id);
+  return getChallengeWithRelations(challenge.id, { allowDeleted: options?.allowDeleted });
 }
 
 /**
@@ -196,6 +215,7 @@ export async function getChallengeCandidates(challengeId: string) {
       description: challengeSubmissions.description,
       softwareUsed: challengeSubmissions.softwareUsed,
       artworkId: challengeSubmissions.artworkId,
+      artworkSlug: artworks.slug,
       artworkVersionId: challengeSubmissions.artworkVersionId,
       isSpoiler: artworks.isSpoiler,
       artistName: profiles.displayName,

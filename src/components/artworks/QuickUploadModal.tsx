@@ -20,6 +20,7 @@ export function QuickUploadModal() {
   const [description, setDescription] = useState("");
   const [audience, setAudience] = useState<"public" | "members_only" | "unlisted" | "private">("public");
   const [critiqueMode, setCritiqueMode] = useState<"showcase_only" | "open_for_critique">("open_for_critique");
+  const [isSpoiler, setIsSpoiler] = useState(false);
   const [tagsInput, setTagsInput] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -82,8 +83,10 @@ export function QuickUploadModal() {
     formData.append("file", file);
     formData.append("title", title.trim());
     formData.append("description", description.trim());
+    formData.append("caption", description.trim());
     formData.append("audience", audience);
     formData.append("critiqueMode", critiqueMode);
+    formData.append("isSpoiler", isSpoiler ? "true" : "false");
     if (tagsInput.trim()) formData.append("tags", tagsInput.trim());
 
     uploadMutation.mutate(formData, {
@@ -92,6 +95,7 @@ export function QuickUploadModal() {
         setTitle("");
         setDescription("");
         setTagsInput("");
+        setIsSpoiler(false);
         setFile(null);
         setPreviewUrl(null);
       },
@@ -244,7 +248,7 @@ export function QuickUploadModal() {
 
             <div className="flex flex-col gap-1.5">
               <label htmlFor="artwork-critique-mode" className="text-xs font-mono text-zinc-300">
-                MODE MASUKAN & KRITIK
+                MODE KOMENTAR
               </label>
               <select
                 id="artwork-critique-mode"
@@ -252,10 +256,27 @@ export function QuickUploadModal() {
                 onChange={(e) => setCritiqueMode(e.target.value as any)}
                 className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-[#191c23] border border-white/10 text-white text-base sm:text-xs font-mono focus:outline-none"
               >
-                <option value="open_for_critique">Buka untuk Kritik Konstruktif</option>
-                <option value="showcase_only">Showcase Only (Apresiasi Saja)</option>
+                <option value="open_for_critique">Buka Komentar & Diskusi</option>
+                <option value="showcase_only">Showcase Saja (Hanya Apresiasi)</option>
               </select>
             </div>
+          </div>
+
+          {/* Spoiler Toggle */}
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10">
+            <input
+              id="artwork-spoiler"
+              type="checkbox"
+              checked={isSpoiler}
+              onChange={(e) => setIsSpoiler(e.target.checked)}
+              className="h-4 w-4 rounded border-white/20 bg-[#191c23] text-amber-500 focus:ring-amber-500 cursor-pointer"
+            />
+            <label htmlFor="artwork-spoiler" className="text-xs text-zinc-300 cursor-pointer select-none">
+              <span className="font-semibold text-white">Tandai sebagai Spoiler</span>
+              <span className="block text-[11px] text-zinc-500">
+                Gambar akan diburamkan di galeri hingga pengunjung memilih untuk membukanya.
+              </span>
+            </label>
           </div>
 
           {/* Submit Buttons */}

@@ -3,7 +3,7 @@ import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import { Palette, Sparkles, Key, LogOut } from "lucide-react";
 import { OnboardingInviteForm } from "@/components/auth/OnboardingInviteForm";
-import { logoutAction } from "@/app/actions/auth";
+import { SignOutButton } from "@/components/auth/SignOutButton";
 
 export const metadata: Metadata = {
   title: "Onboarding Anggota — Mengart",
@@ -13,13 +13,16 @@ export const metadata: Metadata = {
   },
 };
 
+import { getSafeReturnUrl } from "@/lib/navigation/returnUrl";
+
 interface OnboardingPageProps {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; returnTo?: string; from?: string }>;
 }
 
 export default async function OnboardingPage({ searchParams }: OnboardingPageProps) {
   const session = await auth();
-  const { error } = await searchParams;
+  const { error, returnTo: rawReturnTo, from: rawFrom } = await searchParams;
+  const returnTo = getSafeReturnUrl(rawReturnTo || rawFrom, "/dashboard");
 
   if (!session?.user || !session.user.id) {
     redirect("/login?error=AuthRequired");
@@ -60,20 +63,20 @@ export default async function OnboardingPage({ searchParams }: OnboardingPagePro
         </div>
 
         {/* Onboarding Form */}
-        <OnboardingInviteForm initialError={error} userEmail={session.user.email || ""} defaultName={session.user.name || ""} />
+        <OnboardingInviteForm
+          initialError={error}
+          userEmail={session.user.email || ""}
+          defaultName={session.user.name || ""}
+          returnTo={returnTo}
+        />
 
         {/* Sign out footer */}
         <div className="pt-4 border-t border-white/10 flex items-center justify-between text-xs text-zinc-500">
           <span>Bukan akun Anda?</span>
-          <form action={logoutAction}>
-            <button
-              type="submit"
-              className="font-mono text-zinc-400 hover:text-red-400 transition-colors inline-flex items-center gap-1 cursor-pointer"
-            >
-              <LogOut className="h-3.5 w-3.5" />
-              <span>Keluar</span>
-            </button>
-          </form>
+          <SignOutButton className="font-mono text-zinc-400 hover:text-red-400 transition-colors inline-flex items-center gap-1 cursor-pointer">
+            <LogOut className="h-3.5 w-3.5" />
+            <span>Keluar</span>
+          </SignOutButton>
         </div>
       </div>
     </main>

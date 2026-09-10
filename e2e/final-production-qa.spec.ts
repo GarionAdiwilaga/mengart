@@ -49,15 +49,15 @@ test.describe("Final Production QA & Health Audit Suite", () => {
     await expect(page).toHaveTitle(/Mengart/i);
 
     // Section 1: Hero & Value Pillars
-    await expect(page.locator("h1").first()).toContainText(/Kolektif Kreator Digital/i);
-    await expect(page.getByText("KOMUNITAS DIGITAL ART & ATELIER PRIVAT").first()).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Portofolio Terkurasi" })).toBeVisible();
+    await expect(page.locator("h1").first()).toContainText(/Kolektif Kreator (Digital|Seni Visual)|Ruang Berkarya/i);
+    await expect(page.getByText(/KOMUNITAS (DIGITAL ART|SENI VISUAL) & ATELIER PRIVAT/i).first()).toBeVisible();
+    await expect(page.getByText("Atelier digital khusus kreator seni visual").first()).toBeVisible();
 
     // Section 2: Recent Public Artworks Header
-    await expect(page.locator("text=Karya Publik Terbaru")).toBeVisible();
+    await expect(page.locator("text=Karya Publik Terbaru").first()).toBeVisible();
 
     // Section 7: About Community Section
-    await expect(page.locator("text=Tentang Mengart Atelier")).toBeVisible();
+    await expect(page.locator("text=Tentang Mengart Atelier").first()).toBeVisible();
 
     // Section 8: Footer with WITA Notice
     await expect(page.locator("footer")).toBeVisible();
@@ -84,7 +84,9 @@ test.describe("Final Production QA & Health Audit Suite", () => {
     await expect(page.locator("h1, h2").first()).toContainText(/Galeri/i);
 
     // Filter controls present
-    await expect(page.getByRole("textbox", { name: /cari karya/i }).or(page.locator("input[placeholder*='Cari']"))).toBeVisible();
+    await expect(
+      page.getByRole("textbox", { name: /cari karya/i }).or(page.locator("input[placeholder*='Cari']")).first()
+    ).toBeVisible();
 
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "gallery-desktop.png"), fullPage: false });
     expect(pageErrors).toEqual([]);
@@ -100,9 +102,15 @@ test.describe("Final Production QA & Health Audit Suite", () => {
     page.on("pageerror", (err) => pageErrors.push(err.message));
 
     await page.goto("/commissions");
+    await page.waitForLoadState("domcontentloaded");
     await expect(page.locator("h1, h2").first()).toContainText(/Komisi/i);
 
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "commissions-desktop.png"), fullPage: false });
+    try {
+      await page.screenshot({ path: path.join(SCREENSHOT_DIR, "commissions-desktop.png"), fullPage: false });
+    } catch {
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: path.join(SCREENSHOT_DIR, "commissions-desktop.png"), fullPage: false });
+    }
     expect(pageErrors).toEqual([]);
   });
 

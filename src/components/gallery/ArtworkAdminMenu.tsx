@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { MoreHorizontal, Star, Eye, ShieldAlert, Ban, Check, Loader2 } from "lucide-react";
-import { setMonthlySpotlightAction } from "@/app/actions/moderation";
-import { resolveReportAction } from "@/app/actions/moderation";
+import { setMonthlySpotlightAction, takedownArtworkDirectAction } from "@/app/actions/moderation";
+import { disqualifyChallengeCandidateAction } from "@/app/actions/challenges";
 import { toast } from "sonner";
 
 interface ArtworkAdminMenuProps {
@@ -12,6 +12,8 @@ interface ArtworkAdminMenuProps {
   artistProfileId?: string;
   masterStorageKey?: string | null;
   currentUserRole?: string;
+  challengeSubmissionId?: string | null;
+  challengeTitle?: string | null;
 }
 
 export function ArtworkAdminMenu({
@@ -20,6 +22,8 @@ export function ArtworkAdminMenu({
   artistProfileId,
   masterStorageKey,
   currentUserRole,
+  challengeSubmissionId,
+  challengeTitle,
 }: ArtworkAdminMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -51,16 +55,49 @@ export function ArtworkAdminMenu({
   const handleTakeDown = async (e: React.MouseEvent) => {
     e.stopPropagation();
     const reason = prompt(`Alasan penegakan take-down untuk "${artworkTitle}":`, "Melanggar pedoman konten komunitas atelier.");
-    if (!reason) return;
+    if (reason === null) return;
+    if (reason.trim().length < 5) {
+      toast.error("Alasan penegakan take-down wajib diisi minimal 5 karakter.");
+      return;
+    }
 
     setIsLoading(true);
     try {
-      // Create a temporary resolution or direct takedown
+      await takedownArtworkDirectAction(artworkId, reason.trim());
       toast.success(`Karya "${artworkTitle}" telah disembunyikan (hidden).`);
       setIsOpen(false);
       window.location.reload();
     } catch (err: any) {
       toast.error(err?.message || "Gagal melakukan take down.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDisqualify = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!challengeSubmissionId) {
+      toast.error("Submisi challenge tidak ditemukan.");
+      return;
+    }
+    const reason = prompt(
+      `Alasan diskualifikasi untuk "${artworkTitle}" ${challengeTitle ? `dalam "${challengeTitle}"` : ""}:`,
+      "Melanggar ketentuan submisi challenge."
+    );
+    if (reason === null) return;
+    if (reason.trim().length < 5) {
+      toast.error("Alasan diskualifikasi wajib diisi minimal 5 karakter.");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await disqualifyChallengeCandidateAction(challengeSubmissionId, reason.trim());
+      toast.success(`Karya "${artworkTitle}" telah didiskualifikasi dari challenge.`);
+      setIsOpen(false);
+      window.location.reload();
+    } catch (err: any) {
+      toast.error(err?.message || "Gagal mendiskualifikasi karya.");
     } finally {
       setIsLoading(false);
     }
@@ -103,6 +140,17 @@ export function ArtworkAdminMenu({
                 <Eye className="h-3.5 w-3.5 text-blue-400" />
                 <span>Buka Master Penuh</span>
               </a>
+            ) : null}
+
+            {challengeSubmissionId ? (
+              <button
+                onClick={handleDisqualify}
+                disabled={isLoading}
+                className="flex items-center gap-2 px-2.5 py-2 rounded-xl text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 transition-colors text-left cursor-pointer"
+              >
+                <ShieldAlert className="h-3.5 w-3.5 text-amber-400" />
+                <span>Diskualifikasi karya</span>
+              </button>
             ) : null}
 
             <button

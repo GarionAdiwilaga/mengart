@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/rbac";
 import { extractInviteCode, validateInviteCode, redeemInviteService } from "@/lib/invites";
 import { signOut } from "@/auth";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rateLimit";
+import { getSafeReturnUrl } from "@/lib/navigation/returnUrl";
 
 /**
  * Server Action called before Google OAuth redirect to set the HttpOnly pending invite cookie
@@ -83,6 +84,9 @@ export async function redeemOnboardingInviteAction(formData: FormData) {
 
   const displayName = ((formData.get("displayName") as string) || "").trim();
 
+  const rawReturnTo = (formData.get("returnTo") as string) || null;
+  const redirectUrl = getSafeReturnUrl(rawReturnTo, "/dashboard");
+
   try {
     const result = await redeemInviteService(db, {
       userId: sessionUser.id,
@@ -94,7 +98,7 @@ export async function redeemOnboardingInviteAction(formData: FormData) {
     return {
       success: true,
       isAlreadyActive: result.isAlreadyActive,
-      redirectUrl: "/dashboard",
+      redirectUrl,
     };
   } catch (error: any) {
     return {

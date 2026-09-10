@@ -1,5 +1,6 @@
 import { db } from "@/db";
 import {
+  users,
   profiles,
   artworks,
   artworkVersions,
@@ -10,6 +11,7 @@ import {
 import { eq, desc, and, isNull } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { getCurrentUser } from "@/lib/rbac";
 import {
   Palette,
   ArrowLeft,
@@ -26,6 +28,8 @@ import {
   Image as ImageIcon,
 } from "lucide-react";
 
+import { CommunityShell } from "@/components/layout/shells/CommunityShell";
+
 interface ArtistProfilePageProps {
   params: Promise<{ slug: string }>;
 }
@@ -33,14 +37,46 @@ interface ArtistProfilePageProps {
 export default async function ArtistProfilePage({ params }: ArtistProfilePageProps) {
   const { slug } = await params;
 
-  const [artist] = await db
-    .select()
+  const [artistRecord] = await db
+    .select({
+      profile: profiles,
+      user: {
+        id: users.id,
+        membershipStatus: users.membershipStatus,
+        role: users.role,
+        deletedAt: users.deletedAt,
+      },
+    })
     .from(profiles)
+    .innerJoin(users, eq(users.id, profiles.userId))
     .where(eq(profiles.slug, slug))
     .limit(1);
 
-  if (!artist) {
+  if (!artistRecord) {
     notFound();
+  }
+
+  const { profile: artist, user: artistUser } = artistRecord;
+  const viewer = await getCurrentUser();
+  const isOwner = Boolean(viewer && viewer.id === artist.userId);
+  const isActiveStaff = Boolean(
+    viewer &&
+    viewer.membershipStatus === "active" &&
+    (viewer.role === "admin" || viewer.role === "moderator")
+  );
+
+  // If user is deleted or not active member, block non-staff/non-owner
+  if (artistUser.deletedAt || artist.deletedAt || artistUser.membershipStatus !== "active") {
+    if (!isOwner && !isActiveStaff) {
+      notFound();
+    }
+  }
+
+  // If profile is not active_public (e.g. active_hidden, incomplete, suspended), only owner or active staff can preview
+  if (artist.profileStatus !== "active_public") {
+    if (!isOwner && !isActiveStaff) {
+      notFound();
+    }
   }
 
   // Fetch Artist Portfolio Artworks (Visible to Public)
@@ -113,7 +149,7 @@ export default async function ArtistProfilePage({ params }: ArtistProfilePagePro
   const waUrl = waNumber ? `https://wa.me/${waNumber}?text=${waMessage}` : null;
 
   return (
-    <main className="p-6 sm:p-12 max-w-7xl mx-auto flex flex-col gap-8 flex-1">
+    <CommunityShell maxWidth="wide" className="flex flex-col gap-8">
       {/* Breadcrumb Navigation */}
       <div>
         <Link
@@ -354,13 +390,14 @@ export default async function ArtistProfilePage({ params }: ArtistProfilePagePro
               const thumbUrl = item.thumbnailStorageKey
                 ? `/api/media/public/${item.thumbnailStorageKey}`
                 : null;
+              const itemHref = `/artworks/${item.slug}?from=${encodeURIComponent(`/artists/${artist.slug}`)}`;
 
               return (
                 <div
                   key={item.id}
                   className="break-inside-avoid glass-panel rounded-2xl overflow-hidden group hover:border-white/20 transition-all"
                 >
-                  <Link href={`/artworks/${item.slug}`} className="block relative bg-black/40">
+                  <Link href={itemHref} className="block relative bg-black/40">
                     {thumbUrl ? (
                       <img
                         src={thumbUrl}
@@ -375,7 +412,7 @@ export default async function ArtistProfilePage({ params }: ArtistProfilePagePro
                     )}
                   </Link>
                   <div className="p-4 flex flex-col gap-1">
-                    <Link href={`/artworks/${item.slug}`}>
+                    <Link href={itemHref}>
                       <h4 className="font-display font-bold text-sm text-[#f6f2e9] group-hover:text-amber-300 transition-colors truncate">
                         {item.title}
                       </h4>
@@ -390,6 +427,6 @@ export default async function ArtistProfilePage({ params }: ArtistProfilePagePro
           </div>
         )}
       </section>
-    </main>
+    </CommunityShell>
   );
 }

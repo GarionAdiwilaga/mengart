@@ -13,7 +13,8 @@ interface JuryPageProps {
 export default async function ChallengeJuryPage({ params }: JuryPageProps) {
   const user = await requireAuth("/login");
   const { slug } = await params;
-  const challenge = await getChallengeBySlug(slug);
+  const isModOrAdmin = user.role === "moderator" || user.role === "admin";
+  const challenge = await getChallengeBySlug(slug, { allowInvisible: isModOrAdmin });
 
   if (!challenge) {
     notFound();
@@ -21,7 +22,6 @@ export default async function ChallengeJuryPage({ params }: JuryPageProps) {
 
   // Check if user is an assigned jury member or admin/moderator
   const isAssignedJury = challenge.juryAssignments.some((j) => j.userId === user.id);
-  const isModOrAdmin = user.role === "moderator" || user.role === "admin";
 
   if (!isAssignedJury && !isModOrAdmin) {
     redirect(`/challenges/${challenge.slug}?error=JuryOnly`);

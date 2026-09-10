@@ -11,6 +11,7 @@ import {
   createChallengeSubmissionService,
   replaceChallengeSubmissionMediaService,
 } from "@/lib/services/submissionService";
+import { disqualifyChallengeCandidateService } from "@/lib/services/challengeService";
 
 export async function submitArtworkToChallengeAction(formData: FormData) {
   const user = await requireAuth("/login");
@@ -303,3 +304,42 @@ export async function revokeChallengeResultsAction(challengeId: string, reason: 
 
   return result;
 }
+
+export async function disqualifyChallengeCandidateAction(submissionId: string, reason: string) {
+  const user = await requireAuth("/login");
+  if (user.role !== "admin" && user.role !== "moderator") {
+    throw new Error("Hanya administrator atau moderator yang dapat mendiskualifikasi karya.");
+  }
+
+  const rl = await checkRateLimit(`report_resolve:${user.id}`, {
+    limit: 30,
+    windowSeconds: 60,
+    criticality: "fail_open",
+  });
+  if (!rl.success) {
+    throw new Error("Terlalu banyak tindakan moderasi dalam waktu singkat.");
+  }
+
+  const result = await disqualifyChallengeCandidateService(
+    db,
+    { userId: user.id, role: user.role },
+    { submissionId, reason }
+  );
+
+  const [challenge] = await db
+    .select({ slug: challenges.slug })
+    .from(challenges)
+    .where(eq(challenges.id, result.challengeId))
+    .limit(1);
+
+  if (challenge) {
+    revalidatePath(`/challenges/${challenge.slug}`);
+    revalidatePath(`/challenges/${challenge.slug}/voting`);
+    revalidatePath(`/challenges/${challenge.slug}/results`);
+  }
+  revalidatePath("/admin/challenges");
+  revalidatePath("/challenges");
+
+  return result;
+}
+

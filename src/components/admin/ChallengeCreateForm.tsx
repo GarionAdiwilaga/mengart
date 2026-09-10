@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { createOrUpdateChallengeAction } from "@/app/actions/challenges";
-import { Loader2, Trophy, Save, ArrowLeft, CheckCircle2, AlertCircle } from "lucide-react";
+import { Loader2, Trophy, Save, ArrowLeft, CheckCircle2, AlertCircle, Clock } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { toWitaDatetimeLocalValue, parseWitaDatetimeLocalInput } from "@/lib/presentation/witaTime";
 
 export function ChallengeCreateForm() {
   const router = useRouter();
@@ -17,16 +18,15 @@ export function ChallengeCreateForm() {
   const [awardMode, setAwardMode] = useState<"vote_and_jury" | "vote_only" | "jury_only" | "showcase_only">("vote_and_jury");
   const [starsPerMember, setStarsPerMember] = useState(1);
 
-  // Default dates: start now, submission 7 days, voting 3 days
-  const nowStr = new Date().toISOString().slice(0, 16);
-  const subDeadlineStr = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16);
-  const voteStartStr = subDeadlineStr;
-  const voteDeadlineStr = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16);
+  // Default dates strictly formatted in WITA: start now, submission 7 days, voting 3 days
+  const now = new Date();
+  const subDeadline = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const voteDeadline = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1000);
 
-  const [submissionStartsAt, setSubmissionStartsAt] = useState(nowStr);
-  const [submissionDeadline, setSubmissionDeadline] = useState(subDeadlineStr);
-  const [votingStartsAt, setVotingStartsAt] = useState(voteStartStr);
-  const [votingDeadline, setVotingDeadline] = useState(voteDeadlineStr);
+  const [submissionStartsAt, setSubmissionStartsAt] = useState(() => toWitaDatetimeLocalValue(now));
+  const [submissionDeadline, setSubmissionDeadline] = useState(() => toWitaDatetimeLocalValue(subDeadline));
+  const [votingStartsAt, setVotingStartsAt] = useState(() => toWitaDatetimeLocalValue(subDeadline));
+  const [votingDeadline, setVotingDeadline] = useState(() => toWitaDatetimeLocalValue(voteDeadline));
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,19 +36,19 @@ export function ChallengeCreateForm() {
     setIsLoading(true);
     setError(null);
 
-    const formData = new FormData();
-    formData.append("title", title.trim());
-    formData.append("theme", theme.trim());
-    formData.append("description", description.trim());
-    formData.append("promptRules", promptRules.trim());
-    formData.append("awardMode", awardMode);
-    formData.append("starsPerMember", String(starsPerMember));
-    formData.append("submissionStartsAt", new Date(submissionStartsAt).toISOString());
-    formData.append("submissionDeadline", new Date(submissionDeadline).toISOString());
-    formData.append("votingStartsAt", new Date(votingStartsAt).toISOString());
-    formData.append("votingDeadline", new Date(votingDeadline).toISOString());
-
     try {
+      const formData = new FormData();
+      formData.append("title", title.trim());
+      formData.append("theme", theme.trim());
+      formData.append("description", description.trim());
+      formData.append("promptRules", promptRules.trim());
+      formData.append("awardMode", awardMode);
+      formData.append("starsPerMember", String(starsPerMember));
+      formData.append("submissionStartsAt", parseWitaDatetimeLocalInput(submissionStartsAt).toISOString());
+      formData.append("submissionDeadline", parseWitaDatetimeLocalInput(submissionDeadline).toISOString());
+      formData.append("votingStartsAt", parseWitaDatetimeLocalInput(votingStartsAt).toISOString());
+      formData.append("votingDeadline", parseWitaDatetimeLocalInput(votingDeadline).toISOString());
+
       const res = await createOrUpdateChallengeAction(formData);
       if (res.success) {
         router.push("/admin/challenges");
@@ -165,11 +165,16 @@ export function ChallengeCreateForm() {
 
       {/* Section 3: Authoritative Timelines (WITA) */}
       <section className="glass-panel p-6 sm:p-8 rounded-3xl flex flex-col gap-5">
-        <h2 className="font-display font-bold text-lg text-[#f6f2e9]">Jadwal & Batas Waktu (WITA)</h2>
+        <div>
+          <h2 className="font-display font-bold text-lg text-[#f6f2e9]">Jadwal & Batas Waktu (WITA)</h2>
+          <p className="text-xs text-zinc-400 mt-1">
+            Seluruh jadwal di bawah diinput dan dihitung dalam Waktu Indonesia Tengah (WITA / UTC+8).
+          </p>
+        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-mono text-zinc-300">WAKTU SUBMISI DIBUKA</label>
+            <label className="text-xs font-mono text-zinc-300">WAKTU SUBMISI DIBUKA (WITA)</label>
             <input
               type="datetime-local"
               value={submissionStartsAt}
@@ -179,7 +184,7 @@ export function ChallengeCreateForm() {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-mono text-zinc-300">DEADLINE SUBMISI KARYA</label>
+            <label className="text-xs font-mono text-zinc-300">DEADLINE SUBMISI KARYA (WITA)</label>
             <input
               type="datetime-local"
               value={submissionDeadline}
@@ -189,7 +194,7 @@ export function ChallengeCreateForm() {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-mono text-zinc-300">WAKTU VOTING DIBUKA</label>
+            <label className="text-xs font-mono text-zinc-300">WAKTU VOTING DIBUKA (WITA)</label>
             <input
               type="datetime-local"
               value={votingStartsAt}
@@ -199,7 +204,7 @@ export function ChallengeCreateForm() {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-mono text-zinc-300">DEADLINE VOTING SELESAI</label>
+            <label className="text-xs font-mono text-zinc-300">DEADLINE VOTING SELESAI (WITA)</label>
             <input
               type="datetime-local"
               value={votingDeadline}

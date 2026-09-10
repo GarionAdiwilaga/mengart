@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { artworks, artworkVersions, profiles, users, portfolioEntries } from "@/db/schema";
-import { eq, and, desc, sql, ilike, isNull } from "drizzle-orm";
+import {
+  artworks,
+  artworkVersions,
+  profiles,
+  users,
+  portfolioEntries,
+  challengeSubmissions,
+  challenges,
+} from "@/db/schema";
+import { eq, and, desc, asc, sql, ilike, isNull, isNotNull } from "drizzle-orm";
 import { auth } from "@/auth";
+import { projectPublicArtworkProvenance } from "@/lib/presentation/provenance";
 
 export async function handleGetArtworks(
   request: Request,
@@ -12,6 +21,8 @@ export async function handleGetArtworks(
   const search = searchParams.get("search")?.trim();
   const mediaType = searchParams.get("mediaType");
   const critiqueMode = searchParams.get("critiqueMode");
+  const tab = searchParams.get("tab"); // "bebas" | "challenge" | null
+  const sort = searchParams.get("sort"); // "latest" | "oldest" | null
   const limit = Math.min(Number(searchParams.get("limit")) || 30, 100);
 
   let sessionUser = sessionUserOverride;
@@ -24,10 +35,30 @@ export async function handleGetArtworks(
     }
   }
 
+  // Live database check in production to prevent relying on stale session JWT claims
+  let liveUser: { id: string; role?: string; membershipStatus?: string | null; deletedAt?: Date | null } | null = null;
+  if (sessionUserOverride) {
+    liveUser = sessionUserOverride;
+  } else if (sessionUser?.id) {
+    const [u] = await db
+      .select({
+        id: users.id,
+        role: users.role,
+        membershipStatus: users.membershipStatus,
+        deletedAt: users.deletedAt,
+      })
+      .from(users)
+      .where(eq(users.id, sessionUser.id))
+      .limit(1);
+    if (u) liveUser = u;
+  }
+
   const isActiveMember =
-    !!sessionUser?.id && sessionUser.membershipStatus === "active";
+    !!liveUser && liveUser.membershipStatus === "active" && !liveUser.deletedAt;
+  const isActiveStaff =
+    isActiveMember && (liveUser?.role === "admin" || liveUser?.role === "moderator");
   const isActiveAdmin =
-    isActiveMember && sessionUser?.role === "admin";
+    isActiveMember && liveUser?.role === "admin";
 
   const conditions = [
     eq(artworks.publicationStatus, "published"),
@@ -50,6 +81,14 @@ export async function handleGetArtworks(
   if (critiqueMode && critiqueMode !== "all") {
     conditions.push(eq(artworks.critiqueMode, critiqueMode as any));
   }
+
+  if (tab === "bebas") {
+    conditions.push(isNull(challengeSubmissions.id));
+  } else if (tab === "challenge") {
+    conditions.push(isNotNull(challengeSubmissions.id));
+  }
+
+  const orderByClause = sort === "oldest" ? asc(artworks.createdAt) : desc(artworks.createdAt);
 
   const items = await db
     .select({
@@ -75,6 +114,24 @@ export async function handleGetArtworks(
       masterStorageKey: artworkVersions.masterStorageKey,
       width: artworkVersions.width,
       height: artworkVersions.height,
+      challengeSubmissionId: challengeSubmissions.id,
+      challengeId: challengeSubmissions.challengeId,
+      challengeTitle: challenges.title,
+      challengeSlug: challenges.slug,
+      challengeIsVisible: challenges.isVisible,
+      challengeDeletedAt: challenges.deletedAt,
+      awardType: sql<string | null>`(
+        SELECT cr.award_type FROM challenge_results cr
+        WHERE cr.submission_id = ${challengeSubmissions.id} AND cr.is_published = true
+        ORDER BY CASE WHEN cr.award_type = 'community_vote_winner' THEN 1 ELSE 2 END
+        LIMIT 1
+      )`,
+      categoryLabel: sql<string | null>`(
+        SELECT cr.category_label FROM challenge_results cr
+        WHERE cr.submission_id = ${challengeSubmissions.id} AND cr.is_published = true
+        ORDER BY CASE WHEN cr.award_type = 'community_vote_winner' THEN 1 ELSE 2 END
+        LIMIT 1
+      )`,
     })
     .from(artworks)
     .innerJoin(profiles, eq(profiles.userId, artworks.userId))
@@ -87,16 +144,45 @@ export async function handleGetArtworks(
       )
     )
     .leftJoin(artworkVersions, eq(artworkVersions.id, artworks.currentVersionId))
+    .leftJoin(challengeSubmissions, eq(challengeSubmissions.artworkId, artworks.id))
+    .leftJoin(challenges, eq(challenges.id, challengeSubmissions.challengeId))
     .where(and(...conditions))
-    .orderBy(desc(artworks.createdAt))
+    .orderBy(orderByClause)
     .limit(limit);
 
-  // Sanitize masterStorageKey: Expose only to ACTIVE artwork owner or ACTIVE platform admin
+  // Sanitize masterStorageKey & challenge provenance
   const sanitizedItems = items.map((item) => {
-    const isOwner = isActiveMember && sessionUser?.id === item.userId;
+    const isOwner = isActiveMember && liveUser?.id === item.userId;
+    const projected = projectPublicArtworkProvenance(item, { isActiveStaff });
+
     return {
-      ...item,
+      id: item.id,
+      userId: item.userId,
+      title: item.title,
+      slug: item.slug,
+      description: item.description,
+      mediaType: item.mediaType,
+      audience: item.audience,
+      critiqueMode: item.critiqueMode,
+      isSpoiler: item.isSpoiler,
+      createdAt: item.createdAt,
+      systemCaption: projected.systemCaption,
+      customCaption: projected.customCaption,
+      effectiveCaption: projected.effectiveCaption,
+      artistName: item.artistName,
+      artistSlug: item.artistSlug,
+      artistAvatar: item.artistAvatar,
+      artistCommissionStatus: item.artistCommissionStatus,
+      thumbnailStorageKey: item.thumbnailStorageKey,
+      publicStorageKey: item.publicStorageKey,
       masterStorageKey: isOwner || isActiveAdmin ? item.masterStorageKey : null,
+      width: item.width,
+      height: item.height,
+      origin: projected.origin,
+      challengeSubmissionId: item.challengeSubmissionId,
+      challengeId: projected.challengeId,
+      challengeTitle: projected.challengeTitle,
+      challengeSlug: projected.challengeSlug,
     };
   });
 

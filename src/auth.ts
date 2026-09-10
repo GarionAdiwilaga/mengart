@@ -1,5 +1,6 @@
 import NextAuth, { type DefaultSession } from "next-auth";
 import Google from "next-auth/providers/google";
+import Credentials from "next-auth/providers/credentials";
 import { db } from "@/db";
 import { users, profiles } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -124,6 +125,55 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       clientId: process.env.GOOGLE_CLIENT_ID || "",
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
     }),
+    Credentials({
+      id: "credentials",
+      name: "Dev Quick Login",
+      credentials: {
+        email: { label: "Email", type: "email" },
+      },
+      async authorize(credentials) {
+        if (process.env.NODE_ENV === "production") return null;
+        const emailStr = typeof credentials?.email === "string" ? credentials.email.trim().toLowerCase() : "";
+        if (!emailStr) return null;
+
+        const [user] = await db
+          .select()
+          .from(users)
+          .where(eq(users.email, emailStr))
+          .limit(1);
+
+        if (!user) {
+          if (emailStr === "pending@mengart.local") {
+            const [newUser] = await db
+              .insert(users)
+              .values({
+                email: emailStr,
+                username: "visitor_pending",
+                role: "member",
+                membershipStatus: null, // PENDING_INVITE
+                emailVerified: new Date(),
+              })
+              .returning();
+            return {
+              id: newUser.id,
+              email: newUser.email,
+              name: newUser.username,
+            };
+          }
+          return null;
+        }
+
+        if (user.membershipStatus === "deleted" || user.deletedAt) {
+          return null;
+        }
+
+        return {
+          id: user.id,
+          email: user.email,
+          name: user.username,
+        };
+      },
+    }),
   ],
   session: {
     strategy: "jwt",
@@ -143,6 +193,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         if (!res.success) {
           return `/login?error=${res.error}`;
         }
+        return true;
+      }
+      if (account?.provider === "credentials") {
+        if (process.env.NODE_ENV === "production") return false;
         return true;
       }
       return false;

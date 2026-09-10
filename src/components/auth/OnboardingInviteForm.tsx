@@ -9,12 +9,14 @@ interface OnboardingInviteFormProps {
   initialError?: string;
   userEmail: string;
   defaultName: string;
+  returnTo?: string;
 }
 
 export function OnboardingInviteForm({
   initialError,
   userEmail,
   defaultName,
+  returnTo,
 }: OnboardingInviteFormProps) {
   const router = useRouter();
   const [inviteCode, setInviteCode] = useState("");
@@ -35,6 +37,9 @@ export function OnboardingInviteForm({
     const formData = new FormData();
     formData.append("inviteCode", inviteCode.trim());
     formData.append("displayName", displayName.trim());
+    if (returnTo) {
+      formData.append("returnTo", returnTo);
+    }
 
     try {
       const res = await redeemOnboardingInviteAction(formData);
@@ -42,7 +47,7 @@ export function OnboardingInviteForm({
         setError(res.error || "Gagal menukarkan kode undangan.");
         setIsLoading(false);
       } else {
-        router.push(res.redirectUrl || "/dashboard");
+        router.push(res.redirectUrl || returnTo || "/dashboard");
         router.refresh();
       }
     } catch (err: any) {

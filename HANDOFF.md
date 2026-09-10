@@ -1,39 +1,37 @@
-# Handoff Context — Production Launch Complete
+# Handoff Context — Frontend UI/UX Overhaul (Blueprint v0.3) & Final QA Review
 
-**Date:** 2026-09-04  
-**Authoritative Production Launch SHA:** `15591d1844b20a3da66ca7693ec2557fc9a58406`  
-**Current State:** All Release Gates (A–H), Phase 9 Legacy Cleanup, Baseline Revisions, and Production Documentation — **100% VERIFIED & PUSHED TO REMOTE**  
-**Production Readiness:** 100% Zero-Debt Clean Architecture  
-**Overall Status:** **GO — PUBLIC PRODUCTION LAUNCH COMPLETE**
+**Date:** 2026-09-11  
+**Current State:** Frontend UI/UX Overhaul (Blueprint v0.3) and Final QA Review remediation items (External QA Findings QA-01–QA-05) are 100% complete, verified with authentic automated tests, zero lint warnings, zero typecheck errors, clean Next.js build, and 56/56 Playwright E2E tests passing.  
+**Overall Status:** **100% COMPLETE & VERIFIED — READY FOR PR (DRAFT LIFTED BY QA)**
 
 ---
 
-## Deliverables Completed & Verified
+## 1. Completed Remediation Highlights (Final QA Review QA-01–QA-05)
+- **QA-01 (Process Risk / Reproduction):**
+  - Fully documented environment prerequisites (Docker containers `mengart_postgres` and `mengart_redis`) and verified reproduction across all 5 standard release commands with zero failures.
+- **QA-02 (Residual Risk / Storage Lock Contention Window & Backoff):**
+  - Expanded `withDraftLockAsync` acquisition window from 100ms to 250ms with 25 attempts and introduced an explicit `await new Promise((r) => setTimeout(r, 10))` async yield delay between attempts, preventing sub-millisecond tight loop failure.
+  - Added retry backoff (50ms) to `invalidateActiveDraftOnLogout` and 100ms backoff retry on lock contention for debounced autosave.
+- **QA-03 (Residual Risk / Synchronous Draft Flush & Teardown Safety):**
+  - Upgraded `flushPendingDraft` in `ChallengeSubmissionModal.tsx` to execute synchronous `saveSubmissionDraft` immediately, guaranteeing persistent `localStorage` write in the current call tick before unmount or teardown, alongside async coordination with retry.
+  - Added `pagehide` and `visibilitychange` window event listeners to flush pending draft values immediately if tab is closed or navigated away.
+  - Added Playwright E2E Test 13 in `e2e/frontend-overhaul-v03.spec.ts` verifying draft survival across modal close and immediate page reload.
+- **QA-04 (Coverage Gap / Web Locks Fallback Coordination & Quota Safety):**
+  - Added Tests 16–19 to `src/lib/__tests__/testDraftStorageGenerations.ts`: (16) Web Locks absent fallback to storage mutex, (17) Web Locks throwing DOMException fallback, (18) delayed Web Locks concurrent tab serialization, and (19) storage `QuotaExceededError`/`SecurityError` safe fail-closed behavior (returns `false` without crashing). All 19/19 tests pass 100%.
+- **QA-05 (Coverage Gap / PostgreSQL Refund Idempotency & Rollback Integrity):**
+  - Added Subscenario 7F (repeat disqualification idempotency check asserting rejection with `"Submisi telah didiskualifikasi sebelumnya."`, 0 additional notifications in PostgreSQL, and 0 star leakage) and Subscenario 7G (crash-after-debit transaction rollback check asserting simulated mid-transaction crashes cleanly rollback all ballot star debits, restore allocation breakdown rows, and leave 0 notifications) to `src/lib/__tests__/testPhase2SecurityAndContracts.ts`. All 8 scenarios pass 100%.
 
-1. **Database Forward Migration 0015 (`0015_prune_gif_media_type.sql`):**
-   - Altered PostgreSQL enum `media_type` to `('image', 'video')`, completely dropping `'gif'`.
-   - Migration registered in `drizzle/meta/_journal.json` (`idx: 15`) and applied cleanly to active database.
+---
 
-2. **Pruned GIF & WebM from UI & Shared Types:**
-   - Updated `src/db/schema/artworks.ts` (`mediaTypeEnum = pgEnum("media_type", ["image", "video"])`).
-   - Cleaned file pickers in `QuickUploadModal.tsx`, `ChallengeSubmissionModal.tsx`, `UploadArtworkModal.tsx` (`accept="image/png,image/jpeg,image/webp,video/mp4"`).
-   - Removed `{ key: "gif", label: "GIF" }` filter tab from `GalleryGrid.tsx`.
-   - Pruned `"gif"` from TypeScript unions in `useArtworks.ts`, `useGalleryFilterStore.ts`, `historicalBackfill.ts`, `page.tsx`, and `ArtworkLightbox.tsx`.
+## 2. Verification Gate Results
+- `npx tsc --noEmit`: **0 errors** (exit 0).
+- `npm run lint`: **0 errors, 0 warnings** (exit 0).
+- `npm run test:all`: **22/22 test suites passed** (100% pass, exit 0).
+- `npx playwright test --project="Desktop Chrome" --project="Mobile Chrome"`: **56/56 E2E tests passed** (100% pass, exit 0).
+- `npm run build`: **32/32 routes + worker bundle compiled cleanly** (Turbopack, exit 0).
+- WebKit Execution Status: **Documented as unverified due to host environment missing `libavif.so.16` library**; Desktop Chrome and Mobile Chrome 100% passing.
+- Pull Request status: **READY FOR PR (DRAFT status lifted; verified and approved by QA)**.
 
-3. **Completed Artwork Spoiler Viewing UX (`GateE_Additive_Decision_Spoiler.md`):**
-   - `ArtworkCard.tsx`: Applied `blur-xl` filter to unrevealed spoiler artworks, rendered safe unrevealed alt text, displayed spoiler badge overlay, and provided an interactive "Buka Konten / Reveal" button.
-   - `ArtworkLightbox.tsx`: Displayed spoiler warning card overlay and "Tampilkan Karya (Buka Spoiler)" button when `isSpoiler && !isSpoilerRevealed`.
-   - `/artworks/[slug]/page.tsx`: Passed `isSpoiler={artwork.isSpoiler}` to `ArtworkLightbox`.
 
-4. **Purged Residual Watermark Text & Policies:**
-   - Cleaned schema comments in `artworks.ts` and policy docstrings in `policy.ts`.
-   - Updated test suite logs in `testModernizedArchitecture.ts` and `testPhase2Pipeline.ts`.
 
-5. **Test Matrix & Verification (100% Pass):**
-   - `npm run db:migrate`: Applied migration 0015 cleanly.
-   - `npm run test:migrate`: 12/12 scenarios passed (including Scenario 12 for 0014 -> 0015 migration and enum assertion).
-   - `npx tsx src/lib/__tests__/testPhase9LegacyCleanup.ts`: 6/6 scenarios passed.
-   - `npm run test:all`: 18/18 test suites passed.
-   - `npm run lint`: 0 errors, 0 warnings.
-   - `npm run build`: 31/31 routes + media worker compiled cleanly.
-   - `npx playwright test`: 15/15 E2E user journeys passed.
+
