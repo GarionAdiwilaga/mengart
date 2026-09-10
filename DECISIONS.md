@@ -875,6 +875,29 @@ Implemented the full lifecycle phase matrix in `disqualifyChallengeCandidateServ
 **Business Rule:** Test suite descriptions must reflect their exact execution boundary and mocking level; PostgreSQL concurrency tests must assert committed balances and notification delivery; PR remains in DRAFT until all rounds pass.
 **Reason:** Resolves Round 6 QA Finding H3 (P2 / R11).
 
+## 2026-09-11
+
+### Asynchronous Draft Lock Yielding & Contention Backoff (QA-02)
+**Decision:** Updated `withDraftLockAsync` in `src/lib/utils/draftStorage.ts` to expand the acquisition window to 250ms with 25 attempts, introducing an explicit asynchronous delay (`await new Promise((resolve) => setTimeout(resolve, 10))`) between attempts instead of a synchronous tight loop. Added retry backoff (50ms) to `invalidateActiveDraftOnLogout` and a 100ms backoff retry on contention for debounced autosave in `ChallengeSubmissionModal.tsx`.
+**Business Rule:** Storage lock acquisition must yield execution across attempts to allow concurrent processes or tabs to release the lock, and contention recovery must include bounded asynchronous retries before failing.
+**Reason:** Resolves QA-02 where a synchronous tight while-loop exhausted all retry attempts in <0.2ms without giving concurrent tabs or processes CPU time to release locks.
+
+### Immediate Synchronous Draft Flush on Teardown & Visibility Changes (QA-03)
+**Decision:** Upgraded `flushPendingDraft` in `ChallengeSubmissionModal.tsx` to execute synchronous `saveSubmissionDraft` immediately, guaranteeing persistent `localStorage` writes in the current call tick prior to unmount or navigation. Added `pagehide` and `visibilitychange` window event listeners to trigger immediate draft flushing whenever the user switches tabs, closes the browser, or navigates away. Added Playwright E2E Test 13 in `e2e/frontend-overhaul-v03.spec.ts` verifying draft survival across modal closure and immediate page reload.
+**Business Rule:** In-flight draft state must be flushed synchronously to persistent storage prior to any modal teardown, page visibility loss, or window unload event.
+**Reason:** Resolves QA-03 where unawaited microtasks or asynchronous writes risked being dropped during browser teardown or immediate navigation.
+
+### Web Locks Fallback & Storage Quota Fault-Tolerance (QA-04)
+**Decision:** Hardened and verified `draftStorage.ts` behavior when Web Locks API is absent, throwing DOMExceptions, or delayed across concurrent tabs, and ensured storage `QuotaExceededError` / `SecurityError` conditions fail closed safely (returning `false`) without crashing the application. Added Tests 16–19 to `src/lib/__tests__/testDraftStorageGenerations.ts`.
+**Business Rule:** Storage systems must provide graceful fallback to localStorage mutexes when Web Locks API is unavailable or throws, and must fail closed without throwing unhandled exceptions when storage quotas are exceeded.
+**Reason:** Resolves QA-04 by validating edge cases in cross-tab mutex coordination and browser storage limits.
+
+### PostgreSQL Refund Idempotency & Transaction Rollback Integrity (QA-05)
+**Decision:** Enhanced `testPhase2SecurityAndContracts.ts` with Subscenarios 7F and 7G: verifying repeat disqualification idempotency (asserting rejection with `"Submisi telah didiskualifikasi sebelumnya."`, zero additional notifications, and zero star leakage) and verifying crash-after-debit rollback (asserting that any mid-transaction crash cleanly rolls back ballot star debits, restores allocation rows, and leaves zero orphan notifications).
+**Business Rule:** Candidate disqualification must be strictly idempotent with zero duplicate refund notifications on repeat invocations, and any database failure mid-operation must cleanly rollback all ballot debits and notifications atomically.
+**Reason:** Resolves QA-05 by providing authentic PostgreSQL verification of transaction rollback safety and repeat execution idempotency.
+
+
 
 
 

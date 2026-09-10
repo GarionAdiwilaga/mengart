@@ -57,7 +57,7 @@ test.describe("Final Production QA & Health Audit Suite", () => {
     await expect(page.locator("text=Karya Publik Terbaru").first()).toBeVisible();
 
     // Section 7: About Community Section
-    await expect(page.locator("text=Tentang Mengart Atelier")).toBeVisible();
+    await expect(page.locator("text=Tentang Mengart Atelier").first()).toBeVisible();
 
     // Section 8: Footer with WITA Notice
     await expect(page.locator("footer")).toBeVisible();

@@ -225,12 +225,12 @@ async function withDraftLockAsync<T>(
     }
 
     const lockToken = `${Date.now()}:${Math.random()}`;
-    const maxWaitMs = 100;
+    const maxWaitMs = 250;
     const start = Date.now();
     let acquired = false;
     let attempts = 0;
 
-    while (Date.now() - start < maxWaitMs && attempts++ < 50) {
+    while (Date.now() - start < maxWaitMs && attempts++ < 25) {
       try {
         const existing = storage.getItem(lockKey);
         if (!existing) {
@@ -250,6 +250,8 @@ async function withDraftLockAsync<T>(
             }
           }
         }
+        // Yield execution to allow other tab/process to progress
+        await new Promise((resolve) => setTimeout(resolve, 10));
       } catch (_e) {
         break;
       }
@@ -647,7 +649,13 @@ export async function invalidateActiveDraftOnLogout(departingUserId?: string): P
   cancelPendingDraftAutosave(context.userId, context.challengeId);
 
   // 2. Invalidate draft atomically: increment generation marker and clear payload
-  const cleared = await clearSubmissionDraftAsync(context.userId, context.challengeId);
+  let cleared = await clearSubmissionDraftAsync(context.userId, context.challengeId);
+
+  if (!cleared) {
+    // Brief retry on contention
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    cleared = await clearSubmissionDraftAsync(context.userId, context.challengeId);
+  }
 
   if (cleared) {
     // 3. Clear active context ONLY when draft clearance succeeded under lock

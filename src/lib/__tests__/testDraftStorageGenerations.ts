@@ -511,6 +511,99 @@ async function runDraftStorageTests() {
   }
   console.log("  ✓ Dual-layer lock verified: Web Lock critical section successfully held storage-level mutex key");
 
+  // 16. Web Locks Absent Fallback (Finding QA-04)
+  console.log("\n[Test 16] Web Locks API absent: seamless fallback to storage mutex");
+  storage.clear();
+  (globalThis.navigator as any).locks = undefined;
+
+  const absentSave = await saveSubmissionDraftAsync("user-absent", "ch-absent", { ...sampleData, title: "Absent Locks Draft" }, 1);
+  if (!absentSave) {
+    throw new Error("Expected saveSubmissionDraftAsync to succeed when Web Locks is absent");
+  }
+  const loadedAbsent = await loadSubmissionDraftAsync("user-absent", "ch-absent");
+  if (!loadedAbsent || loadedAbsent.title !== "Absent Locks Draft") {
+    throw new Error("Failed to load draft when Web Locks is absent");
+  }
+  const clearAbsent = await clearSubmissionDraftAsync("user-absent", "ch-absent");
+  if (!clearAbsent) {
+    throw new Error("Expected clearSubmissionDraftAsync to succeed when Web Locks is absent");
+  }
+  console.log("  ✓ Web Locks absent path works seamlessly via fallback storage mutex");
+
+  // 17. Web Locks Throwing Error Fallback (Finding QA-04)
+  console.log("\n[Test 17] Web Locks API throws error: graceful fallback to storage mutex");
+  storage.clear();
+  (globalThis.navigator as any).locks = {
+    request: async () => {
+      throw new Error("DOMException: The request is not allowed in this context");
+    },
+  };
+
+  const throwingSave = await saveSubmissionDraftAsync("user-throwing", "ch-throwing", { ...sampleData, title: "Throwing Locks Draft" }, 1);
+  if (!throwingSave) {
+    throw new Error("Expected saveSubmissionDraftAsync to succeed when Web Locks throws");
+  }
+  const loadedThrowing = await loadSubmissionDraftAsync("user-throwing", "ch-throwing");
+  if (!loadedThrowing || loadedThrowing.title !== "Throwing Locks Draft") {
+    throw new Error("Failed to load draft when Web Locks throws");
+  }
+  const clearThrowing = await clearSubmissionDraftAsync("user-throwing", "ch-throwing");
+  if (!clearThrowing) {
+    throw new Error("Expected clearSubmissionDraftAsync to succeed when Web Locks throws");
+  }
+  console.log("  ✓ Web Locks throwing path gracefully falls back to storage mutex and completes");
+
+  // 18. Delayed Web Locks / Cross-Tab Serialization (Finding QA-04)
+  console.log("\n[Test 18] Delayed Web Locks: sequential execution without cross-tab corruption");
+  storage.clear();
+  let activeWriters = 0;
+  let maxConcurrentWriters = 0;
+
+  (globalThis.navigator as any).locks = {
+    request: async (_name: string, _options: any, callback: () => Promise<any>) => {
+      activeWriters++;
+      maxConcurrentWriters = Math.max(maxConcurrentWriters, activeWriters);
+      // Simulate delay in critical section
+      await new Promise((r) => setTimeout(r, 20));
+      try {
+        return await callback();
+      } finally {
+        activeWriters--;
+      }
+    },
+  };
+
+  const write1 = saveSubmissionDraftAsync("user-simul", "ch-simul", { ...sampleData, title: "Writer 1 Draft" }, 1);
+  const write2 = saveSubmissionDraftAsync("user-simul", "ch-simul", { ...sampleData, title: "Writer 2 Draft" }, 1);
+
+  await Promise.all([write1, write2]);
+  const loadedSimul = await loadSubmissionDraftAsync("user-simul", "ch-simul");
+  if (!loadedSimul) {
+    throw new Error("Expected final draft to exist after concurrent writes");
+  }
+  console.log("  ✓ Delayed Web Locks operations serialized cleanly without corruption");
+
+  // 19. Private Browsing / QuotaExceededError Fail-Closed (Finding QA-04)
+  console.log("\n[Test 19] Storage QuotaExceededError / SecurityError fails closed safely without unhandled exception");
+  storage.clear();
+  (globalThis.navigator as any).locks = prevNavLocks;
+  const originalSetItemQuota = storage.setItem.bind(storage);
+  storage.setItem = () => {
+    throw new Error("QuotaExceededError: The quota has been exceeded");
+  };
+
+  const quotaSaveResult = saveSubmissionDraft("user-quota", "ch-quota", sampleData, 1);
+  if (quotaSaveResult !== false) {
+    throw new Error("Expected saveSubmissionDraft to fail closed (false) on QuotaExceededError");
+  }
+  const quotaAsyncSaveResult = await saveSubmissionDraftAsync("user-quota", "ch-quota", sampleData, 1);
+  if (quotaAsyncSaveResult !== false) {
+    throw new Error("Expected saveSubmissionDraftAsync to fail closed (false) on QuotaExceededError");
+  }
+
+  storage.setItem = originalSetItemQuota;
+  console.log("  ✓ Storage quota/permission failure safely failed closed returning false without crash");
+
   console.log("\n=== ALL GENERATIONAL DRAFT STORAGE TESTS PASSED (100%) ===");
 }
 

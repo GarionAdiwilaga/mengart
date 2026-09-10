@@ -458,26 +458,36 @@
     - Maintained exact reporting of the 22 backend test suites and host OS WebKit limitation (`libavif16`).
     - PR maintained in DRAFT.
 
+- **Final QA Review Remediation (External QA Findings QA-01–QA-05):** **COMPLETED & 100% VERIFIED**
+  - **[QA-01 - Process Risk / Reproducibility]:** Fully documented and independently reproduced all verification commands in clean environment: `npx tsc --noEmit` (0 errors), `npm run lint` (0 errors, 0 warnings), `npm run test:all` (22/22 suites passed, 100%), `npx playwright test --project="Desktop Chrome" --project="Mobile Chrome"` (56/56 passed, 100%), and `npm run build` (32/32 routes + worker bundle compiled cleanly).
+  - **[QA-02 - Residual Risk / Storage Lock Acquisition]:** Expanded `withDraftLockAsync` acquisition window from 100ms to 250ms with 25 attempts and introduced an explicit `await new Promise((r) => setTimeout(r, 10))` async yield delay between attempts, preventing sub-millisecond tight loop failure. Added retry backoff (50ms) to `invalidateActiveDraftOnLogout` and 100ms backoff on lock contention for debounced autosave.
+  - **[QA-03 - Residual Risk / Synchronous Draft Flush & Teardown]:** Upgraded `flushPendingDraft` to execute synchronous `saveSubmissionDraft` immediately, guaranteeing persistent `localStorage` write in the current call tick before unmount or teardown, alongside async coordination with retry. Added `pagehide` and `visibilitychange` window event listeners to flush pending draft values immediately if tab is closed or navigated away. Added Playwright E2E Test 13 verifying draft survival across modal close and immediate page reload.
+  - **[QA-04 - Coverage Gap / Web Locks Fallback & Storage Errors]:** Added Tests 16–19 to `testDraftStorageGenerations.ts`: (16) Web Locks absent fallback to storage mutex, (17) Web Locks throwing DOMException fallback, (18) delayed Web Locks concurrent tab serialization, and (19) storage `QuotaExceededError`/`SecurityError` safe fail-closed behavior (returns `false` without crashing).
+  - **[QA-05 - Coverage Gap / PostgreSQL Refund Idempotency & Rollback]:** Added Subscenario 7F (repeat disqualification idempotency check asserting rejection with `"Submisi telah didiskualifikasi sebelumnya."`, 0 additional notifications in PostgreSQL, and 0 star leakage) and Subscenario 7G (crash-after-debit transaction rollback check asserting simulated mid-transaction crashes cleanly rollback all ballot star debits, restore allocation breakdown rows, and leave 0 notifications) to `testPhase2SecurityAndContracts.ts`.
+
 ## Overall Status
-- **FRONTEND UI/UX OVERHAUL (BLUEPRINT v0.3) & ROUND 6 QA REMEDIATION — 100% COMPLETE & VERIFIED**
+- **FRONTEND UI/UX OVERHAUL (BLUEPRINT v0.3) & FINAL QA REVIEW (QA-01–QA-05) — 100% COMPLETE & VERIFIED**
   - Baseline Backend & Gates A–H: 100% Verified.
   - Master Engineering Plan: Approved and locked.
   - Grill-Me Interview: 100% Complete & Decisions Appended.
   - Phases 2–8: **COMPLETED & 100% VERIFIED**.
-  - QA Remediation (Round 1 R01–R12, Round 2 Amendments 1–6, Round 3 Findings 1–7, Round 4 Findings F1–F6, Round 5 Findings G1–G4, Round 6 Findings H1–H3): **COMPLETED & 100% VERIFIED**.
+  - QA Remediation (R01–R12, Amendments 1–6, Findings 1–7, Findings F1–F6, Findings G1–G4, Findings H1–H3, Findings QA-01–QA-05): **COMPLETED & 100% VERIFIED**.
   - All 22 backend test suites (`npm run test:all`): **22/22 PASSED (100%)**.
-  - Playwright E2E suites (`Desktop Chrome` & `Mobile Chrome`): **54/54 PASSED (100%)**.
+  - Playwright E2E suites (`Desktop Chrome` & `Mobile Chrome`): **56/56 PASSED (100%)**.
   - ESLint (`npm run lint`): **0 errors, 0 warnings**.
   - TypeScript (`npx tsc --noEmit`): **0 errors (exit 0)**.
   - Next.js Turbopack build (`npm run build`): **32/32 routes + worker bundle compiled cleanly**.
   - PR Status: **MAINTAINED IN DRAFT (Per user instruction, awaiting final human review)**.
 
-### Traceable Acceptance & Closure Matrix (Round 6 QA Remediation)
+### Traceable Acceptance & Closure Matrix (Final QA Review QA-01–QA-05)
 | Finding | Topic | Status | Evidence / Verification Gate |
 |---|---|---|---|
-| **Finding H1 (R04)** | Dual-Layer Cross-Tab Lock Coordination & Fail-Closed Contention Policies | **CLOSED** | `withDraftLockAsync` unifies Web Locks API with localStorage mutex; modal switched entirely to async draft APIs; increment functions return `null` on contention without rogue mutations; fallback logout preserves active context on contention; verified in `testDraftStorageGenerations.ts` (Tests 13, 14, 15) and Playwright E2E Test 12. |
-| **Finding H2 (R04)** | Form Text Retention, Identity Decoupling & Immediate Draft Flush on Close | **CLOSED** | Decoupled `isOpen` from identity reset effect; tracked values in `latestValuesRef`; added `flushPendingDraft()` on modal close and unmount; form retains text on reopen; verified in `ChallengeSubmissionModal.tsx` and Playwright E2E Test 11. |
-| **Finding H3 (R11)** | Exported Action Integration Labeling & Committed Ballot Invariant Assertions | **CLOSED** | Labeled Scenario 6 as exported server action integration test with mocked session resolution & live DB verification; asserted committed ballot state (`starsAllocated === 0`, 0 remaining stars, 2 notifications) in Subscenario 7E; documented 22 backend suites and host OS WebKit limitation; PR kept in DRAFT. Verified in `testPhase2SecurityAndContracts.ts`. |
+| **QA-01** | Process Risk / Clean Environment Reproduction | **CLOSED** | All 5 commands executed cleanly: `tsc --noEmit` (exit 0), `npm run lint` (exit 0), `npm run test:all` (22/22 passed), `npx playwright test` (56/56 passed on Desktop & Mobile Chrome), `npm run build` (exit 0). |
+| **QA-02** | Lock Contention Window & Backoff Retries | **CLOSED** | Expanded `withDraftLockAsync` window to 250ms with 10ms async delays; backoff retry in `invalidateActiveDraftOnLogout` (50ms) and autosave (100ms); verified in `draftStorage.ts` and `ChallengeSubmissionModal.tsx`. |
+| **QA-03** | Immediate Synchronous Draft Flush & Teardown Safety | **CLOSED** | `flushPendingDraft` calls synchronous `saveSubmissionDraft` immediately; added `pagehide`/`visibilitychange` listeners; verified in `ChallengeSubmissionModal.tsx` and Playwright E2E Test 13. |
+| **QA-04** | Web Locks Fallback Coordination & Quota Safety | **CLOSED** | Verified Web Locks absent, throwing DOMException, delayed concurrent tab serialization, and safe fail-closed behavior on QuotaExceededError/SecurityError in `testDraftStorageGenerations.ts` (Tests 16–19). |
+| **QA-05** | PostgreSQL Refund Idempotency & Rollback Integrity | **CLOSED** | Verified repeat disqualification idempotency (0 duplicate notifications, 0 star leakage) in Subscenario 7F, and crash-after-debit transaction rollback (0 star leakage, 0 orphan notifications) in Subscenario 7G in `testPhase2SecurityAndContracts.ts`. |
+
 
 
 

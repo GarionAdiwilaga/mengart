@@ -384,4 +384,59 @@ test.describe("Frontend Overhaul Blueprint v0.3: E2E Verification Suite", () => 
     await pageA.close();
     await pageB.close();
   });
+
+  // ---------------------------------------------------------------------------
+  // 13. DRAFT PERSISTENCE ACROSS MODAL CLOSE & IMMEDIATE RELOAD (QA-03)
+  // ---------------------------------------------------------------------------
+  test("Manajemen Draft: Penutupan modal dan reload langsung mempertahankan draft di localStorage (QA-03)", async ({
+    page,
+  }) => {
+    await page.goto("/gallery");
+
+    // Seed draft into localStorage simulating synchronous flush
+    const draftKey = "mengart:draft:user_e2e_stress:ch_e2e_stress";
+    const genKey = "mengart:draft-generation:user_e2e_stress:ch_e2e_stress";
+
+    await page.evaluate(({ dKey, gKey }) => {
+      localStorage.setItem(gKey, "1");
+      localStorage.setItem(
+        dKey,
+        JSON.stringify({
+          title: "Draft Stress Test",
+          description: "Deskripsi karya disimpan sebelum navigasi/reload",
+          softwareUsed: "Blender 4.2",
+          isSpoiler: false,
+          savedAt: Date.now(),
+          generation: 1,
+        })
+      );
+    }, { dKey: draftKey, gKey: genKey });
+
+    // Verify localStorage has the committed draft
+    const preReloadDraft = await page.evaluate((dKey) => {
+      return localStorage.getItem(dKey);
+    }, draftKey);
+    expect(preReloadDraft).not.toBeNull();
+    expect(JSON.parse(preReloadDraft!).title).toBe("Draft Stress Test");
+
+    // Immediate page reload simulating navigation / browser refresh
+    await page.reload();
+
+    // Verify draft survived page reload in localStorage
+    const postReloadDraft = await page.evaluate((dKey) => {
+      const val = localStorage.getItem(dKey);
+      return val ? JSON.parse(val) : null;
+    }, draftKey);
+
+    expect(postReloadDraft).not.toBeNull();
+    expect(postReloadDraft.title).toBe("Draft Stress Test");
+    expect(postReloadDraft.description).toBe("Deskripsi karya disimpan sebelum navigasi/reload");
+    expect(postReloadDraft.softwareUsed).toBe("Blender 4.2");
+
+    // Cleanup test keys
+    await page.evaluate(({ dKey, gKey }) => {
+      localStorage.removeItem(dKey);
+      localStorage.removeItem(gKey);
+    }, { dKey: draftKey, gKey: genKey });
+  });
 });

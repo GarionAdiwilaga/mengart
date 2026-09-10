@@ -16,7 +16,7 @@ import {
   commissionServices,
   challengeResults,
 } from "@/db/schema";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, sql } from "drizzle-orm";
 import { takedownArtworkDirectService } from "@/lib/services/moderationService";
 import { disqualifyChallengeCandidateService } from "@/lib/services/challengeService";
 import { getChallengeBySlug } from "@/lib/challenges";
@@ -1669,7 +1669,184 @@ async function runPhase2SecurityAndContractTests() {
       throw new Error(`Scenario 7 Failed: Expected 2 star_returned notifications for voter, found ${starNotifications.length}`);
     }
 
-    console.log("  ✓ R05: Disqualification phase matrix verified for locked, tiebreak, finished, 3-way ties, authentic score provenance, jury readiness rollback, and PostgreSQL concurrency with active voting rounds, candidate removal, and ballot star voiding.");
+    // 12. Subscenario 7F: Repeat disqualification idempotency (QA-05)
+    let repeatDisqRejected = false;
+    try {
+      await disqualifyChallengeCandidateService(
+        db,
+        { userId: adminStaff.id, role: adminStaff.role },
+        { submissionId: concSub1.id, reason: "Attempt duplicate disq" }
+      );
+    } catch (e: any) {
+      if (e.message.includes("didiskualifikasi sebelumnya")) {
+        repeatDisqRejected = true;
+      }
+    }
+    if (!repeatDisqRejected) {
+      throw new Error("Scenario 7 Failed: Repeat disqualification of already disqualified submission did not reject!");
+    }
+
+    // Verify notification uniqueness in PostgreSQL (zero duplicate notifications created)
+    const repeatStarNotifications = await db
+      .select()
+      .from(notifications)
+      .where(
+        and(
+          eq(notifications.userId, concVoter1.id),
+          eq(notifications.type, "star_returned"),
+          eq(notifications.targetId, concChallenge.id)
+        )
+      );
+    if (repeatStarNotifications.length !== 2) {
+      throw new Error(`Scenario 7 Failed: Duplicate star_returned notifications leaked! Expected 2, found ${repeatStarNotifications.length}`);
+    }
+
+    // Verify ballot starsAllocated is unchanged and remaining stars remains 0
+    const [checkBallot1Repeat] = await db
+      .select()
+      .from(challengeBallots)
+      .where(eq(challengeBallots.id, ballot1.id));
+    if (checkBallot1Repeat.starsAllocated !== 0) {
+      throw new Error(`Scenario 7 Failed: Ballot stars corrupted on repeat disqualification! Value: ${checkBallot1Repeat.starsAllocated}`);
+    }
+    console.log("  ✓ Subscenario 7F: Repeat disqualification idempotency verified — rejected with zero duplicate notifications or star leakage.");
+
+    // 13. Subscenario 7G: Crash-after-debit transaction rollback test (QA-05)
+    const [crashChallenge] = await db
+      .insert(challenges)
+      .values({
+        title: `Crash Rollback Challenge ${suffix}`,
+        slug: `crash-rollback-${suffix}`,
+        theme: "Crash Test",
+        description: "Crash after debit test",
+        promptRules: "Rules",
+        status: "voting_open",
+        awardMode: "vote_only",
+      })
+      .returning();
+
+    const [crashSub] = await db
+      .insert(challengeSubmissions)
+      .values({
+        challengeId: crashChallenge.id,
+        userId: artist1.id,
+        profileId: artistProfile1.id,
+        artworkId: art1.id,
+        artworkVersionId: ver1.id,
+        title: "Crash Candidate",
+        submissionStatus: "submitted",
+      })
+      .returning();
+
+    const [crashRound] = await db
+      .insert(challengeVotingRounds)
+      .values({
+        challengeId: crashChallenge.id,
+        roundType: "main",
+        status: "open",
+        startsAt: new Date(Date.now() - 3600000),
+        deadline: new Date(Date.now() + 3600000),
+        starsPerMember: 3,
+      })
+      .returning();
+
+    await db.insert(challengeVotingRoundCandidates).values([
+      { votingRoundId: crashRound.id, submissionId: crashSub.id },
+    ]);
+
+    const { user: crashVoter } = await createTestUser("member", "active");
+    const [crashBallot] = await db
+      .insert(challengeBallots)
+      .values({
+        challengeId: crashChallenge.id,
+        votingRoundId: crashRound.id,
+        userId: crashVoter.id,
+        roundType: "main",
+        starsAllocated: 2,
+      })
+      .returning();
+
+    await db.insert(challengeBallotStars).values([
+      { ballotId: crashBallot.id, submissionId: crashSub.id, starsCount: 2 },
+    ]);
+
+    // Simulate crash / rollback during a transaction
+    let crashRolledBack = false;
+    try {
+      await db.transaction(async (tx: any) => {
+        // Debit stars from ballot
+        await tx
+          .update(challengeBallots)
+          .set({ starsAllocated: sql`GREATEST(0, ${challengeBallots.starsAllocated} - 2)` })
+          .where(eq(challengeBallots.id, crashBallot.id));
+
+        // Insert notification
+        await tx.insert(notifications).values({
+          userId: crashVoter.id,
+          type: "star_returned",
+          title: "Star Dikembalikan",
+          body: "Testing rollback",
+          targetType: "challenge",
+          targetId: crashChallenge.id,
+          actionUrl: "/challenges",
+          priority: "high",
+        });
+
+        // Trigger unexpected server crash / db error before commit
+        throw new Error("SIMULATED_CRASH_AFTER_DEBIT");
+      });
+    } catch (e: any) {
+      if (e.message.includes("SIMULATED_CRASH_AFTER_DEBIT")) {
+        crashRolledBack = true;
+      }
+    }
+    if (!crashRolledBack) throw new Error("Scenario 7 Failed: Crash simulation did not throw!");
+
+    // Assert database state after rollback:
+    // (a) Ballot starsAllocated is STILL 2 (intact, zero star leakage)
+    const [rolledBackBallot] = await db
+      .select()
+      .from(challengeBallots)
+      .where(eq(challengeBallots.id, crashBallot.id));
+    if (rolledBackBallot.starsAllocated !== 2) {
+      throw new Error(`Scenario 7 Failed: Ballot stars were not rolled back! Found: ${rolledBackBallot.starsAllocated}`);
+    }
+
+    // (b) Ballot stars rows are STILL present
+    const rolledBackStars = await db
+      .select()
+      .from(challengeBallotStars)
+      .where(eq(challengeBallotStars.ballotId, crashBallot.id));
+    if (rolledBackStars.length !== 1 || rolledBackStars[0].starsCount !== 2) {
+      throw new Error("Scenario 7 Failed: Ballot star breakdown rows were not preserved after rollback!");
+    }
+
+    // (c) ZERO notifications persisted in database
+    const crashNotifs = await db
+      .select()
+      .from(notifications)
+      .where(
+        and(
+          eq(notifications.userId, crashVoter.id),
+          eq(notifications.type, "star_returned"),
+          eq(notifications.targetId, crashChallenge.id)
+        )
+      );
+    if (crashNotifs.length !== 0) {
+      throw new Error(`Scenario 7 Failed: Notifications persisted despite transaction rollback! Found: ${crashNotifs.length}`);
+    }
+
+    // (d) Candidate submissionStatus is still "submitted"
+    const [checkCrashSub] = await db
+      .select()
+      .from(challengeSubmissions)
+      .where(eq(challengeSubmissions.id, crashSub.id));
+    if (checkCrashSub.submissionStatus !== "submitted") {
+      throw new Error(`Scenario 7 Failed: Submission status was modified despite rollback! Status: ${checkCrashSub.submissionStatus}`);
+    }
+    console.log("  ✓ Subscenario 7G: Crash-after-debit rollback verified — complete rollback of ballot stars, breakdown rows, and notifications with zero leakage.");
+
+    console.log("  ✓ R05: Disqualification phase matrix verified for locked, tiebreak, finished, 3-way ties, authentic score provenance, jury readiness rollback, PostgreSQL concurrency, repeat-run idempotency, and crash-after-debit rollback.");
   }
 
   // =========================================================================

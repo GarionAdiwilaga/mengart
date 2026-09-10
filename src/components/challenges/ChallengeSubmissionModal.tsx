@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { submitArtworkToChallengeAction } from "@/app/actions/challenges";
 import {
   Sparkles,
@@ -22,6 +22,7 @@ import { AtelierInput } from "@/components/ui/atoms/AtelierInput";
 import { AtelierTextarea } from "@/components/ui/atoms/AtelierTextarea";
 import { SubmissionRecoveryBanner } from "@/components/ui/molecules/SubmissionRecoveryBanner";
 import {
+  saveSubmissionDraft,
   saveSubmissionDraftAsync,
   loadSubmissionDraftAsync,
   clearSubmissionDraftAsync,
@@ -96,7 +97,7 @@ export function ChallengeSubmissionModal({
     latestValuesRef.current = { title, description, softwareUsed, isSpoiler };
   }, [title, description, softwareUsed, isSpoiler]);
 
-  const flushPendingDraft = async () => {
+  const flushPendingDraft = useCallback(() => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
@@ -107,7 +108,10 @@ export function ChallengeSubmissionModal({
 
     cancelPendingDraftAutosave(currentUid, challengeId);
     const vals = latestValuesRef.current;
-    await saveSubmissionDraftAsync(
+    const gen = activeGenerationRef.current;
+
+    // 1. Synchronous flush immediately commits to localStorage in the current tick (QA-03)
+    saveSubmissionDraft(
       currentUid,
       challengeId,
       {
@@ -116,28 +120,25 @@ export function ChallengeSubmissionModal({
         softwareUsed: vals.softwareUsed,
         isSpoiler: vals.isSpoiler,
       },
-      activeGenerationRef.current
+      gen
     );
-  };
 
-  const handleCloseModal = () => {
-    void flushPendingDraft();
-    setIsOpen(false);
-  };
-
-  // Purge legacy unscoped drafts on mount & flush on unmount
-  useEffect(() => {
-    purgeLegacyDrafts();
-    return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = null;
-      }
-      const currentUid = userIdRef.current;
-      if (isDraftActiveRef.current && currentUid && !isRevision) {
-        const vals = latestValuesRef.current;
-        const gen = activeGenerationRef.current;
-        void saveSubmissionDraftAsync(
+    // 2. Asynchronous coordination with retry on contention (QA-02)
+    void (async () => {
+      const saved = await saveSubmissionDraftAsync(
+        currentUid,
+        challengeId,
+        {
+          title: vals.title,
+          description: vals.description,
+          softwareUsed: vals.softwareUsed,
+          isSpoiler: vals.isSpoiler,
+        },
+        gen
+      );
+      if (!saved && isDraftActiveRef.current) {
+        await new Promise((r) => setTimeout(r, 50));
+        await saveSubmissionDraftAsync(
           currentUid,
           challengeId,
           {
@@ -149,8 +150,38 @@ export function ChallengeSubmissionModal({
           gen
         );
       }
+    })();
+  }, [challengeId, isRevision, submissionDeadline]);
+
+  const handleCloseModal = () => {
+    flushPendingDraft();
+    setIsOpen(false);
+  };
+
+  // Purge legacy unscoped drafts on mount & flush on unmount, pagehide, and visibilitychange
+  useEffect(() => {
+    purgeLegacyDrafts();
+
+    const handleVisibilityOrPageHide = () => {
+      if (document.visibilityState === "hidden") {
+        flushPendingDraft();
+      }
     };
-  }, [challengeId, isRevision]);
+
+    window.addEventListener("pagehide", handleVisibilityOrPageHide);
+    document.addEventListener("visibilitychange", handleVisibilityOrPageHide);
+
+    return () => {
+      window.removeEventListener("pagehide", handleVisibilityOrPageHide);
+      document.removeEventListener("visibilitychange", handleVisibilityOrPageHide);
+
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      flushPendingDraft();
+    };
+  }, [challengeId, isRevision, flushPendingDraft]);
 
   // Handle identity change or form initialization (decoupled from isOpen)
   useEffect(() => {
@@ -290,7 +321,7 @@ export function ChallengeSubmissionModal({
           return;
         }
         // Save with expected generation check: if invalidated during 500ms debounce, save is rejected
-        await saveSubmissionDraftAsync(
+        const saved = await saveSubmissionDraftAsync(
           capturedUserId,
           capturedChallengeId,
           {
@@ -301,6 +332,25 @@ export function ChallengeSubmissionModal({
           },
           capturedGen
         );
+        if (!saved && isDraftActiveRef.current) {
+          // Retry save once on contention
+          setTimeout(async () => {
+            if (isDraftActiveRef.current) {
+              const vals = latestValuesRef.current;
+              await saveSubmissionDraftAsync(
+                capturedUserId,
+                capturedChallengeId,
+                {
+                  title: vals.title,
+                  description: vals.description,
+                  softwareUsed: vals.softwareUsed,
+                  isSpoiler: vals.isSpoiler,
+                },
+                capturedGen
+              );
+            }
+          }, 100);
+        }
       }, 500);
 
       saveTimeoutRef.current = timer;
